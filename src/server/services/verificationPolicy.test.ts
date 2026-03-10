@@ -197,4 +197,55 @@ describe("buildVerificationPlan", () => {
     expect(plan.reasons.length).toBeGreaterThan(0);
     expect(plan.reasons.some((r) => r.includes("blueprint"))).toBe(true);
   });
+
+  it("blueprint update changes verification expectations", () => {
+    const guidelines = makeGuidelines();
+
+    const planBefore = buildVerificationPlan({
+      blueprint: makeBlueprint({
+        testingPolicy: {
+          requiredForBehaviorChange: false,
+          defaultCommands: [],
+          impactedTestStrategy: "preferred",
+          fullSuitePolicy: "manual",
+        },
+        documentationPolicy: {
+          updateUserFacingDocs: false,
+          updateRunbooksWhenOpsChange: false,
+          requiredDocPaths: [],
+          changelogPolicy: "none",
+        },
+      }),
+      guidelines,
+    });
+
+    const planAfter = buildVerificationPlan({
+      blueprint: makeBlueprint({
+        testingPolicy: {
+          requiredForBehaviorChange: true,
+          defaultCommands: ["npm test"],
+          impactedTestStrategy: "required",
+          fullSuitePolicy: "always",
+        },
+        documentationPolicy: {
+          updateUserFacingDocs: true,
+          updateRunbooksWhenOpsChange: true,
+          requiredDocPaths: ["README.md", "CHANGELOG.md"],
+          changelogPolicy: "required",
+        },
+      }),
+      guidelines,
+    });
+
+    expect(planAfter.commands).toContain("npm test");
+    expect(planAfter.fullSuiteRun).toBe(true);
+    expect(planBefore.fullSuiteRun).toBe(false);
+    expect(planAfter.docsRequired).toContain("README.md");
+    expect(planAfter.docsRequired).toContain("CHANGELOG.md");
+    expect(planBefore.docsRequired).toEqual([]);
+    expect(planAfter.enforcedRules).toContain("Tests required for behavior changes");
+    expect(planAfter.enforcedRules).toContain("User-facing docs updates expected");
+    expect(planBefore.enforcedRules).not.toContain("Tests required for behavior changes");
+    expect(planBefore.enforcedRules).not.toContain("User-facing docs updates expected");
+  });
 });

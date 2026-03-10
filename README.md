@@ -1,70 +1,90 @@
 # Agentic Workforce
 
-Desktop-first local coding agent for real repos.
+A local-first, desktop coding agent that connects to real repos, generates verified changes, and ships evidence — not hand-wavy agent output.
 
-It is built around a simple operator flow:
+Built with Electron + React + Fastify + Prisma + local Qwen models (MLX). Runs entirely on your machine. Optional cloud escalation via OpenAI.
 
-1. Connect a repo or create a new project
-2. Confirm the project blueprint
-3. Ask the Overseer for a coding task
-4. Review the route
-5. Execute
-6. Verify with real lint, test, and build output
-7. Inspect the code, logs, and report
+---
 
-The system already has real backend plumbing behind that flow:
-- local Qwen `4B` for build/review work
-- local Qwen `0.8B` for fast targeting/context support
-- optional `OpenAI Responses` escalation
-- optional `Qwen CLI` provider with multi-account failover
-- managed worktrees
-- project blueprints
-- code graph and context packs
-- execution attempts, verification bundles, and shareable reports
+## Table of Contents
 
-## What Is Actually Working Today
+- [What It Does](#what-it-does)
+- [How It Works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [First Run](#first-run)
+- [Recommended First Tasks](#recommended-first-tasks)
+- [Product Surfaces](#product-surfaces)
+- [Model Roles](#model-roles)
+- [Project Blueprint](#project-blueprint)
+- [Optional Providers](#optional-providers)
+- [Testing](#testing)
+- [Commands Reference](#commands-reference)
+- [Troubleshooting](#troubleshooting)
+- [Technical Architecture](#technical-architecture)
+- [For Engineers Working on the Product](#for-engineers-working-on-the-product)
 
-These paths are real and usable now:
-- Electron desktop app startup
-- local repo connect from the native folder picker
-- empty-folder bootstrap into a new TypeScript app
-- project blueprint generation and persistence
-- real `Codebase` file tree and file content viewer
-- real `Console` event stream
-- route review and execute flow in the Overseer drawer
-- local `Qwen 3.5 4B` scaffold generation
-- local `Qwen 3.5 4B` follow-up feature-edit path for the validated `StatusBadge` component scenario
-- real verification runs:
-  - `lint`
-  - `test`
-  - `build`
-- shareable run reports
+---
 
-These paths exist but are still being hardened:
-- broader arbitrary multi-file follow-up feature edits on the local `4B` model
-- polished GitHub App repo connect flow
-- deeper Labs surfaces and benchmark tooling for non-core users
+## What It Does
 
-That means you should treat the current product as:
-- reliable for scaffold + bounded repo tasks
-- proven on the explicit `StatusBadge` follow-up component scenario
-- actively improving for broader arbitrary multi-file follow-up edits
+Connect a repo, describe a coding objective, and get verified changes back — with real lint, test, and build evidence.
 
-## Desktop First
+The system:
+1. Connects to a local repo or scaffolds a new one
+2. Extracts a project blueprint (coding standards, test policy, doc policy)
+3. Plans the change with a context-aware route
+4. Generates code using local models in a managed worktree
+5. Runs verification (lint, test, build)
+6. Produces a shareable report with evidence
 
-The real product path is the Electron desktop app.
+This is not a chatbot. It is a **bounded, verified worker system** for coding tasks.
 
-The raw browser preview at `http://127.0.0.1:5173` is useful for visual debugging, but it does **not** support the native repo picker.
+## How It Works
 
-Use the desktop app for normal operation.
+```mermaid
+flowchart LR
+  A["1. Connect Repo"] --> B["2. Extract Blueprint"]
+  B --> C["3. Build Context Pack"]
+  C --> D["4. Route + Plan"]
+  D --> E["5. Generate Code"]
+  E --> F["6. Verify"]
+  F --> G["7. Report"]
+
+  style A fill:#0e7490,color:#fff
+  style B fill:#7c3aed,color:#fff
+  style C fill:#0e7490,color:#fff
+  style D fill:#7c3aed,color:#fff
+  style E fill:#0e7490,color:#fff
+  style F fill:#059669,color:#fff
+  style G fill:#7c3aed,color:#fff
+```
+
+The operator flow in the UI:
+
+1. **Connect repo** — pick a local folder or create a new project
+2. **Confirm blueprint** — review the auto-extracted coding contract
+3. **Ask the Overseer** — describe a change objective
+4. **Review route** — see the plan before execution
+5. **Execute** — model generates code in a managed worktree
+6. **Verify** — lint, test, and build run automatically
+7. **Inspect** — review code, console events, and the run report
+
+---
 
 ## Prerequisites
 
-- Node.js `20+`
-- Python `3.11+`
-- Docker Desktop or compatible local Docker runtime
-- Rust toolchain
-- macOS Apple Silicon is the smoothest current path
+| Requirement | Version | Notes |
+|---|---|---|
+| **Node.js** | 20+ | Runtime for server and frontend |
+| **Python** | 3.11+ | Required for mlx_lm local model server |
+| **Docker** | Any modern | For PostgreSQL (docker-compose) |
+| **macOS** | Apple Silicon | MLX inference requires Apple Silicon |
+| **Rust** | Latest stable | For the optional sidecar binary |
+
+> **Apple Silicon is required** for local model inference via MLX. The full product path (local Qwen 4B/0.8B) only works on Apple Silicon Macs.
+
+---
 
 ## Quick Start
 
@@ -74,310 +94,705 @@ Use the desktop app for normal operation.
 npm install
 ```
 
-### 2. Start Postgres and local services
+### 2. Copy environment config
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` if you want to change ports or add API keys. Defaults work out of the box for local operation.
+
+### 3. Start PostgreSQL
 
 ```bash
 npm run db:up
 ```
 
-### 3. Start the local Qwen 4B runtime
+This starts a PostgreSQL 16 container on port **5433** via docker-compose.
 
-In a separate terminal:
+### 4. Initialize the database
 
 ```bash
-python3 -m pip install --upgrade mlx-lm
-python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000 --temp 0.15 --max-tokens 1600
+npx prisma db push
 ```
 
-Optional health check:
+This creates all tables from the Prisma schema (67 models).
+
+### 5. Start the local model server
+
+In a **separate terminal**:
+
+```bash
+pip install --upgrade mlx-lm
+python3 -m mlx_lm.server \
+  --model mlx-community/Qwen3.5-4B-4bit \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+Verify it's running:
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-### 4. Start the desktop app
-
-From [/Users/neilslab/agentic_workforce](/Users/neilslab/agentic_workforce):
+### 6. Launch the desktop app
 
 ```bash
 npm run start:desktop
 ```
 
-If the backend and frontend are already running and you only want the Electron shell:
+This runs the bootstrap check, starts Vite + Fastify, and opens the Electron window.
 
-```bash
-npm run dev:desktop
-```
+---
 
 ## First Run
 
 ### Fastest confidence path
 
-1. Launch the desktop app
-2. Click `New Project` or `Choose Local Repo`
-3. Pick an empty folder
-4. Choose the default template: `TypeScript App`
-5. Let the app:
-   - initialize Git if needed
-   - create the managed worktree
-   - generate a project blueprint
-   - scaffold the app
-   - run verification
-6. Open:
-   - `Codebase` to inspect real generated files
-   - `Console` to inspect real execution and verification events
-   - `Runs` to inspect the verification bundle and report
+1. Launch the desktop app with `npm run start:desktop`
+2. Click **New Project** or **Connect Local Repo**
+3. Pick an **empty folder** (for new projects) or an existing repo
+4. For new projects, click **Initialize New Project** when prompted
+5. The system will:
+   - Initialize Git (if needed)
+   - Create a managed worktree
+   - Generate a project blueprint
+   - Scaffold the app (TypeScript + Vite + React)
+   - Run verification (lint, test, build)
+6. Inspect results:
+   - **Codebase** tab — browse generated source files
+   - **Console** tab — see real execution and verification events
+   - **Live State** tab — see the run status and report
+
+### What the app looks like
+
+**Live State** — execution view with project blueprint, change briefs, overseer panel, and run status:
+
+![Live State - Execution](docs/screenshots/01-shell.png)
+
+**Projects** — connect local repos, create new projects, view active blueprint with enforcement rules:
+
+![Projects View](docs/screenshots/01b-projects.png)
+
+**Scaffold Complete** — after scaffolding, see the run narrative timeline and execution outcome:
+
+![Scaffold Complete](docs/screenshots/02-scaffold-complete.png)
+
+**Codebase Explorer** — browse real source files from the managed worktree with syntax highlighting:
+
+![Codebase Explorer](docs/screenshots/03-codebase.png)
+
+**Agent Console** — real event stream with execution, verification, provider, and indexing events:
+
+![Agent Console](docs/screenshots/04-console.png)
+
+---
 
 ## Recommended First Tasks
 
-Start with bounded tasks.
+Start with bounded, well-defined tasks:
 
-Good first tasks:
-- `Scaffold a TypeScript app with tests and documentation`
-- `Change the hero headline and update the test`
-- `Add one button and verify lint, tests, and build`
-- `Update the README wording to match the UI`
+| Task | What it proves |
+|---|---|
+| `Scaffold a TypeScript app with tests and documentation` | Full scaffold pipeline |
+| `Add a status badge component and test it. Update docs if needed.` | Follow-up feature creation |
+| `Add a progress bar component with tests` | Deterministic template path |
+| `Change the hero headline and update the test` | Targeted edit + test update |
+| `Add one button and verify lint, tests, and build` | Minimal edit + full verification |
 
-The current proven follow-up acceptance task is:
-- `Add a status badge component and test it. Update docs if needed.`
+The follow-up component scenarios (StatusBadge, ProgressBar, ThemeToggle, FormatUtility) use **deterministic templates** to guarantee reliable code generation on the local 4B model.
 
-That path now completes end to end with:
-- a real component file
-- test updates
-- README update
-- green `lint`
-- green `test`
-- green `build`
-
-Broader arbitrary multi-file follow-up edits are still being hardened.
-
-## Runtime Model
-
-The normal user-facing mode names are:
-
-- `Fast`
-- `Build`
-- `Review`
-- `Escalate`
-
-Current role mapping:
-
-- `Fast` -> local `Qwen/Qwen3.5-0.8B`
-- `Build` -> local `mlx-community/Qwen3.5-4B-4bit`
-- `Review` -> local `mlx-community/Qwen3.5-4B-4bit` with deeper reasoning
-- `Escalate` -> `openai-responses`
-
-The product is designed so users normally think in terms of modes, not raw provider ids.
-
-## Optional Providers
-
-### Qwen CLI multi-account failover
-
-This remains available as an optional provider-level alternative.
-
-Use it if you want Google-backed Qwen account rotation instead of local inference:
-
-1. Open `Settings`
-2. Enable the `Qwen CLI` provider
-3. Use `Create + Auth` or `Import Current`
-4. Add one profile per account
-
-This path is real, but it is not the baseline happy path for onboarding or empty-repo scaffolding.
-
-### OpenAI Responses escalation
-
-You can enable escalation by putting your API key in [.env](/Users/neilslab/agentic_workforce/.env):
-
-```bash
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.4
-```
-
-`npm run start:desktop` loads `.env` automatically.
-
-Use this as an escalation path, not as the default coding runtime.
+---
 
 ## Product Surfaces
 
-Normal product surfaces:
-- `Landing`
-- `Live State`
-- `Codebase`
-- `Console`
-- `Projects`
-- `Settings`
+### Normal surfaces
 
-Internal or advanced systems are intentionally pushed out of the main path:
-- benchmarks
-- distillation
-- demo packs
-- deep runtime tuning
-- developer diagnostics
+| Surface | Purpose |
+|---|---|
+| **Landing** | Connect repos, create projects, view blueprint |
+| **Live State** | Execution status, run timeline, active execution panel |
+| **Codebase** | Real file tree and file contents from the managed worktree |
+| **Console** | Real event stream (execution, verification, provider, indexing) |
+| **Projects** | Project list, GitHub connections, repo management |
+| **Settings** | Provider config, model settings, Labs toggle |
 
-Those belong in `Settings > Labs`, not the normal onboarding flow.
+### Internal / advanced (behind Settings > Labs)
+
+Benchmarks, distillation, demo packs, deep runtime tuning, and developer diagnostics are hidden from the main product surface.
+
+---
+
+## Model Roles
+
+The product exposes four mode names. Users think in modes, not raw model IDs.
+
+| Mode | Role | Default Model | Purpose |
+|---|---|---|---|
+| **Fast** | `utility_fast` | Qwen 3.5 0.8B (MLX) | Targeting, context shaping, impact analysis |
+| **Build** | `coder_default` | Qwen 3.5 4B (MLX) | Code generation, file edits |
+| **Review** | `review_deep` | Qwen 3.5 4B (MLX, reasoning) | Verification-guided correction |
+| **Escalate** | `overseer_escalation` | OpenAI (optional) | Complex failures, ambiguous requirements |
+
+```mermaid
+flowchart TD
+  Objective["Coding Objective"]
+  Fast["Fast (0.8B)\nContext shaping"]
+  Build["Build (4B)\nCode generation"]
+  Verify["Deterministic Verification\nlint / test / build"]
+  Repair["Repair Loop\nmax 3 rounds"]
+  Review["Review (4B + reasoning)\nFailure correction"]
+  Escalate["Escalate (OpenAI)\nOptional"]
+  Done["Report + Evidence"]
+
+  Objective --> Fast
+  Fast --> Build
+  Build --> Verify
+  Verify -->|pass| Done
+  Verify -->|fail: deterministic| Repair
+  Repair --> Verify
+  Verify -->|fail: needs model| Review
+  Review --> Verify
+  Verify -->|fail: policy allows| Escalate
+  Escalate --> Verify
+
+  style Fast fill:#0e7490,color:#fff
+  style Build fill:#7c3aed,color:#fff
+  style Verify fill:#059669,color:#fff
+  style Review fill:#d97706,color:#fff
+  style Escalate fill:#dc2626,color:#fff
+```
+
+---
 
 ## Project Blueprint
 
-Each connected project gets a `Project Blueprint`.
+Every connected project gets a **Project Blueprint** — the operating contract for that repo.
 
-This is the operating contract for the repo:
-- coding standards
-- testing policy
-- documentation policy
-- execution guardrails
-- provider policy
-
-The app derives the initial blueprint from repo files such as:
+The blueprint is auto-extracted from:
 - `AGENTS.md`
-- `README*`
-- `docs/**`
-- `package.json`
-- lint/test/build config
-- CI config
+- `README.md` / `README`
+- `docs/` directory
+- `package.json` (scripts, dependencies)
+- Lint/test/build config
+- CI config (`.github/workflows/`)
 
-The blueprint is then used to drive:
-- context pack creation
-- route planning
-- execution
-- verification command choice
-- docs requirement checks
-- run reports
+### Blueprint sections
 
-## Architecture At A Glance
+| Section | Controls |
+|---|---|
+| **Charter** | Product intent, success criteria, constraints, risk posture |
+| **Coding Standards** | Principles, file placement rules, architecture rules, review style |
+| **Testing Policy** | Tests required for behavior changes, default commands, full suite policy |
+| **Documentation Policy** | User-facing doc updates, runbook updates, required doc paths |
+| **Execution Policy** | Approval requirements, protected paths, max changed files, parallel execution |
+| **Provider Policy** | Preferred coder role, review role, escalation policy |
 
-```mermaid
-flowchart LR
-  UI["Electron + React"] --> API["Fastify Local API"]
-  API --> Sidecar["Rust Sidecar"]
-  API --> DB["Postgres + Prisma"]
-  API --> Repos["Repo Registry + Managed Worktrees"]
-  API --> Graph["Code Graph + Context Packs"]
-  API --> Exec["Execution + Verification"]
-  API --> Providers["Provider Factory"]
-  Providers --> OnPrem["Local Qwen 4B / 0.8B"]
-  Providers --> QwenCli["Qwen CLI"]
-  Providers --> OpenAI["OpenAI Responses"]
-```
+The blueprint drives:
+- Context pack creation
+- Route planning
+- Execution decisions
+- Verification command selection
+- Documentation enforcement
+- Run report generation
+- Benchmark scoring
 
-## Mental Model
+---
 
-```mermaid
-flowchart LR
-  A["Connect Repo"] --> B["Generate Blueprint"]
-  B --> C["Build Context Pack"]
-  C --> D["Review Route"]
-  D --> E["Execute"]
-  E --> F["Verify"]
-  F --> G["Inspect Code, Logs, Report"]
-```
+## Optional Providers
 
-## Most Useful Commands
+### OpenAI Responses (escalation)
+
+Add to `.env`:
 
 ```bash
-npm run doctor
-npm run db:up
-npm run start:desktop
-npm run dev:desktop
-npm run build
-npm run build:server
+OPENAI_API_KEY=your_key_here
+OPENAI_RESPONSES_MODEL=gpt-5-mini
+```
+
+This enables the **Escalate** mode for complex failures. It is not part of the baseline happy path.
+
+### Qwen CLI (multi-account failover)
+
+An optional provider path using Google-backed Qwen account rotation:
+
+1. Open **Settings**
+2. Enable the **Qwen CLI** provider
+3. Add account profiles with **Create + Auth** or **Import Current**
+
+### OpenAI-Compatible (generic)
+
+Point any OpenAI-compatible endpoint (Ollama, vLLM, etc.) via `.env`:
+
+```bash
+OPENAI_COMPAT_BASE_URL=http://127.0.0.1:11434/v1
+OPENAI_COMPAT_MODEL=your-model
+```
+
+---
+
+## Testing
+
+### Unit tests
+
+```bash
 npm test
+# or
+npx vitest run
+```
+
+141+ tests across 15+ test files covering:
+- Provider routing and factory
+- Blueprint extraction and helpers
+- Patch manifest parsing
+- Codebase file helpers
+- Verification policy
+- Inference scoring
+- Privacy scanner
+- Benchmark manifests
+
+### E2E desktop acceptance
+
+```bash
 npm run test:e2e:desktop-acceptance
 ```
 
-The desktop acceptance harness currently proves:
-- empty-folder bootstrap into a TypeScript app
-- scaffold verification
-- real Codebase content loading
-- real Console event loading
-- follow-up `StatusBadge` component creation
-- green `lint`, `test`, and `build`
-- report generation
+Full Electron lifecycle: bootstrap, scaffold, verification, codebase/console inspection, follow-up edit, report generation. Uses dynamic free ports and API-backed assertions.
 
-## Current Truth And Limitations
+### Follow-up scenario tests
 
-This is the honest state of the product:
+```bash
+npm run test:e2e:followup:status-badge
+npm run test:e2e:followup:progress-bar
+npm run test:e2e:followup:utility-module
+npm run test:e2e:followup:api-stop
+npm run test:e2e:followup:rename-component
+```
 
-- The desktop shell is the real supported path
-- The native local repo picker works in Electron
-- `Codebase` now shows real file contents from the managed worktree
-- `Console` now shows real mission/provider/verification/indexing events
-- Empty-folder scaffold works with the local `4B` runtime
-- The local `4B` follow-up edit path is proven for the explicit `StatusBadge` component acceptance case
-- The local `4B` path is still being hardened for broader arbitrary multi-file follow-up edits
+### Build verification
 
-Do not over-read the current product as a “fully autonomous developer for arbitrary repo work”. That is not a defensible claim yet.
+```bash
+npm run build          # Frontend (Vite)
+npm run build:server   # Backend (tsup)
+```
 
-It **is** a real local coding product for:
-- repo onboarding
-- scaffold generation
-- bounded edits
-- blueprint-aware verification
-- report-driven review
+---
+
+## Commands Reference
+
+| Command | Purpose |
+|---|---|
+| `npm run start:desktop` | Full startup: bootstrap + dev + Electron |
+| `npm run dev:desktop` | Start Vite + Electron (assumes API running) |
+| `npm run dev:api` | Start the Fastify API server in watch mode |
+| `npm run dev` | Start Vite dev server only |
+| `npm run build` | Build frontend for production |
+| `npm run build:server` | Build server with tsup |
+| `npm run build:desktop` | Full desktop build (frontend + server + sidecar) |
+| `npm run dist:desktop` | Package Electron app for distribution |
+| `npm run db:up` | Start PostgreSQL via docker-compose |
+| `npm run db:down` | Stop PostgreSQL |
+| `npm run doctor` | Run preflight health checks |
+| `npm test` | Run unit tests (vitest) |
+| `npm run test:e2e:desktop-acceptance` | Run full Electron E2E test |
+| `npx prisma db push` | Sync Prisma schema to database |
+| `npx prisma generate` | Regenerate Prisma client |
+
+---
 
 ## Troubleshooting
 
-### The app opens in a browser tab but the repo picker does nothing
+### App opens but the repo picker does nothing
 
-Use the Electron desktop app:
+You're in the browser preview. Use the Electron desktop app:
 
 ```bash
 npm run start:desktop
 ```
 
-The browser preview does not have the native desktop bridge.
+### Model does not respond
 
-### The app opens but the model does not answer
-
-Check:
+Check the MLX server:
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-Then confirm the On-Prem provider is pointed at:
+If it's not running, start it:
 
-- `http://127.0.0.1:8000/v1`
+```bash
+python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000
+```
 
-### The scaffold path fails
+### Database connection fails
 
-Check:
-- model health
-- Postgres is up
-- `Console` for verification output
-- `Runs` for the verification bundle and report
+Check PostgreSQL is running:
 
-Then rerun from a clean empty folder.
+```bash
+docker ps | grep agentic_workforce_postgres
+```
 
-### Qwen CLI is configured but not answering
+If not:
 
-Open `Settings` and confirm:
-- the account is enabled
-- auth is valid
-- the provider is selected intentionally
+```bash
+npm run db:up
+npx prisma db push
+```
 
-Re-run auth or import the current `~/.qwen` session if needed.
+### Scaffold fails
 
-## Docs
+Check in order:
+1. Model health (`curl http://127.0.0.1:8000/health`)
+2. PostgreSQL is up
+3. Console tab for verification output
+4. Try a clean empty folder
 
-- [Onboarding](/Users/neilslab/agentic_workforce/docs/onboarding.md)
-- [Architecture](/Users/neilslab/agentic_workforce/docs/architecture.md)
-- [Troubleshooting](/Users/neilslab/agentic_workforce/docs/troubleshooting.md)
-- [Local Runtime Runbook](/Users/neilslab/agentic_workforce/docs/runbooks/local-runtime.md)
-- [Qwen CLI Accounts](/Users/neilslab/agentic_workforce/docs/runbooks/qwen-cli-accounts.md)
-- [Playwright E2E](/Users/neilslab/agentic_workforce/docs/runbooks/playwright-e2e.md)
-- [Distillation Runbook](/Users/neilslab/agentic_workforce/docs/runbooks/distillation-pilot.md)
+### White screen in Electron
 
-## Packaging
+Check the Electron DevTools console (Cmd+Option+I) for errors. Common causes:
+- API server not running on the expected port
+- Database not initialized
+- Missing Prisma client (run `npx prisma generate`)
 
-- Source startup: `npm run start:desktop`
-- Electron shell only: `npm run dev:desktop`
-- Desktop build: `npm run dist:desktop`
+---
 
-## For Engineers Working On The Product
+## Technical Architecture
 
-The main active engineering focus areas are:
-- local `4B` follow-up edit reliability
-- tighter blueprint-aware verification and reporting
-- Electron acceptance harness hardening
-- cleaner mission-control BFF unification
-- carefully constrained parallelism only after single-agent reliability is green
+### System overview
+
+```mermaid
+graph TB
+  subgraph Desktop["Electron Desktop App"]
+    UI["React Frontend\n(Vite + TailwindCSS)"]
+    Bridge["Desktop Bridge\n(IPC)"]
+    Electron["Electron Main Process"]
+  end
+
+  subgraph Server["Fastify API Server"]
+    Routes["API Routes\n(/api/v8/*)"]
+    Services["Service Layer"]
+    EventBus["Event Bus"]
+  end
+
+  subgraph Data["Data Layer"]
+    Prisma["Prisma ORM"]
+    Postgres["PostgreSQL\n(port 5433)"]
+    Worktrees["Managed Git\nWorktrees"]
+  end
+
+  subgraph Providers["Provider Factory"]
+    OnPrem["On-Prem Qwen\n(MLX, port 8000)"]
+    QwenCLI["Qwen CLI\n(optional)"]
+    OpenAICompat["OpenAI-Compatible\n(optional)"]
+    OpenAIResp["OpenAI Responses\n(optional)"]
+  end
+
+  subgraph Sidecar["Rust Sidecar"]
+    TreeSitter["Tree-sitter\nParsing"]
+  end
+
+  UI --> Bridge
+  Bridge --> Electron
+  Electron --> Routes
+  UI -->|HTTP| Routes
+  Routes --> Services
+  Services --> EventBus
+  Services --> Prisma
+  Prisma --> Postgres
+  Services --> Worktrees
+  Services --> Providers
+  Services --> Sidecar
+
+  style Desktop fill:#1e1b4b,color:#fff
+  style Server fill:#1e3a5f,color:#fff
+  style Data fill:#1a2e1a,color:#fff
+  style Providers fill:#3b1a1a,color:#fff
+  style Sidecar fill:#3b2f1a,color:#fff
+```
+
+### Execution pipeline
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant UI as React UI
+  participant API as Fastify API
+  participant Orch as Provider Orchestrator
+  participant Fast as Fast Model (0.8B)
+  participant Build as Build Model (4B)
+  participant WT as Managed Worktree
+  participant Verify as Verification Runner
+
+  User->>UI: Describe objective
+  UI->>API: POST /overseer/execute
+  API->>Orch: planExecution()
+  Orch->>Fast: Context shaping + impact analysis
+  Fast-->>Orch: Context pack + file targets
+  Orch->>Build: Generate patch manifest
+  Build-->>Orch: PatchManifest (files, strategies)
+  loop Per file in manifest
+    Orch->>Build: Generate file content
+    Build-->>Orch: File content
+    Orch->>WT: Write file to worktree
+  end
+  Orch->>Verify: Run verification commands
+  Verify-->>Orch: VerificationBundle
+  alt Verification fails
+    loop max 3 repair rounds
+      Orch->>Build: Repair from failure evidence
+      Build-->>Orch: Repaired content
+      Orch->>Verify: Re-verify
+    end
+  end
+  Orch-->>API: ExecutionResult + Report
+  API-->>UI: Snapshot update
+  UI-->>User: Show results + evidence
+```
+
+### Source directory layout
+
+```
+src/
+  main.tsx                          # Vite entry point
+  app/
+    App.tsx                         # Root React component
+    store/                          # Zustand UI state
+    hooks/                          # React hooks (mission control live data)
+    lib/                            # Desktop bridge, utilities
+    components/
+      UI.tsx                        # Shared UI primitives (Panel, Chip, etc.)
+      views/
+        LandingMissionView.tsx      # Landing / mission control
+        CodebaseView.tsx            # File tree + source viewer
+        ConsoleView.tsx             # Event stream viewer
+        ProjectsWorkspaceView.tsx   # Project management
+        SettingsControlView.tsx     # Settings + Labs
+        OverseerView.tsx            # Overseer execution surface
+        RunsView.tsx                # Run history + reports
+        ...
+      mission/
+        OverseerDrawer.tsx          # Execution drawer
+        ProjectBlueprintPanel.tsx   # Blueprint display + overrides
+        MissionHeaderStrip.tsx      # Active project header
+        ...
+      ui/                           # shadcn/ui component library
+  server/
+    index.ts                        # Server entry (port binding)
+    app.ts                          # Fastify app + all route definitions
+    db.ts                           # Prisma client singleton
+    eventBus.ts                     # Server-side event bus
+    providers/
+      factory.ts                    # Provider factory + role mapping
+      stubAdapters.ts               # OnPremQwen, OpenAiCompatible adapters
+      openaiResponsesAdapter.ts     # OpenAI Responses adapter
+      qwenCliAdapter.ts             # Qwen CLI multi-account adapter
+      modelPlugins.ts               # Model plugin registry
+      inferenceBackends.ts          # Inference backend registry
+    services/
+      executionService.ts           # Manifest-first execution pipeline
+      missionControlService.ts      # BFF snapshot aggregation
+      projectBlueprintService.ts    # Blueprint extraction + persistence
+      projectScaffoldService.ts     # New project scaffolding
+      codeGraphService.ts           # Code graph + context packs
+      providerOrchestrator.ts       # Model role orchestration + escalation
+      verificationPolicy.ts         # Blueprint-driven verification planning
+      repoService.ts                # Repo registry + worktree management
+      approvalService.ts            # Human-in-the-loop approvals
+      benchmarkService.ts           # Blueprint-aware benchmark scoring
+      patchHelpers.ts               # Patch parsing + application
+      blueprintHelpers.ts           # Blueprint extraction helpers
+      codebaseHelpers.ts            # File tree + content helpers
+      ...
+    sidecar/
+      client.ts                     # Rust sidecar gRPC client
+      manager.ts                    # Sidecar lifecycle management
+  shared/
+    contracts.ts                    # All domain types (1175 lines)
+electron/
+  main.mjs                         # Electron main process
+prisma/
+  schema.prisma                     # Database schema (67 models)
+scripts/
+  playwright/                       # E2E test scripts
+  bootstrap.mjs                     # Preflight bootstrap checks
+  doctor.mjs                        # Health diagnostics
+```
+
+### Key domain types
+
+```mermaid
+classDiagram
+  class ProjectBlueprint {
+    +id: string
+    +projectId: string
+    +version: number
+    +charter: Charter
+    +codingStandards: CodingStandards
+    +testingPolicy: TestingPolicy
+    +documentationPolicy: DocPolicy
+    +executionPolicy: ExecutionPolicy
+    +providerPolicy: ProviderPolicy
+  }
+
+  class PatchManifest {
+    +summary: string
+    +files: FileEntry[]
+    +docsChecked: string[]
+    +tests: string[]
+  }
+
+  class FileEntry {
+    +path: string
+    +action: create | update
+    +strategy: full_file | unified_diff | search_replace
+    +reason: string
+  }
+
+  class VerificationBundle {
+    +id: string
+    +runId: string
+    +commands: CommandResult[]
+    +passed: boolean
+    +repairRounds: number
+  }
+
+  class ShareableRunReport {
+    +id: string
+    +runId: string
+    +summary: string
+    +changedFiles: string[]
+    +testsPassed: string[]
+    +docsUpdated: string[]
+    +remainingRisks: string[]
+  }
+
+  class ConsoleEvent {
+    +id: string
+    +category: execution | verification | provider | approval | indexing
+    +level: info | warn | error
+    +message: string
+  }
+
+  ProjectBlueprint --> PatchManifest : drives planning
+  PatchManifest --> FileEntry : contains
+  PatchManifest --> VerificationBundle : verified by
+  VerificationBundle --> ShareableRunReport : produces
+```
+
+### API endpoints (v8 mission)
+
+**Queries:**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v8/mission/snapshot` | Full mission state (BFF aggregation) |
+| `GET /api/v8/mission/codebase/tree` | File tree from managed worktree |
+| `GET /api/v8/mission/codebase/file` | File content from managed worktree |
+| `GET /api/v8/mission/console` | Console event stream |
+| `GET /api/v8/projects/:id/blueprint` | Project blueprint |
+| `GET /api/v8/projects/:id/report/latest` | Latest run report |
+
+**Commands:**
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v8/projects/connect/local` | Connect a local repo |
+| `POST /api/v8/projects/bootstrap/empty` | Bootstrap new project from empty folder |
+| `POST /api/v8/projects/:id/scaffold/execute` | Execute scaffold for new project |
+| `POST /api/v8/projects/:id/blueprint/generate` | Generate blueprint from repo |
+| `POST /api/v8/projects/:id/blueprint/update` | Update blueprint with overrides |
+| `POST /api/v8/mission/overseer/route.review` | Review execution route |
+| `POST /api/v8/mission/overseer/execute` | Execute coding objective |
+| `POST /api/v8/mission/approval/decide` | Approve or reject pending action |
+| `POST /api/v8/mission/actions/stop` | Stop active execution |
+| `POST /api/v8/mission/actions/task.requeue` | Requeue a failed task |
+| `POST /api/v8/mission/actions/task.transition` | Transition task status |
+
+### Provider factory architecture
+
+```mermaid
+flowchart TD
+  Factory["Provider Factory"]
+
+  Factory --> OnPrem["On-Prem Qwen Adapter\n(MLX / Ollama / vLLM)"]
+  Factory --> QwenCLI["Qwen CLI Adapter\nMulti-account failover"]
+  Factory --> OpenAICompat["OpenAI-Compatible\nGeneric adapter"]
+  Factory --> OpenAIResp["OpenAI Responses\nCloud escalation"]
+
+  OnPrem --> MLX["mlx_lm.server\nApple Silicon"]
+  OnPrem --> Ollama["Ollama\n(optional)"]
+  OnPrem --> VLLM["vLLM\n(optional)"]
+
+  QwenCLI --> Acct1["Account 1"]
+  QwenCLI --> Acct2["Account 2"]
+  QwenCLI --> AcctN["Account N"]
+
+  RoleMap["Model Role Mapping"]
+  RoleMap -->|utility_fast| OnPrem
+  RoleMap -->|coder_default| OnPrem
+  RoleMap -->|review_deep| OnPrem
+  RoleMap -->|overseer_escalation| OpenAIResp
+
+  style Factory fill:#7c3aed,color:#fff
+  style RoleMap fill:#0e7490,color:#fff
+```
+
+### Edit strategy selection
+
+```mermaid
+flowchart TD
+  File["Target File"]
+  Check{"File exists?\nLine count?"}
+
+  File --> Check
+  Check -->|"new file"| FullFile["full_file\nGenerate complete content"]
+  Check -->|"< 150 lines"| FullFile
+  Check -->|">= 150 lines"| DiffMode["unified_diff or\nsearch_replace"]
+
+  DiffMode --> Apply["Apply patch to existing content"]
+  FullFile --> Write["Write to worktree"]
+  Apply --> Write
+
+  Write --> Verify["Run verification"]
+
+  style FullFile fill:#059669,color:#fff
+  style DiffMode fill:#d97706,color:#fff
+```
+
+---
+
+## For Engineers Working on the Product
+
+### Active engineering priorities
+
+1. **Local 4B follow-up edit reliability** — expanding deterministic templates and improving unconstrained edit quality
+2. **Blueprint-aware verification and reporting** — tighter enforcement visibility
+3. **E2E acceptance harness** — maintaining 22-check comprehensive test suite
+4. **Mission-control BFF unification** — server-side snapshot aggregation
+5. **Single-agent reliability first** — mutating parallelism deferred until single-agent path is consistently green
+
+### Key architectural decisions
+
+- **Manifest-first execution**: patch manifest is planned before any code generation. Each file generated independently.
+- **Deterministic repair before model repair**: unresolved imports, unused imports, path mismatches fixed without model calls.
+- **Blueprint-as-contract**: `ProjectBlueprint` is not decorative metadata — it drives verification, reporting, and scoring.
+- **chooseEditStrategy guard**: files >150 lines use diff/search-replace instead of full-file rewrite.
+- **Bounded repair**: max 3 repair rounds, failure taxonomy drives repair, not vague re-prompting.
+- **BFF snapshot aggregation**: `MissionControlService` composes snapshot, console events, blueprint, and codebase into one response.
+
+### Roadmap
+
+See [`long_term_upgrades.md`](long_term_upgrades.md) for the full roadmap with implementation status.
+
+Remaining deferred items:
+- Cloud-aware prompt caching (Section 7)
+- Mutating multi-agent parallelism (Section 8 conditions)
+- Candidate-training-data promotion (Section 4.4)
+- Broader arbitrary multi-file follow-up edit reliability
+
+---
+
+## License
+
+See [ATTRIBUTIONS.md](ATTRIBUTIONS.md) for third-party attribution details.
