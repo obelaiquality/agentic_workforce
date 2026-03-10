@@ -238,12 +238,12 @@ The product exposes four mode names. Users think in modes, not raw model IDs.
 ```mermaid
 flowchart TD
   Objective["Coding Objective"]
-  Fast["Fast (0.8B)\nContext shaping"]
-  Build["Build (4B)\nCode generation"]
-  Verify["Deterministic Verification\nlint / test / build"]
-  Repair["Repair Loop\nmax 3 rounds"]
-  Review["Review (4B + reasoning)\nFailure correction"]
-  Escalate["Escalate (OpenAI)\nOptional"]
+  Fast["Fast (0.8B)<br/>Context shaping"]
+  Build["Build (4B)<br/>Code generation"]
+  Verify["Deterministic Verification<br/>lint / test / build"]
+  Repair["Repair Loop<br/>max 3 rounds"]
+  Review["Review (4B + reasoning)<br/>Failure correction"]
+  Escalate["Escalate (OpenAI)<br/>Optional"]
   Done["Report + Evidence"]
 
   Objective --> Fast
@@ -464,32 +464,32 @@ Check the Electron DevTools console (Cmd+Option+I) for errors. Common causes:
 ```mermaid
 graph TB
   subgraph Desktop["Electron Desktop App"]
-    UI["React Frontend\n(Vite + TailwindCSS)"]
-    Bridge["Desktop Bridge\n(IPC)"]
+    UI["React Frontend<br/>(Vite + TailwindCSS)"]
+    Bridge["Desktop Bridge<br/>(IPC)"]
     Electron["Electron Main Process"]
   end
 
   subgraph Server["Fastify API Server"]
-    Routes["API Routes\n(/api/v8/*)"]
+    Routes["API Routes<br/>(/api/v8/*)"]
     Services["Service Layer"]
     EventBus["Event Bus"]
   end
 
   subgraph Data["Data Layer"]
     Prisma["Prisma ORM"]
-    Postgres["PostgreSQL\n(port 5433)"]
-    Worktrees["Managed Git\nWorktrees"]
+    Postgres["PostgreSQL<br/>(port 5433)"]
+    Worktrees["Managed Git<br/>Worktrees"]
   end
 
   subgraph Providers["Provider Factory"]
-    OnPrem["On-Prem Qwen\n(MLX, port 8000)"]
-    QwenCLI["Qwen CLI\n(optional)"]
-    OpenAICompat["OpenAI-Compatible\n(optional)"]
-    OpenAIResp["OpenAI Responses\n(optional)"]
+    OnPrem["On-Prem Qwen<br/>(MLX, port 8000)"]
+    QwenCLI["Qwen CLI<br/>(optional)"]
+    OpenAICompat["OpenAI-Compatible<br/>(optional)"]
+    OpenAIResp["OpenAI Responses<br/>(optional)"]
   end
 
   subgraph Sidecar["Rust Sidecar"]
-    TreeSitter["Tree-sitter\nParsing"]
+    TreeSitter["Tree-sitter<br/>Parsing"]
   end
 
   UI --> Bridge
@@ -715,14 +715,14 @@ classDiagram
 flowchart TD
   Factory["Provider Factory"]
 
-  Factory --> OnPrem["On-Prem Qwen Adapter\n(MLX / Ollama / vLLM)"]
-  Factory --> QwenCLI["Qwen CLI Adapter\nMulti-account failover"]
-  Factory --> OpenAICompat["OpenAI-Compatible\nGeneric adapter"]
-  Factory --> OpenAIResp["OpenAI Responses\nCloud escalation"]
+  Factory --> OnPrem["On-Prem Qwen Adapter<br/>(MLX / Ollama / vLLM)"]
+  Factory --> QwenCLI["Qwen CLI Adapter<br/>Multi-account failover"]
+  Factory --> OpenAICompat["OpenAI-Compatible<br/>Generic adapter"]
+  Factory --> OpenAIResp["OpenAI Responses<br/>Cloud escalation"]
 
-  OnPrem --> MLX["mlx_lm.server\nApple Silicon"]
-  OnPrem --> Ollama["Ollama\n(optional)"]
-  OnPrem --> VLLM["vLLM\n(optional)"]
+  OnPrem --> MLX["mlx_lm.server<br/>Apple Silicon"]
+  OnPrem --> Ollama["Ollama<br/>(optional)"]
+  OnPrem --> VLLM["vLLM<br/>(optional)"]
 
   QwenCLI --> Acct1["Account 1"]
   QwenCLI --> Acct2["Account 2"]
@@ -743,12 +743,12 @@ flowchart TD
 ```mermaid
 flowchart TD
   File["Target File"]
-  Check{"File exists?\nLine count?"}
+  Check{"File exists?<br/>Line count?"}
 
   File --> Check
-  Check -->|"new file"| FullFile["full_file\nGenerate complete content"]
+  Check -->|"new file"| FullFile["full_file<br/>Generate complete content"]
   Check -->|"< 150 lines"| FullFile
-  Check -->|">= 150 lines"| DiffMode["unified_diff or\nsearch_replace"]
+  Check -->|">= 150 lines"| DiffMode["unified_diff or<br/>search_replace"]
 
   DiffMode --> Apply["Apply patch to existing content"]
   FullFile --> Write["Write to worktree"]
