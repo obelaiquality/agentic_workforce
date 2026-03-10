@@ -79,7 +79,7 @@ The operator flow in the UI:
 |---|---|---|
 | **Node.js** | 20+ | Runtime for server and frontend |
 | **Python** | 3.11+ | For local model server (mlx_lm, vLLM, etc.) |
-| **Docker** | Any modern | For PostgreSQL (docker-compose) |
+| **Docker** | Any modern | For PostgreSQL (docker-compose) — **optional** if you run Postgres yourself |
 | **Rust** | Latest stable | For the optional sidecar binary |
 
 Plus **one** local inference backend (see [Inference Backends](#inference-backends) below).
@@ -125,28 +125,43 @@ curl http://127.0.0.1:8000/health   # MLX / vLLM
 curl http://127.0.0.1:11434/v1/models  # Ollama
 ```
 
-### 3. Launch the desktop app
+### 3. Start PostgreSQL
 
+The app needs PostgreSQL on port 5433.
+
+**Option A — Docker (easiest)**:
 ```bash
-npm run start:desktop
+npm run db:up        # starts Postgres via docker-compose on port 5433
 ```
 
-This single command handles all remaining setup automatically:
-- Copies `.env.example` to `.env` if `.env` doesn't exist
-- Runs preflight doctor checks
-- Starts PostgreSQL via docker-compose (port 5433)
-- Pushes the Prisma schema (67 models)
-- Generates the Prisma client
-- Builds the Rust sidecar
-- Starts Vite + Fastify + Electron
+**Option B — Existing Postgres**: If you already run Postgres (Homebrew, system service, cloud), just make sure it's reachable on `127.0.0.1:5433`. Set the connection string in `.env`:
+```
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5433/agentic?schema=public"
+```
 
-> **Manual setup**: If you prefer to run steps individually or `start:desktop` has trouble, you can run them separately:
+### 4. Initialize the database
+
+```bash
+npx prisma db push     # Push schema (67 models)
+npx prisma generate    # Generate Prisma client
+```
+
+### 5. Launch the desktop app
+
+**Recommended** — use `dev:desktop` to start Vite + Electron directly:
+
+```bash
+npm run dev:desktop
+```
+
+This starts the Vite dev server, the Fastify API server (port 8787), the Rust sidecar, and the Electron shell. The app opens automatically.
+
+> **Alternative — full bootstrap**: `npm run start:desktop` runs all setup steps (env copy, doctor checks, Docker Postgres, Prisma, sidecar build) then launches the app. This requires Docker to be running. If you manage Postgres yourself or Docker isn't available, use `dev:desktop` instead.
+
+> **Dev without Electron**: To run just the web UI (no Electron window):
 > ```bash
-> cp .env.example .env        # Create env config (edit to add API keys)
-> npm run db:up                # Start PostgreSQL
-> npx prisma db push           # Initialize database schema
-> npx prisma generate          # Generate Prisma client
-> npm run dev:desktop           # Start Vite + Electron (Electron spawns the API)
+> npm run dev          # Vite dev server on http://localhost:5173
+> npm run dev:api      # API server on http://localhost:8787 (separate terminal)
 > ```
 
 ---
@@ -155,7 +170,7 @@ This single command handles all remaining setup automatically:
 
 ### Fastest confidence path
 
-1. Launch the desktop app with `npm run start:desktop`
+1. Launch the desktop app with `npm run dev:desktop`
 2. Click **New Project** or **Connect Local Repo**
 3. Pick an **empty folder** (for new projects) or an existing repo
 4. For new projects, click **Initialize New Project** when prompted
@@ -452,8 +467,8 @@ npm run build:server   # Backend (tsup)
 
 | Command | Purpose |
 |---|---|
-| `npm run start:desktop` | Full startup: bootstrap + dev + Electron |
-| `npm run dev:desktop` | Start Vite + Electron (Electron spawns the API server) |
+| `npm run dev:desktop` | **Recommended**: Start Vite + Electron (Electron spawns the API server) |
+| `npm run start:desktop` | Full bootstrap + dev + Electron (requires Docker for Postgres) |
 | `npm run dev:api` | Start the Fastify API server in watch mode |
 | `npm run dev` | Start Vite dev server only |
 | `npm run build` | Build frontend for production |
