@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package agentic.v1;
+
+message CommandEnvelope {
+  string event_id = 1;
+  string aggregate_id = 2;
+  string causation_id = 3;
+  string correlation_id = 4;
+  string actor = 5;
+  string timestamp = 6;
+  string type = 7;
+  string payload_json = 8;
+  int32 schema_version = 9;
+}
+
+message EventAck {
+  bool ok = 1;
+  string event_id = 2;
+  string message = 3;
+}
+
+message ReplayRequest {
+  string aggregate_id = 1;
+  string from_timestamp = 2;
+  string to_timestamp = 3;
+  int32 limit = 4;
+}
+
+message DomainEvent {
+  string event_id = 1;
+  string aggregate_id = 2;
+  string causation_id = 3;
+  string correlation_id = 4;
+  string actor = 5;
+  string timestamp = 6;
+  string type = 7;
+  string payload_json = 8;
+  int32 schema_version = 9;
+}
+
+message PolicyInput {
+  string action_type = 1;
+  string actor = 2;
+  string risk_level = 3;
+  string workspace_path = 4;
+  string payload_json = 5;
+  bool dry_run = 6;
+}
+
+message PolicyDecision {
+  string decision = 1;
+  bool requires_approval = 2;
+  repeated string reasons = 3;
+  repeated string required_scopes = 4;
+  string policy_version = 5;
+}
+
+message IntakeRequest {
+  string strategy = 1;
+  string seed = 2;
+  string actor = 3;
+  int32 reservation_ttl_seconds = 4;
+}
+
+message TaskAllocation {
+  bool found = 1;
+  string ticket_id = 2;
+  string strategy = 3;
+  double score = 4;
+  string reservation_expires_at = 5;
+  string message = 6;
+}
+
+message RoutingRequest {
+  string ticket_id = 1;
+  string run_id = 2;
+  string actor = 3;
+  string prompt = 4;
+  string risk_level = 5;
+  string workspace_path = 6;
+  int32 retrieval_context_count = 7;
+  int32 active_files_count = 8;
+}
+
+message RoutingDecision {
+  string execution_mode = 1;
+  string model_role = 2;
+  string provider_id = 3;
+  int32 max_lanes = 4;
+  string risk = 5;
+  string verification_depth = 6;
+  double decomposition_score = 7;
+  double estimated_file_overlap = 8;
+  repeated string rationale = 9;
+}
+
+message AgentHeartbeat {
+  string agent_id = 1;
+  string status = 2;
+  string summary = 3;
+  string metadata_json = 4;
+}
+
+message Ack {
+  bool ok = 1;
+  string message = 2;
+}
+
+service ControlPlane {
+  rpc AppendEvent(CommandEnvelope) returns (EventAck);
+  rpc Replay(ReplayRequest) returns (stream DomainEvent);
+  rpc EvaluatePolicy(PolicyInput) returns (PolicyDecision);
+  rpc AllocateTask(IntakeRequest) returns (TaskAllocation);
+  rpc PlanRoute(RoutingRequest) returns (RoutingDecision);
+  rpc Heartbeat(AgentHeartbeat) returns (Ack);
+}

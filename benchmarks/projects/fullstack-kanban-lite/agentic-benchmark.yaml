@@ -1,0 +1,25 @@
+projectId: fullstack-kanban-lite
+displayName: Fullstack Kanban Lite
+source:
+  kind: managed_pack
+  uri: fullstack-kanban-lite
+languages:
+  - javascript
+  - markdown
+setupCommand: echo ready
+verifyCommand: node scripts/verify.js
+guidelineSources:
+  - README.md
+  - docs/board.md
+timeBudgetSec: 1200
+networkPolicy: offline
+defaultProviderRole: coder_default
+taskSpecs:
+  - taskId: add-optimistic-move
+    title: Add optimistic move helper and docs
+    category: decompose
+    prompt: Add an applyOptimisticMove helper in ui/board.js, a transitionTask API helper in api/tasks.js, and document optimistic rollback in docs/board.md.
+    expectedArtifacts: [patch, tests, docs]
+    requiredChecks: [node scripts/verify.js]
+    requiredDocs: [docs/board.md]
+    hardFailIfMissing: [applyOptimisticMove, transitionTask, rollback_docs]

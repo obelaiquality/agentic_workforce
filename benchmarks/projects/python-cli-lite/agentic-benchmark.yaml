@@ -1,0 +1,25 @@
+projectId: python-cli-lite
+displayName: Python CLI Lite
+source:
+  kind: managed_pack
+  uri: python-cli-lite
+languages:
+  - python
+  - markdown
+setupCommand: echo ready
+verifyCommand: python3 scripts/verify.py
+guidelineSources:
+  - README.md
+  - docs/usage.md
+timeBudgetSec: 900
+networkPolicy: offline
+defaultProviderRole: coder_default
+taskSpecs:
+  - taskId: add-summary-command
+    title: Add summary formatter and usage docs
+    category: fix
+    prompt: Add a format_summary function in app.py and document the summary command in docs/usage.md.
+    expectedArtifacts: [patch, tests, docs]
+    requiredChecks: [python3 scripts/verify.py]
+    requiredDocs: [docs/usage.md]
+    hardFailIfMissing: [format_summary, summary_docs]

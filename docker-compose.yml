@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentic_workforce_postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic
+      POSTGRES_DB: agentic_workforce
+    volumes:
+      - agentic_workforce_pgdata:/var/lib/postgresql/data
+
+volumes:
+  agentic_workforce_pgdata:

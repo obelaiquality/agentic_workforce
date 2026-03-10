@@ -1,0 +1,25 @@
+projectId: ops-runbook-lite
+displayName: Ops Runbook Lite
+source:
+  kind: managed_pack
+  uri: ops-runbook-lite
+languages:
+  - javascript
+  - markdown
+setupCommand: echo ready
+verifyCommand: node scripts/verify.js
+guidelineSources:
+  - README.md
+  - docs/runbook.md
+timeBudgetSec: 900
+networkPolicy: offline
+defaultProviderRole: utility_fast
+taskSpecs:
+  - taskId: add-smoke-runbook
+    title: Add smoke script and runbook steps
+    category: feature
+    prompt: Add a smokeCheck export in scripts/smoke.js and document exact recovery steps in docs/runbook.md.
+    expectedArtifacts: [patch, docs]
+    requiredChecks: [node scripts/verify.js]
+    requiredDocs: [docs/runbook.md]
+    hardFailIfMissing: [smokeCheck, recovery_steps]

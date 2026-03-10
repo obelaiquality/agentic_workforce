@@ -1,0 +1,25 @@
+projectId: fastify-api-lite
+displayName: Fastify API Lite
+source:
+  kind: managed_pack
+  uri: fastify-api-lite
+languages:
+  - javascript
+  - markdown
+setupCommand: echo ready
+verifyCommand: node scripts/verify.js
+guidelineSources:
+  - README.md
+  - docs/api.md
+timeBudgetSec: 900
+networkPolicy: offline
+defaultProviderRole: coder_default
+taskSpecs:
+  - taskId: add-create-task-route
+    title: Add create task route contract and docs
+    category: feature
+    prompt: Add a createTaskHandler export in src/routes.js and document POST /tasks in docs/api.md.
+    expectedArtifacts: [patch, tests, docs]
+    requiredChecks: [node scripts/verify.js]
+    requiredDocs: [docs/api.md]
+    hardFailIfMissing: [createTaskHandler, post_tasks_docs]

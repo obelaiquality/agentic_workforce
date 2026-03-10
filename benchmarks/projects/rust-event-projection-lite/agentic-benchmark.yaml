@@ -1,0 +1,23 @@
+projectId: rust-event-projection-lite
+displayName: Rust Event Projection Lite
+source:
+  kind: managed_pack
+  uri: rust-event-projection-lite
+languages:
+  - rust
+setupCommand: cargo test --quiet || true
+verifyCommand: cargo test --quiet
+guidelineSources:
+  - README.md
+timeBudgetSec: 1200
+networkPolicy: offline
+defaultProviderRole: review_deep
+taskSpecs:
+  - taskId: fix-replay-fold
+    title: Fix replay fold for duplicate events
+    category: fix
+    prompt: Update src/lib.rs so fold_event ignores duplicate event ids while preserving order.
+    expectedArtifacts: [patch, tests]
+    requiredChecks: [cargo test --quiet]
+    requiredDocs: []
+    hardFailIfMissing: [duplicate_event_guard]

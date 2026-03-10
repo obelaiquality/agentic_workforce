@@ -1,0 +1,1201 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TicketStatus {
+  backlog
+  ready
+  in_progress
+  review
+  blocked
+  done
+}
+
+enum TicketPriority {
+  p0
+  p1
+  p2
+  p3
+}
+
+enum TicketRisk {
+  low
+  medium
+  high
+}
+
+enum ChatMessageRole {
+  system
+  user
+  assistant
+}
+
+enum ProviderAccountState {
+  ready
+  cooldown
+  auth_required
+  disabled
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+enum TaskLifecycleStatus {
+  inactive
+  reserved
+  active
+  in_progress
+  blocked
+  completed
+}
+
+enum CommandStatus {
+  queued
+  approved
+  rejected
+  executed
+  failed
+}
+
+enum DistillDatasetStatus {
+  draft
+  reviewed
+  approved
+  archived
+}
+
+enum DistillReviewDecision {
+  pending
+  approved
+  rejected
+  needs_edit
+}
+
+enum DistillRunStage {
+  sft
+  orpo
+  tool_rl
+}
+
+enum DistillRunStatus {
+  queued
+  running
+  failed
+  completed
+  promoted
+}
+
+enum DistillRunFailureReason {
+  rate_limited
+  budget_exhausted
+  trainer_unavailable
+  dataset_insufficient
+  not_implemented
+  unknown
+}
+
+model Ticket {
+  id                 String       @id @default(cuid())
+  repoId             String?      @map("repo_id")
+  title              String
+  description        String       @default("")
+  status             TicketStatus @default(backlog)
+  priority           TicketPriority @default(p2)
+  acceptanceCriteria String[]     @default([])
+  dependencies       String[]     @default([])
+  risk               TicketRisk   @default(medium)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  events             TicketEvent[]
+
+  @@index([repoId, status, priority, updatedAt])
+}
+
+model TicketEvent {
+  id        String   @id @default(cuid())
+  ticketId  String
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+}
+
+model ChatSession {
+  id            String        @id @default(cuid())
+  repoId        String?       @map("repo_id")
+  title         String
+  providerId    String        @default("onprem-qwen")
+  activeAccount String?
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  messages      ChatMessage[]
+
+  @@index([repoId, updatedAt])
+}
+
+model ChatMessage {
+  id        String          @id @default(cuid())
+  sessionId String
+  role      ChatMessageRole
+  content   String
+  metadata  Json?
+  createdAt DateTime        @default(now())
+  session   ChatSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+model ProviderAccount {
+  id               String               @id @default(cuid())
+  providerId       String
+  label            String
+  profilePath      String
+  enabled          Boolean              @default(true)
+  state            ProviderAccountState @default(ready)
+  cooldownUntil    DateTime?
+  quotaNextUsableAt DateTime?
+  quotaEtaConfidence Float              @default(0)
+  lastQuotaErrorAt DateTime?
+  lastUsedAt       DateTime?
+  keychainRef      String?
+  metadata         Json?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  events           ProviderAccountEvent[]
+  usageSamples     ProviderUsageSample[]
+
+  @@index([providerId, state, cooldownUntil])
+}
+
+model ProviderAccountEvent {
+  id        String          @id @default(cuid())
+  accountId String
+  type      String
+  payload   Json
+  createdAt DateTime        @default(now())
+  account   ProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+model ProviderUsageSample {
+  id           String          @id @default(cuid())
+  accountId    String
+  inputTokens  Int             @default(0)
+  outputTokens Int             @default(0)
+  totalTokens  Int             @default(0)
+  errorClass   String?
+  createdAt    DateTime        @default(now())
+  account      ProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+model RunEvent {
+  id        String   @id @default(cuid())
+  runId     String?
+  kind      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model ApprovalRequest {
+  id          String         @id @default(cuid())
+  actionType  String
+  payload     Json
+  status      ApprovalStatus @default(pending)
+  requestedAt DateTime       @default(now())
+  decidedAt   DateTime?
+  decidedBy   String?
+  reason      String?
+
+  @@index([status, requestedAt])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  actor     String
+  eventType String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model EventLog {
+  eventId       String   @id @map("event_id")
+  aggregateId   String   @map("aggregate_id")
+  causationId   String   @map("causation_id")
+  correlationId String   @map("correlation_id")
+  actor         String
+  eventType     String   @map("event_type")
+  payload       Json
+  schemaVersion Int      @default(1) @map("schema_version")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([aggregateId, createdAt])
+  @@map("event_log")
+}
+
+model EventOutbox {
+  id        BigInt   @id @default(autoincrement())
+  eventId   String   @map("event_id")
+  topic     String
+  payload   Json
+  published Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([published, createdAt])
+  @@map("event_outbox")
+}
+
+model TaskProjection {
+  ticketId         String              @id @map("ticket_id")
+  repoId           String?             @map("repo_id")
+  title            String
+  description      String              @default("")
+  status           TaskLifecycleStatus @default(inactive)
+  priority         TicketPriority      @default(p2)
+  risk             TicketRisk          @default(medium)
+  acceptanceCriteria Json              @default("[]") @map("acceptance_criteria")
+  dependencies     Json                @default("[]")
+  assigneeAgentId  String?             @map("assignee_agent_id")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+  lastTransitionAt DateTime?           @map("last_transition_at")
+  reservation      TaskReservation?
+
+  @@index([repoId, status, priority, updatedAt])
+  @@map("task_projection")
+}
+
+model TaskReservation {
+  ticketId    String    @id @map("ticket_id")
+  reservedBy  String    @map("reserved_by")
+  reservedAt  DateTime  @map("reserved_at")
+  expiresAt   DateTime  @map("expires_at")
+  reclaimedAt DateTime? @map("reclaimed_at")
+  task        TaskProjection @relation(fields: [ticketId], references: [ticketId], onDelete: Cascade)
+
+  @@index([expiresAt, reclaimedAt])
+  @@map("task_reservations")
+}
+
+model AgentHeartbeat {
+  agentId    String   @id @map("agent_id")
+  status     String
+  summary    String?
+  metadata   Json     @default("{}")
+  lastSeenAt DateTime @updatedAt @map("last_seen_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([lastSeenAt])
+  @@map("agent_heartbeats")
+}
+
+model RunProjection {
+  runId      String   @id @map("run_id")
+  ticketId   String?  @map("ticket_id")
+  status     String
+  providerId String?  @map("provider_id")
+  metadata   Json     @default("{}")
+  startedAt  DateTime? @map("started_at")
+  endedAt    DateTime? @map("ended_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@map("run_projection")
+}
+
+model ProviderAccountProjection {
+  accountId          String   @id @map("account_id")
+  providerId         String   @map("provider_id")
+  state              String
+  quotaNextUsableAt  DateTime? @map("quota_next_usable_at")
+  quotaEtaConfidence Float    @default(0) @map("quota_eta_confidence")
+  metadata           Json     @default("{}")
+  lastSeenAt         DateTime @updatedAt @map("last_seen_at")
+
+  @@index([providerId, state, lastSeenAt])
+  @@map("provider_account_projection")
+}
+
+model RoutingDecisionProjection {
+  id                  String   @id @default(cuid())
+  repoId              String?  @map("repo_id")
+  ticketId            String?  @map("ticket_id")
+  runId               String?  @map("run_id")
+  executionMode       String   @map("execution_mode")
+  modelRole           String   @map("model_role")
+  providerId          String   @map("provider_id")
+  maxLanes            Int      @default(1) @map("max_lanes")
+  risk                String   @default("medium")
+  verificationDepth   String   @default("standard") @map("verification_depth")
+  decompositionScore  Float    @default(0) @map("decomposition_score")
+  estimatedFileOverlap Float   @default(0) @map("estimated_file_overlap")
+  rationale           Json     @default("[]")
+  metadata            Json     @default("{}")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, createdAt])
+  @@index([ticketId, createdAt])
+  @@index([runId, createdAt])
+  @@map("routing_decision_projection")
+}
+
+model ContextManifest {
+  id               String   @id @default(cuid())
+  repoId           String?  @map("repo_id")
+  aggregateId      String   @map("aggregate_id")
+  aggregateType    String   @map("aggregate_type")
+  goal             String
+  constraints      Json     @default("[]")
+  activeFiles      Json     @default("[]") @map("active_files")
+  retrievalIds     Json     @default("[]") @map("retrieval_ids")
+  memoryRefs       Json     @default("[]") @map("memory_refs")
+  openQuestions    Json     @default("[]") @map("open_questions")
+  verificationPlan Json     @default("[]") @map("verification_plan")
+  rollbackPlan     Json     @default("[]") @map("rollback_plan")
+  policyScopes     Json     @default("[]") @map("policy_scopes")
+  version          Int      @default(1)
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, aggregateId, aggregateType, updatedAt])
+  @@map("context_manifest")
+}
+
+model WorkflowStateProjection {
+  id          String   @id @default(cuid())
+  repoId      String?  @map("repo_id")
+  aggregateId String   @map("aggregate_id")
+  phase       String
+  status      String
+  summary     String   @default("")
+  nextSteps   Json     @default("[]") @map("next_steps")
+  blockers    Json     @default("[]")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, aggregateId, updatedAt])
+  @@map("workflow_state_projection")
+}
+
+model MemoryRecord {
+  id          String   @id @default(cuid())
+  kind        String
+  repoId      String?  @map("repo_id")
+  aggregateId String   @map("aggregate_id")
+  content     String
+  citations   Json     @default("[]")
+  confidence  Float    @default(0.5)
+  staleAfter  DateTime? @map("stale_after")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([kind, repoId, aggregateId, staleAfter])
+  @@map("memory_record")
+}
+
+model RetrievalTrace {
+  id           String   @id @default(cuid())
+  repoId       String?  @map("repo_id")
+  aggregateId  String   @map("aggregate_id")
+  query        String
+  retrievalIds Json     @default("[]") @map("retrieval_ids")
+  results      Json     @default("[]")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([repoId, aggregateId, createdAt])
+  @@map("retrieval_trace")
+}
+
+model ApprovalProjection {
+  approvalId  String    @id @map("approval_id")
+  actionType  String    @map("action_type")
+  status      ApprovalStatus @default(pending)
+  reason      String?
+  payload     Json
+  requestedAt DateTime  @default(now()) @map("requested_at")
+  decidedAt   DateTime? @map("decided_at")
+
+  @@index([status, requestedAt])
+  @@map("approval_projection")
+}
+
+model AgentLane {
+  id                String   @id @default(cuid())
+  repoId            String?  @map("repo_id")
+  ticketId          String   @map("ticket_id")
+  runId             String?  @map("run_id")
+  role              String
+  state             String   @default("queued")
+  worktreePath      String   @map("worktree_path")
+  contextManifestId String?  @map("context_manifest_id")
+  leaseExpiresAt    DateTime @map("lease_expires_at")
+  lastHeartbeatAt   DateTime? @map("last_heartbeat_at")
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, ticketId, state, leaseExpiresAt])
+  @@index([runId, updatedAt])
+  @@map("agent_lane")
+}
+
+model WorktreeLease {
+  id          String   @id @default(cuid())
+  repoId      String?  @map("repo_id")
+  laneId      String   @unique @map("lane_id")
+  worktreePath String  @map("worktree_path")
+  leaseOwner  String   @map("lease_owner")
+  expiresAt   DateTime @map("expires_at")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, expiresAt, updatedAt])
+  @@map("worktree_lease")
+}
+
+model MergeReport {
+  id                String   @id @default(cuid())
+  repoId            String?  @map("repo_id")
+  runId             String   @unique @map("run_id")
+  changedFiles      Json     @default("[]") @map("changed_files")
+  overlapScore      Float    @default(0) @map("overlap_score")
+  semanticConflicts Json     @default("[]") @map("semantic_conflicts")
+  requiredChecks    Json     @default("[]") @map("required_checks")
+  outcome           String
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, outcome, updatedAt])
+  @@map("merge_report")
+}
+
+model RepoRegistry {
+  id                  String   @id @default(cuid())
+  displayName         String   @map("display_name")
+  sourceKind          String   @map("source_kind")
+  sourceUri           String   @map("source_uri")
+  canonicalRoot       String   @map("canonical_root")
+  managedWorktreeRoot String   @map("managed_worktree_root")
+  defaultBranch       String   @map("default_branch")
+  toolchainProfile    Json     @default("{}") @map("toolchain_profile")
+  benchmarkEligible   Boolean  @default(true) @map("benchmark_eligible")
+  active              Boolean  @default(false)
+  metadata            Json     @default("{}")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([active, displayName])
+  @@map("repo_registry")
+}
+
+model RepoStateCapsule {
+  id                    String   @id @default(cuid())
+  repoId                String   @map("repo_id")
+  activeBranch          String   @map("active_branch")
+  activeWorktreePath    String   @map("active_worktree_path")
+  selectedTicketId      String?  @map("selected_ticket_id")
+  selectedRunId         String?  @map("selected_run_id")
+  recentChatSessionIds  Json     @default("[]") @map("recent_chat_session_ids")
+  lastContextManifestId String?  @map("last_context_manifest_id")
+  retrievalCacheKeys    Json     @default("[]") @map("retrieval_cache_keys")
+  providerSessions      Json     @default("[]") @map("provider_sessions")
+  warmAt                DateTime @default(now()) @map("warm_at")
+  suspendedAt           DateTime? @map("suspended_at")
+  metadata              Json     @default("{}")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, suspendedAt])
+  @@map("repo_state_capsule")
+}
+
+model RepoGuidelineProfile {
+  id                 String   @id @default(cuid())
+  repoId             String   @map("repo_id")
+  languages          Json     @default("[]")
+  testCommands       Json     @default("[]") @map("test_commands")
+  buildCommands      Json     @default("[]") @map("build_commands")
+  lintCommands       Json     @default("[]") @map("lint_commands")
+  docRules           Json     @default("[]") @map("doc_rules")
+  patchRules         Json     @default("[]") @map("patch_rules")
+  filePlacementRules Json     @default("[]") @map("file_placement_rules")
+  reviewStyle        String   @default("findings_first") @map("review_style")
+  requiredArtifacts  Json     @default("[]") @map("required_artifacts")
+  sourceRefs         Json     @default("[]") @map("source_refs")
+  confidence         Float    @default(0.5)
+  metadata           Json     @default("{}")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@unique([repoId])
+  @@index([repoId, updatedAt])
+  @@map("repo_guideline_profile")
+}
+
+model ProjectBlueprint {
+  id                  String   @id @default(cuid())
+  repoId              String   @unique @map("repo_id")
+  version             Int      @default(1)
+  sourceMode          String   @default("repo_extracted") @map("source_mode")
+  charter             Json     @default("{}")
+  codingStandards     Json     @default("{}") @map("coding_standards")
+  testingPolicy       Json     @default("{}") @map("testing_policy")
+  documentationPolicy Json     @default("{}") @map("documentation_policy")
+  executionPolicy     Json     @default("{}") @map("execution_policy")
+  providerPolicy      Json     @default("{}") @map("provider_policy")
+  extractedFrom       Json     @default("[]") @map("extracted_from")
+  metadata            Json     @default("{}")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, updatedAt])
+  @@map("project_blueprint")
+}
+
+model RepoIndexSnapshot {
+  id             String   @id @default(cuid())
+  repoId         String   @map("repo_id")
+  commitSha      String   @map("commit_sha")
+  fileCount      Int      @default(0) @map("file_count")
+  indexedDocRefs Json     @default("[]") @map("indexed_doc_refs")
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, createdAt])
+  @@map("repo_index_snapshot")
+}
+
+model RepoActivationLog {
+  id          String   @id @default(cuid())
+  repoId      String   @map("repo_id")
+  actor       String
+  eventType   String   @map("event_type")
+  payload     Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([repoId, createdAt])
+  @@map("repo_activation_log")
+}
+
+model RepoSessionHandle {
+  id                 String   @id @default(cuid())
+  repoId             String   @map("repo_id")
+  providerId         String   @map("provider_id")
+  modelRole          String   @map("model_role")
+  sessionId          String   @map("session_id")
+  previousResponseId String?  @map("previous_response_id")
+  metadata           Json     @default("{}")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, providerId, modelRole])
+  @@map("repo_session_handle")
+}
+
+model RepoSwitchCheckpoint {
+  id              String   @id @default(cuid())
+  fromRepoId      String?  @map("from_repo_id")
+  toRepoId        String   @map("to_repo_id")
+  actor           String
+  stateCapsuleId  String?  @map("state_capsule_id")
+  status          String   @default("prepared")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([toRepoId, createdAt])
+  @@map("repo_switch_checkpoint")
+}
+
+model GitHubInstallation {
+  id             String   @id @default(cuid())
+  installationId String   @unique @map("installation_id")
+  accountLogin   String   @map("account_login")
+  accountType    String   @map("account_type")
+  appSlug        String   @default("agentic-workforce") @map("app_slug")
+  permissions    Json     @default("{}")
+  metadata       Json     @default("{}")
+  connectedAt    DateTime @default(now()) @map("connected_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([accountLogin, updatedAt])
+  @@map("github_installation")
+}
+
+model GitHubRepoBinding {
+  id                   String   @id @default(cuid())
+  repoId               String   @map("repo_id")
+  owner                String
+  repo                 String
+  installationId       String?  @map("installation_id")
+  githubRepoId         String?  @map("github_repo_id")
+  defaultBranch        String   @map("default_branch")
+  permissions          Json     @default("{}")
+  mode                 String   @default("draft_pr")
+  metadata             Json     @default("{}")
+  connectedAt          DateTime @default(now()) @map("connected_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@unique([repoId])
+  @@index([owner, repo, updatedAt])
+  @@index([installationId, updatedAt])
+  @@map("github_repo_binding")
+}
+
+model GitHubPullRequestProjection {
+  id           String   @id @default(cuid())
+  repoId       String   @map("repo_id")
+  runId        String?  @map("run_id")
+  pullNumber   Int      @map("pull_number")
+  state        String
+  branch       String
+  baseBranch   String   @map("base_branch")
+  title        String
+  url          String
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([repoId, pullNumber])
+  @@index([repoId, runId, updatedAt])
+  @@map("github_pull_request_projection")
+}
+
+model CodeGraphNode {
+  id         String   @id @default(cuid())
+  repoId     String   @map("repo_id")
+  kind       String
+  path       String
+  name       String
+  language   String?
+  content    String?  @db.Text
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, kind, path, name])
+  @@map("code_graph_node")
+}
+
+model CodeGraphEdge {
+  id         String   @id @default(cuid())
+  repoId     String   @map("repo_id")
+  fromNodeId String   @map("from_node_id")
+  toNodeId   String   @map("to_node_id")
+  kind       String
+  weight     Float    @default(1)
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, fromNodeId, kind])
+  @@index([repoId, toNodeId, kind])
+  @@map("code_graph_edge")
+}
+
+model ContextPack {
+  id               String   @id @default(cuid())
+  repoId           String   @map("repo_id")
+  objective        String
+  queryMode        String   @default("basic") @map("query_mode")
+  files            Json     @default("[]")
+  symbols          Json     @default("[]")
+  tests            Json     @default("[]")
+  docs             Json     @default("[]")
+  rules            Json     @default("[]")
+  priorRuns        Json     @default("[]") @map("prior_runs")
+  confidence       Float    @default(0.5)
+  why              Json     @default("[]")
+  tokenBudget      Int      @default(1800) @map("token_budget")
+  retrievalTraceId String?  @map("retrieval_trace_id")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, createdAt])
+  @@map("context_pack")
+}
+
+model ExecutionAttempt {
+  id               String   @id @default(cuid())
+  runId            String   @map("run_id")
+  repoId           String   @map("repo_id")
+  projectId        String?  @map("project_id")
+  modelRole        String   @map("model_role")
+  providerId       String   @map("provider_id")
+  status           String   @default("planned")
+  objective        String
+  patchSummary     String   @default("") @map("patch_summary")
+  changedFiles     Json     @default("[]") @map("changed_files")
+  approvalRequired Boolean  @default(false) @map("approval_required")
+  contextPackId    String?  @map("context_pack_id")
+  routingDecisionId String? @map("routing_decision_id")
+  metadata         Json     @default("{}")
+  startedAt        DateTime @default(now()) @map("started_at")
+  completedAt      DateTime? @map("completed_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([runId, status, startedAt])
+  @@index([repoId, updatedAt])
+  @@map("execution_attempt")
+}
+
+model VerificationBundle {
+  id                String   @id @default(cuid())
+  runId             String   @map("run_id")
+  repoId            String   @map("repo_id")
+  executionAttemptId String? @map("execution_attempt_id")
+  changedFileChecks Json     @default("[]") @map("changed_file_checks")
+  impactedTests     Json     @default("[]") @map("impacted_tests")
+  fullSuiteRun      Boolean  @default(false) @map("full_suite_run")
+  docsChecked       Json     @default("[]") @map("docs_checked")
+  pass              Boolean  @default(false)
+  failures          Json     @default("[]")
+  artifacts         Json     @default("[]")
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([runId, createdAt])
+  @@index([repoId, updatedAt])
+  @@map("verification_bundle")
+}
+
+model BenchmarkExampleCandidate {
+  id         String   @id @default(cuid())
+  runId      String   @map("run_id")
+  scorecardId String? @map("scorecard_id")
+  status     String   @default("draft")
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([runId])
+  @@index([status, createdAt])
+  @@index([runId, updatedAt])
+  @@map("benchmark_example_candidate")
+}
+
+model ShareableRunReport {
+  id            String   @id @default(cuid())
+  runId         String   @map("run_id")
+  repoId        String   @map("repo_id")
+  summary       String
+  scorecardId   String?  @map("scorecard_id")
+  pullRequestUrl String? @map("pull_request_url")
+  evidenceUrls  Json     @default("[]") @map("evidence_urls")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([runId])
+  @@index([repoId, createdAt])
+  @@map("shareable_run_report")
+}
+
+model BenchmarkProject {
+  id               String   @id @default(cuid())
+  repoId           String?  @map("repo_id")
+  projectKey       String   @unique @map("project_key")
+  displayName      String   @map("display_name")
+  sourceKind       String   @map("source_kind")
+  sourceUri        String   @map("source_uri")
+  manifestPath     String?  @map("manifest_path")
+  languages        Json     @default("[]")
+  setupCommand     String   @map("setup_command")
+  verifyCommand    String   @map("verify_command")
+  resetCommand     String?  @map("reset_command")
+  installCommand   String?  @map("install_command")
+  guidelineSources Json     @default("[]") @map("guideline_sources")
+  timeBudgetSec    Int      @default(900) @map("time_budget_sec")
+  networkPolicy    String   @default("offline") @map("network_policy")
+  defaultProviderRole String @default("coder_default") @map("default_provider_role")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, displayName])
+  @@map("benchmark_project")
+}
+
+model BenchmarkTask {
+  id                     String   @id @default(cuid())
+  projectId              String   @map("project_id")
+  taskKey                String   @map("task_key")
+  title                  String
+  category               String
+  prompt                 String
+  expectedArtifacts      Json     @default("[]") @map("expected_artifacts")
+  requiredChecks         Json     @default("[]") @map("required_checks")
+  requiredDocs           Json     @default("[]") @map("required_docs")
+  hardFailIfMissing      Json     @default("[]") @map("hard_fail_if_missing")
+  scoringWeights         Json     @default("{}") @map("scoring_weights")
+  acceptanceCommands     Json     @default("[]") @map("acceptance_commands")
+  metadata               Json     @default("{}")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@unique([projectId, taskKey])
+  @@index([projectId, category, updatedAt])
+  @@map("benchmark_task")
+}
+
+model BenchmarkRun {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  repoId        String   @map("repo_id")
+  taskId        String   @map("task_id")
+  mode          String
+  providerRole  String   @map("provider_role")
+  status        String   @default("queued")
+  actor         String
+  worktreePath  String   @map("worktree_path")
+  chatSessionId String?  @map("chat_session_id")
+  routingDecisionId String? @map("routing_decision_id")
+  metadata      Json     @default("{}")
+  startedAt     DateTime @default(now()) @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([repoId, status, startedAt])
+  @@index([projectId, startedAt])
+  @@map("benchmark_run")
+}
+
+model BenchmarkScorecard {
+  id                     String   @id @default(cuid())
+  runId                  String   @unique @map("run_id")
+  pass                   Boolean  @default(false)
+  totalScore             Float    @default(0) @map("total_score")
+  functionalCorrectness  Float    @default(0) @map("functional_correctness")
+  guidelineAdherence     Float    @default(0) @map("guideline_adherence")
+  verificationDiscipline Float    @default(0) @map("verification_discipline")
+  patchQuality           Float    @default(0) @map("patch_quality")
+  retrievalDiscipline    Float    @default(0) @map("retrieval_discipline")
+  policyCompliance       Float    @default(0) @map("policy_compliance")
+  latencyRecovery        Float    @default(0) @map("latency_recovery")
+  hardFailures           Json     @default("[]") @map("hard_failures")
+  evidenceRefs           Json     @default("[]") @map("evidence_refs")
+  summary                String   @default("")
+  metadata               Json     @default("{}")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@index([pass, totalScore, runId])
+  @@map("benchmark_scorecard")
+}
+
+model BenchmarkOutcomeEvidence {
+  id        String   @id @default(cuid())
+  runId      String   @map("run_id")
+  kind      String
+  path      String?
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([runId, createdAt])
+  @@map("benchmark_outcome_evidence")
+}
+
+model ChallengeCandidate {
+  id                 String   @id @default(cuid())
+  modelPluginId      String   @map("model_plugin_id")
+  parentModelPluginId String? @map("parent_model_plugin_id")
+  datasetId          String   @map("dataset_id")
+  evalRunId          String   @map("eval_run_id")
+  status             String   @default("draft")
+  metrics            Json     @default("{}")
+  metadata           Json     @default("{}")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([status, modelPluginId, createdAt])
+  @@map("challenge_candidate")
+}
+
+model ProviderBudgetProjection {
+  id            String   @id @default(cuid())
+  providerId    String   @map("provider_id")
+  dailyBudgetUsd Float   @default(0) @map("daily_budget_usd")
+  usedUsd       Float    @default(0) @map("used_usd")
+  requestCount  Int      @default(0) @map("request_count")
+  cooldownUntil DateTime? @map("cooldown_until")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([providerId])
+  @@map("provider_budget_projection")
+}
+
+model TeacherSourceProjection {
+  id         String   @id @default(cuid())
+  sourceType String   @map("source_type")
+  label      String
+  metadata   Json     @default("{}")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([sourceType, active])
+  @@map("teacher_source_projection")
+}
+
+model PolicyRationaleProjection {
+  id            String   @id @default(cuid())
+  aggregateId   String?  @map("aggregate_id")
+  actionType    String   @map("action_type")
+  decision      String
+  ruleIds       Json     @default("[]") @map("rule_ids")
+  rationale     Json     @default("[]")
+  requiredScopes Json    @default("[]") @map("required_scopes")
+  policyVersion String   @map("policy_version")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([aggregateId, createdAt])
+  @@index([actionType, createdAt])
+  @@map("policy_rationale_projection")
+}
+
+model KnowledgeIndexMetadata {
+  id         String   @id @default(cuid())
+  source     String
+  path       String
+  snippet    String
+  embeddingId String? @map("embedding_id")
+  score      Float    @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([source, path])
+  @@map("knowledge_index_metadata")
+}
+
+model PromptTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  version     Int      @default(1)
+  providerScope String? @map("provider_scope")
+  template    String
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([name, version])
+  @@map("prompt_templates")
+}
+
+model PromptExperiment {
+  id         String   @id @default(cuid())
+  templateId String?  @map("template_id")
+  variantA   String   @map("variant_a")
+  variantB   String   @map("variant_b")
+  metric     String
+  result     Json?    @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([templateId, metric])
+  @@map("prompt_experiments")
+}
+
+model CommandLog {
+  id          String        @id @default(cuid())
+  commandType String        @map("command_type")
+  aggregateId String?       @map("aggregate_id")
+  status      CommandStatus @default(queued)
+  payload     Json
+  result      Json?
+  actor       String
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  @@index([commandType, createdAt])
+  @@map("command_log")
+}
+
+model InferenceBackendProfile {
+  id               String   @id @default(cuid())
+  backendId        String   @unique @map("backend_id")
+  label            String
+  optimizedFor     String   @map("optimized_for")
+  capability       Json     @default("{}")
+  hardwareAffinity String?  @map("hardware_affinity")
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("inference_backend_profile")
+}
+
+model InferenceBenchmarkRun {
+  id               String   @id @default(cuid())
+  backendId        String   @map("backend_id")
+  profile          String
+  ttftMsP95        Float    @map("ttft_ms_p95")
+  outputTokPerSec  Float    @map("output_tok_per_sec")
+  latencyMsP95     Float    @map("latency_ms_p95")
+  errorRate        Float    @default(0) @map("error_rate")
+  memoryHeadroomPct Float   @default(0) @map("memory_headroom_pct")
+  score            Float
+  selected         Boolean  @default(false)
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([profile, createdAt])
+  @@index([selected, createdAt])
+  @@map("inference_benchmark_run")
+}
+
+model ModelPluginRegistry {
+  id          String   @id @default(cuid())
+  pluginId    String   @unique @map("plugin_id")
+  providerId  String   @map("provider_id")
+  modelId     String   @map("model_id")
+  paramsB     Float    @default(0) @map("params_b")
+  capabilities Json    @default("{}")
+  active      Boolean  @default(false)
+  promoted    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([providerId, active])
+  @@map("model_plugin_registry")
+}
+
+model DistillDataset {
+  id                   String              @id @default(cuid())
+  title                String
+  objectiveSplit       String              @map("objective_split")
+  privacyPolicyVersion String              @map("privacy_policy_version")
+  status               DistillDatasetStatus @default(draft)
+  createdBy            String              @map("created_by")
+  sampleCount          Int                 @default(0) @map("sample_count")
+  approvedCount        Int                 @default(0) @map("approved_count")
+  rejectedCount        Int                 @default(0) @map("rejected_count")
+  metadata             Json                @default("{}")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  examples             DistillExample[]
+  runs                 DistillRun[]
+
+  @@index([status, updatedAt])
+  @@map("distill_dataset")
+}
+
+model DistillExample {
+  id               String               @id @default(cuid())
+  datasetId        String               @map("dataset_id")
+  spec             Json
+  teacherOutput    String               @map("teacher_output")
+  reviewerDecision DistillReviewDecision @default(pending) @map("reviewer_decision")
+  reviewNotes      String?              @map("review_notes")
+  privacySafe      Boolean              @default(true) @map("privacy_safe")
+  citations        Json                 @default("[]")
+  metadata         Json                 @default("{}")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  reviewedAt       DateTime?            @map("reviewed_at")
+  dataset          DistillDataset       @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId, reviewerDecision])
+  @@map("distill_example")
+}
+
+model DistillRun {
+  id             String           @id @default(cuid())
+  datasetId      String           @map("dataset_id")
+  stage          DistillRunStage
+  studentModelId String           @map("student_model_id")
+  status         DistillRunStatus @default(queued)
+  reasonCode     DistillRunFailureReason? @map("reason_code")
+  jobId          String?          @map("job_id")
+  backend        String?
+  startedAt      DateTime?        @map("started_at")
+  finishedAt     DateTime?        @map("finished_at")
+  metrics        Json             @default("{}")
+  artifactPath   String           @map("artifact_path")
+  metadata       Json             @default("{}")
+  createdBy      String           @map("created_by")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  dataset        DistillDataset   @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  evalRuns       DistillEvalRun[]
+  logs           DistillRunLog[]
+
+  @@index([datasetId, stage, status])
+  @@map("distill_run")
+}
+
+model DistillRunLog {
+  id        String     @id @default(cuid())
+  runId     String     @map("run_id")
+  level     String
+  message   String
+  payload   Json       @default("{}")
+  createdAt DateTime   @default(now()) @map("created_at")
+  run       DistillRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@map("distill_run_log")
+}
+
+model DistillEvalRun {
+  id              String    @id @default(cuid())
+  runId           String    @map("run_id")
+  baselineModelId String?   @map("baseline_model_id")
+  pass            Boolean   @default(false)
+  metrics         Json      @default("{}")
+  metadata        Json      @default("{}")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  run             DistillRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@map("distill_eval_run")
+}
+
+model ModelArtifactRegistry {
+  id           String   @id @default(cuid())
+  modelId      String   @map("model_id")
+  artifactType String   @map("artifact_type")
+  artifactPath String   @map("artifact_path")
+  checksum     String
+  promoted     Boolean  @default(false)
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([modelId, promoted, updatedAt])
+  @@map("model_artifact_registry")
+}

@@ -1,0 +1,25 @@
+projectId: react-dashboard-lite
+displayName: React Dashboard Lite
+source:
+  kind: managed_pack
+  uri: react-dashboard-lite
+languages:
+  - javascript
+  - markdown
+setupCommand: echo ready
+verifyCommand: node scripts/verify.js
+guidelineSources:
+  - README.md
+  - docs/usage.md
+timeBudgetSec: 900
+networkPolicy: offline
+defaultProviderRole: coder_default
+taskSpecs:
+  - taskId: add-filter-summary
+    title: Add filter summary helper and docs
+    category: feature
+    prompt: Add a renderFilterSummary helper in src/dashboard.js that returns a human-readable filter summary and document the keyboard shortcut workflow in docs/usage.md.
+    expectedArtifacts: [patch, tests, docs]
+    requiredChecks: [node scripts/verify.js]
+    requiredDocs: [docs/usage.md]
+    hardFailIfMissing: [renderFilterSummary, keyboard_shortcut_docs]
