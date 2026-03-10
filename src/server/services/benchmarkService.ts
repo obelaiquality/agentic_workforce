@@ -17,6 +17,7 @@ import { RepoService } from "./repoService";
 import { V2EventService } from "./v2EventService";
 import { ExecutionService } from "./executionService";
 import { applyEscalationPolicy } from "./providerOrchestrator";
+import { detectShell } from "./shellDetect";
 
 interface StartBenchmarkRunInput {
   actor: string;
@@ -41,7 +42,7 @@ function runShell(command: string, cwd: string) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      shell: "/bin/zsh",
+      shell: detectShell(),
       timeout: 120000,
     });
     return {

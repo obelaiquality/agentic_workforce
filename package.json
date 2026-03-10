@@ -37,7 +37,8 @@
     "db:push": "prisma db push",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
-    "test:e2e:playwright": "bash scripts/playwright/run_e2e_critical_failover.sh"
+    "test:e2e:playwright": "bash scripts/playwright/run_e2e_critical_failover.sh",
+    "test:integration:agent-architecture": "vitest run src/server/services/agentArchitecture.integration.test.ts"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

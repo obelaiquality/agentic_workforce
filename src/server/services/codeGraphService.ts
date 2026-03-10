@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import type { CodeGraphEdge, CodeGraphNode, ContextPack, KnowledgeHit } from "../../shared/contracts";
+import { extractSymbolsTreeSitter, extractImportsTreeSitter } from "./treeSitterAnalyzer";
 
 const IGNORED_DIRS = new Set([
   ".git",
@@ -124,6 +125,18 @@ function resolveRelativeImport(fromPath: string, specifier: string, knownPaths: 
     path.posix.join(base, "index.jsx"),
   ];
   return candidates.find((candidate) => knownPaths.has(candidate)) || null;
+}
+
+async function extractSymbolsWithFallback(language: string | null, content: string): Promise<string[]> {
+  const treeSitterResult = await extractSymbolsTreeSitter(language, content);
+  if (treeSitterResult !== null) return treeSitterResult;
+  return extractSymbols(language, content);
+}
+
+async function extractImportsWithFallback(language: string | null, content: string): Promise<string[]> {
+  const treeSitterResult = await extractImportsTreeSitter(language, content);
+  if (treeSitterResult !== null) return treeSitterResult;
+  return extractImports(language, content);
 }
 
 function extractSymbols(language: string | null, content: string) {
@@ -382,7 +395,7 @@ export class CodeGraphService {
         },
       });
 
-      const symbols = extractSymbols(language, content);
+      const symbols = await extractSymbolsWithFallback(language, content);
       const symbolIds: string[] = [];
       for (const symbol of symbols) {
         const symbolId = randomUUID();
@@ -437,7 +450,7 @@ export class CodeGraphService {
       }
       const content = fileContents.get(relativePath) || "";
       const language = detectLanguage(relativePath);
-      const imports = extractImports(language, content);
+      const imports = await extractImportsWithFallback(language, content);
       for (const imported of imports) {
         const resolved = resolveRelativeImport(relativePath, imported, knownPaths);
         if (resolved && fileNodeIdByPath.has(resolved)) {

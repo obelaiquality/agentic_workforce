@@ -139,6 +139,11 @@ Without a change contract, the model improvises. With a change contract, the mod
 - [x] Blueprint rules are present, but their enforcement and explanation are not yet visible enough in the product. *(Blueprint compact view in LandingMissionView + inline overrides in ProjectBlueprintPanel + enforced rules in verification plan)*
 - [x] The current edit path still relies too much on full-file generation for all cases. *(chooseEditStrategy guards large files; diff/search-replace strategy selection added)*
 - [x] Parallel execution exists conceptually, but it should remain secondary until the single-agent path is consistently green. *(Single-agent remains default; non-mutating parallel helpers via Promise.all for indexing/retrieval/impact analysis)*
+- [x] Local adapters used fake streaming (simulated chunking of non-streaming responses). *(Real SSE streaming now implemented in BaseOpenAiLikeAdapter.stream())*
+- [x] No JSON mode or structured output support for local backends. *(JSON mode support added; passed via metadata and applied when backend supports it)*
+- [x] Hardcoded `/bin/zsh` shell in execution and benchmark services breaks Linux/Windows. *(Cross-platform shell detection via detectShell() utility)*
+- [ ] No speculative decoding configuration for local inference backends.
+- [ ] KV cache / prefix caching not yet actively surfaced to users or verified in the product path.
 
 ### 2.3 What not to do
 - [x] Do not increase orchestration complexity before single-agent reliability is high. *(Guideline followed: single-agent remains default)*
@@ -320,6 +325,7 @@ interface VerificationRepairPlan {
 - [x] max model repair rounds is `3`
 - [x] cheap deterministic repair always runs before model repair
 - [x] no infinite retry loops
+- [x] manifest generation passes `jsonMode: true` to prefer structured output from backends that support it; `extractJsonObject()` remains as fallback for backends without JSON mode
 
 ### 4.3 Deterministic repair architecture
 #### Decision
@@ -438,6 +444,14 @@ For cloud providers, adopt prompt caching on:
 - [ ] cache only static prefixes
 - [ ] do not cache volatile user or task sections
 - [ ] refresh cache on blueprint version changes
+
+#### Local prefix caching strategy
+- [x] Backend descriptors now include `supportsPrefixCaching` metadata (automatic, flag-based, or unsupported)
+- [x] Startup command templates include caching flags where applicable (vLLM: `--enable-prefix-caching`, llama.cpp: `--cache-prompt`)
+- [x] `cache_prompt: true` is sent in request body for llama.cpp backends
+- [x] System message prefix ordering is stabilized so backends can maximize KV cache hits
+- [ ] Surface prefix caching status in backend health checks
+- [ ] Measure and report cache hit rates in benchmark scoring
 
 ### 4.5.1 Context-engineering rules for coding tasks
 Context should be treated as a product subsystem, not a prompt afterthought.
@@ -831,6 +845,10 @@ interface ShareableRunReport {
 - [x] Full GraphRAG remains out of the hot path.
 - [x] Zip shell fidelity remains the visual anchor. *(Shell layout preserved as the primary navigation model throughout all product iterations)*
 - [x] The product should expose evidence, not agent theatrics.
+- [x] Local adapters use real SSE streaming, not simulated chunking.
+- [x] JSON mode is preferred for structured output steps (manifest generation); `extractJsonObject()` remains as fallback.
+- [x] Cross-platform shell detection replaces hardcoded `/bin/zsh`.
+- [x] Prefix caching flags are included in backend startup command templates where supported.
 
 ---
 
@@ -889,7 +907,7 @@ All backends expose the **OpenAI-compatible `/v1/chat/completions` API**, so the
 ### 10.3 Remaining work for full cross-platform support
 
 #### Phase A — Backend auto-detection and guided setup
-- [ ] Detect available hardware at startup (Apple Silicon, NVIDIA GPU, CPU-only) and pre-select the optimal backend
+- [x] Detect available hardware at startup (Apple Silicon with unified memory, NVIDIA GPU with VRAM/compute cap, CPU-only) and pre-select the optimal backend
 - [ ] Add a `doctor` check that validates the selected backend is installed and reachable
 - [ ] Show platform-appropriate setup instructions in the Settings UI (not just startup command templates)
 - [ ] Add a one-click "Start backend" button in Settings that runs the startup command in a managed subprocess
@@ -900,9 +918,9 @@ All backends expose the **OpenAI-compatible `/v1/chat/completions` API**, so the
 - [ ] Add GGUF model registry entries for llama.cpp (Q4_K_M, Q5_K_M quantizations of Qwen 3.5 0.8B and 4B)
 
 #### Phase C — Startup lifecycle management
-- [ ] Manage inference backend as a child process (start, health-check, restart, stop) similar to how the API server is managed by Electron
+- [x] Manage inference backend as a child process (start, health-check, restart, stop) similar to how the API server is managed by Electron
 - [ ] Graceful shutdown of backend on app exit
-- [ ] Health check polling with automatic restart on backend crash
+- [x] Health check polling with automatic restart on backend crash (30s interval, 3-failure threshold, exponential backoff)
 - [ ] Surface backend health status in the preflight gate and mission header
 
 #### Phase D — Windows and Linux packaging
@@ -915,6 +933,25 @@ All backends expose the **OpenAI-compatible `/v1/chat/completions` API**, so the
 - [ ] Implement the existing `BackendBenchmarkResult` and `InferenceAutotuneResult` types as a real benchmark runner
 - [ ] Auto-select backend based on benchmark results (latency, throughput, error rate)
 - [ ] Store benchmark results per hardware profile for consistent recommendations
+
+#### Phase F — Real SSE streaming and JSON mode (done)
+- [x] Replace simulated chunking in `BaseOpenAiLikeAdapter.stream()` with real SSE parsing
+- [x] Parse `data:` lines, yield `token` events for `choices[0].delta.content`, handle `[DONE]` sentinel
+- [x] Fall back to non-streaming `send()` if response.body is null
+- [x] Add `jsonMode` flag in metadata; when true, include `response_format: { type: "json_object" }` in request body for backends that support it
+- [x] Add `supportsJsonMode`, `supportsPrefixCaching`, `supportsConstrainedDecoding`, `constrainedDecodingMethod` fields to backend descriptors
+- [x] Pass `jsonMode: true` for manifest generation steps in `executionService.ts`
+
+#### Phase G — Cross-platform shell detection (done)
+- [x] Replace hardcoded `/bin/zsh` with `detectShell()` in `executionService.ts` and `benchmarkService.ts`
+- [x] `detectShell()` returns `cmd.exe` on Windows, `$SHELL` on Unix, falls back to `/bin/bash` then `/bin/sh`
+- [ ] Path normalization for Windows backslash handling
+
+#### Phase H — Speculative decoding and constrained generation (partially done)
+- [x] Add speculative decoding configuration to backend descriptors (draft model, num tokens, flag)
+- [x] `buildStartupCommand()` appends spec-decode flags when VRAM is sufficient
+- [ ] Implement grammar-based constrained decoding for manifest generation via GBNF grammar (llama.cpp) or JSON schema (vLLM/SGLang)
+- [ ] Measure impact of constrained decoding on manifest parse reliability vs. latency
 
 ### 10.4 How to run on each platform today
 
@@ -982,7 +1019,250 @@ The app should **never hard-depend on one inference runtime**. The abstraction b
 
 ---
 
-## 11. Source Reference Set
+## 11. Inference Performance Modernization
+
+### 11.1 Real SSE Streaming
+**Status:** Done
+
+The local OpenAI-compatible adapters (`BaseOpenAiLikeAdapter.stream()`) now use real SSE streaming instead of simulated chunking:
+
+- Request is sent with `stream: true`
+- Real `data:` lines are parsed from the response body
+- `token` events are yielded for each `choices[0].delta.content` chunk
+- Usage is extracted from the final chunk with `usage` field
+- `[DONE]` sentinel is handled properly
+- Falls back to non-streaming `send()` if `response.body` is null (e.g. network issues)
+
+### 11.2 JSON Mode / Structured Output
+**Status:** Done (backend-dependent)
+
+- `jsonMode` flag accepted in provider metadata
+- When `jsonMode: true` and backend supports it, `response_format: { type: "json_object" }` is added to the request body
+- Backend support matrix:
+  - **Supports JSON mode:** vLLM, SGLang, TensorRT-LLM, llama.cpp, Ollama
+  - **Does not support:** MLX-LM, Transformers
+- `extractJsonObject()` remains as fallback for backends without JSON mode support
+- Manifest generation in `executionService.ts` now passes `jsonMode: true`
+
+### 11.3 KV Cache / Prefix Caching Strategy
+**Status:** Partially done
+
+Backend descriptors include `supportsPrefixCaching` metadata:
+- **Automatic:** MLX-LM, SGLang (RadixAttention), TensorRT-LLM
+- **Flag-based:** vLLM (`--enable-prefix-caching`), llama.cpp (`--cache-prompt`), Ollama (`--keep-alive`)
+- **Unsupported:** Transformers
+
+Implementation:
+- [x] Startup command templates include caching flags
+- [x] `cache_prompt: true` sent in request body for llama.cpp
+- [x] System message prefix ordering stabilized for cache-friendly prompts
+- [x] Cache hit rate monitoring (rolling average over last 100 requests)
+- [ ] User-visible cache status in backend health
+
+### 11.4 Speculative Decoding Configuration
+**Status:** Done (configuration), Future (measurement)
+
+Speculative decoding configuration added to backend descriptors:
+- [x] `speculativeDecoding` field on `OnPremInferenceBackendDescriptor` with `supported`, `draftModelId`, `numSpeculativeTokens`, `flag`
+- [x] vLLM and SGLang configured with `Qwen/Qwen3-0.6B` draft model, 5 speculative tokens
+- [x] `buildStartupCommand()` helper appends spec-decode flags when VRAM sufficient
+- [x] VRAM gating: draft model requires ~1GB additional VRAM
+- [ ] Measure speedup vs. quality tradeoff for Qwen 0.6B as draft for Qwen 4B
+
+### 11.5 Constrained Decoding / Grammar-Based Generation
+**Status:** Partial (descriptors only)
+
+Backend descriptors include `supportsConstrainedDecoding` and `constrainedDecodingMethod`:
+- **JSON schema:** vLLM, SGLang, TensorRT-LLM
+- **GBNF grammar:** llama.cpp
+- **Unsupported:** MLX-LM, Transformers, Ollama
+
+Future work:
+- [ ] Generate GBNF grammar for `PatchManifest` schema for llama.cpp
+- [ ] Use JSON schema constrained decoding with vLLM/SGLang for manifest generation
+- [ ] Measure parse reliability improvement vs. latency cost
+
+### 11.6 OpenAI API Status Clarification
+
+- The **OpenAI Responses API** (`/v1/responses`) is already implemented in `openaiResponsesAdapter.ts`
+- The **OpenAI Chat Completions API** (`/v1/chat/completions`) used for local backends is correct and NOT deprecated — OpenAI deprecated the old `/v1/completions` (non-chat), not `/v1/chat/completions`
+- No migration is needed for either API path
+
+---
+
+## 12. Cross-Platform Runtime Fixes
+
+### 12.1 Shell Detection
+**Status:** Done
+
+- `detectShell()` utility in `src/server/services/shellDetect.ts`
+- Returns `cmd.exe` on Windows, `$SHELL` on Unix, falls back to `/bin/bash` then `/bin/sh`
+- Used by `executionService.ts` and `benchmarkService.ts` (replaces hardcoded `/bin/zsh`)
+- Result is cached after first call
+
+### 12.2 Path Normalization for Windows
+**Status:** Future
+
+- [ ] Normalize backslash paths in worktree operations
+- [ ] Ensure `ensureInsideRoot()` works with Windows path separators
+- [ ] Test managed worktree creation on Windows
+
+---
+
+## 13. Agent Reliability
+
+### 13.1 Doom-Loop Detection
+**Status:** Done
+
+`DoomLoopDetector` class in `src/server/services/doomLoopDetector.ts`:
+- [x] MD5 fingerprinting of (actionName, sortedArgs) pairs
+- [x] Sliding window (configurable size, default 20) with configurable threshold (default 3)
+- [x] `isLooping()` detects when any fingerprint appears >= threshold times
+- [x] `getLoopingAction()` reports which action is repeating
+- [x] Integration point: `expandPatchManifest()` loop checks after each file generation step
+- [x] On detection: strategy change (switch edit strategy), halt after 2 failed changes
+
+### 13.2 System Reminders (Instruction Persistence)
+**Status:** Done
+
+`SystemReminderService` in `src/server/services/systemReminderService.ts`:
+- [x] Interval-based reminders (every N messages, configurable, default 10)
+- [x] Event-triggered reminders: after errors, after edits, before JSON generation
+- [x] Blueprint-aware: pulls testing/docs/protection rules from blueprint policies
+- [x] Uses `role: "user"` format with `[System Reminder]` prefix (resists fade-out better than system-role)
+- [x] Short reminders (<200 tokens) to minimize context cost
+
+### 13.3 Chain-of-Responsibility Edit Matching
+**Status:** Done
+
+`EditMatcherChain` in `src/server/services/editMatcherChain.ts`:
+- [x] 8 progressively relaxed matchers for search-replace edits:
+  1. Exact string match
+  2. Whitespace-normalized match
+  3. Leading-indent-flexible match
+  4. Line-trimmed match
+  5. Fuzzy line match (1 line tolerance)
+  6. Line-number-anchored match
+  7. Similarity-scored match (Levenshtein, threshold 0.85)
+  8. Whole-block replacement fallback
+- [x] Chain stops at first successful match (earlier = higher confidence)
+- [x] Logs which matcher succeeded for observability
+- [x] Integrates with `chooseEditStrategy()` for `search_replace` mode
+
+---
+
+## 14. Context Management
+
+### 14.1 Adaptive Context Compaction (ACC)
+**Status:** Done
+
+`ContextCompactionService` in `src/server/services/contextCompactionService.ts`:
+- [x] 5-stage compaction pipeline triggered at context pressure thresholds:
+  - Stage 1 (70%): Summarize old tool results (keep last 3 verbatim)
+  - Stage 2 (80%): Compress assistant reasoning to key decisions
+  - Stage 3 (85%): Drop file contents captured in patches (remove code fences)
+  - Stage 4 (90%): Merge consecutive same-role messages
+  - Stage 5 (99%): Emergency keep-last-5
+- [x] Token estimation via `Math.ceil(text.length / 4)`
+- [x] Pinned messages survive all compaction stages
+- [x] Integrated into `collectModelOutput()` pre-inference path
+
+### 14.2 Tool Result Optimization
+**Status:** Done
+
+`ToolResultOptimizer` in `src/server/services/toolResultOptimizer.ts`:
+- [x] Shell output: tail last 50 lines + error extraction (>100 lines)
+- [x] File reads: first/last 20 lines with omission notice (>200 lines)
+- [x] Search results: top 10 matches (>20 matches)
+- [x] Build output: errors/warnings extraction (>50 lines)
+- [x] Large output offloading to scratch files (>8000 chars threshold)
+
+### 14.3 Dual-Memory Architecture
+**Status:** Done
+
+`MemoryService` in `src/server/services/memoryService.ts`:
+- [x] **Episodic memory**: compressed task summaries (max 500 chars each)
+  - Stored in `<projectRoot>/.agentic-workforce/memory/episodic.json`
+  - Pruned by cosine similarity relevance to current task (top 10)
+- [x] **Working memory**: sliding window of last N messages (default 15)
+- [x] Thinking phase composition: system prompt -> episodic memories -> working memory -> current task
+- [x] Token-aware composition with stats
+
+### 14.4 Prompt Cache Topology & Metrics
+**Status:** Done (metrics tracking), Partial (topology optimization)
+
+- [x] Cache hit extraction from inference response headers (`x-cache-hit`, `tokens_cached`)
+- [x] Rolling cache hit rate tracking (last 100 requests)
+- [x] Metrics exposed via `getCacheMetrics()` on `InferenceTuningService`
+- [ ] Full message ordering optimization for cache-friendly topology
+
+---
+
+## 15. Hardware-Aware Inference
+
+### 15.1 VRAM Detection & Hardware Profiling
+**Status:** Done
+
+Extended `getHardwareProfile()` in `inferenceTuningService.ts`:
+- [x] Returns structured `HardwareProfile` with platform, VRAM, compute capability, unified memory
+- [x] NVIDIA detection: parses `nvidia-smi --query-gpu=memory.total,compute_cap --format=csv,noheader,nounits`
+- [x] Apple Silicon detection: parses `sysctl -n hw.memsize` for unified memory
+- [x] Result cached (hardware doesn't change at runtime)
+- [x] `canLoadModel(minVramGb)` gates model loading decisions
+
+### 15.2 Backend Health Monitoring & Auto-Restart
+**Status:** Done
+
+Health monitoring in `InferenceTuningService`:
+- [x] Periodic health check (30s interval) via `GET /health` or `GET /v1/models`
+- [x] Track consecutive failures (threshold: 3)
+- [x] Auto-restart on failure with exponential backoff (5s, 15s, 45s)
+- [x] Max 3 restart attempts before giving up
+- [x] Health events emitted to mission control snapshot
+- [x] `BackendHealthStatus` type: `healthy | degraded | down` with lastCheck and restartCount
+
+### 15.3 Speculative Decoding
+**Status:** Done (configuration)
+
+See Section 11.4 above.
+
+---
+
+## 16. Code Intelligence
+
+### 16.1 Tree-sitter Integration
+**Status:** Done (optional)
+
+`treeSitterAnalyzer.ts` in `src/server/services/`:
+- [x] Optional tree-sitter integration for AST-accurate symbol/import extraction
+- [x] Supports TypeScript, JavaScript, Python grammars
+- [x] Dynamic import with graceful fallback to regex when tree-sitter not installed
+- [x] `extractSymbolsTreeSitter()` / `extractImportsTreeSitter()` used by `codeGraphService.ts`
+- [x] Handles nested functions, decorators, multi-line signatures, template literals
+- [ ] Install tree-sitter packages: `npm install tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python`
+
+### 16.2 FIM (Fill-in-the-Middle) for Code Edits
+**Status:** Done (configuration)
+
+- [x] `supportsFim` flag on backend descriptors
+- [x] Qwen FIM token format: `<|fim_prefix|>...<|fim_suffix|>...<|fim_middle|>`
+- [x] `buildFimPrompt()` helper constructs FIM prompt for supported backends
+- [x] FIM supported by: MLX-LM, vLLM, SGLang, llama.cpp
+- [ ] `fim_insert` edit strategy in `chooseEditStrategy()` for insertion-type edits
+
+### 16.3 Shadow Git Snapshots (Per-Step Undo)
+**Status:** Done
+
+`ShadowGitService` in `src/server/services/shadowGitService.ts`:
+- [x] Creates bare git repo at `<projectRoot>/.agentic-workforce/snapshots/`
+- [x] Snapshots before each file write with `step-<id>: <description>` commits
+- [x] Rollback via `git show <commitHash>:<filePath>`
+- [x] Auto-pruning: keeps last 50 snapshots (configurable)
+- [x] `listSnapshots()`, `getSnapshot()`, `rollback()` API
+
+---
+
+## 17. Source Reference Set
 - [Anthropic: Building effective agents](https://www.anthropic.com/research/building-effective-agents/)
 - [Anthropic prompt engineering overview](https://docs.anthropic.com/en/docs/prompt-engineering)
 - [Anthropic tool use overview](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)

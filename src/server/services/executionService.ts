@@ -12,6 +12,7 @@ import { ContextService } from "./contextService";
 import { ProviderOrchestrator } from "./providerOrchestrator";
 import { RepoService } from "./repoService";
 import { CodeGraphService } from "./codeGraphService";
+import { detectShell } from "./shellDetect";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -47,7 +48,7 @@ function runShell(command: string, cwd: string) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      shell: "/bin/zsh",
+      shell: detectShell(),
       timeout: 300000,
     });
     return { ok: true, stdout, stderr: "", exitCode: 0 };
@@ -1744,6 +1745,7 @@ export class ExecutionService {
     temperature?: number;
     maxTokens?: number;
     reasoningMode?: "off" | "on" | "auto" | null;
+    jsonMode?: boolean;
   }) {
     const roleBinding = await this.providerOrchestrator.getModelRoleBinding(input.modelRole);
     let output = "";
@@ -1771,6 +1773,7 @@ export class ExecutionService {
             temperature: input.temperature ?? Math.min(roleBinding.temperature, 0.1),
             maxTokens: input.maxTokens ?? roleBinding.maxTokens,
             reasoningMode: input.reasoningMode ?? roleBinding.reasoningMode,
+            jsonMode: input.jsonMode ?? false,
           },
         }
       )
@@ -2352,7 +2355,7 @@ export class ExecutionService {
 
     const collectResponse = async (
       promptMessages: Array<{ role: "system" | "user"; content: string }>,
-      overrides?: Partial<{ temperature: number; maxTokens: number; reasoningMode: "off" | "on" | "auto" | null; modelRole: ModelRole }>
+      overrides?: Partial<{ temperature: number; maxTokens: number; reasoningMode: "off" | "on" | "auto" | null; modelRole: ModelRole; jsonMode: boolean }>
     ) => {
       const effectiveRole = overrides?.modelRole || input.modelRole;
       const effectiveBinding =
@@ -2372,6 +2375,7 @@ export class ExecutionService {
             temperature: overrides?.temperature ?? Math.min(effectiveBinding.temperature, 0.1),
             maxTokens: overrides?.maxTokens ?? effectiveBinding.maxTokens,
             reasoningMode: overrides?.reasoningMode ?? effectiveBinding.reasoningMode,
+            jsonMode: overrides?.jsonMode ?? false,
           },
         }
       );
@@ -2387,6 +2391,7 @@ export class ExecutionService {
       modelRole: "utility_fast",
       maxTokens: Math.min(800, Math.max(500, Math.floor(utilityRoleBinding.maxTokens * 0.7))),
       reasoningMode: "off",
+      jsonMode: true,
     });
     let manifest: ParsedPatchManifest;
 
@@ -2426,6 +2431,7 @@ export class ExecutionService {
         maxTokens: 900,
         reasoningMode: "off",
         modelRole: "utility_fast",
+        jsonMode: true,
       });
 
       try {

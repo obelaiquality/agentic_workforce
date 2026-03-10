@@ -1003,6 +1003,13 @@ export type OnPremInferenceBackendId =
   | "transformers-openai"
   | "ollama-openai";
 
+export interface PrefixCachingSupport {
+  supported: boolean;
+  automatic?: boolean;
+  flag?: string;
+  method?: string;
+}
+
 export interface OnPremInferenceBackendDescriptor {
   id: OnPremInferenceBackendId;
   label: string;
@@ -1010,6 +1017,45 @@ export interface OnPremInferenceBackendDescriptor {
   startupCommandTemplate: string;
   optimizedFor: "apple-silicon" | "nvidia-cuda" | "portable" | "cpu";
   notes: string;
+  supportsJsonMode?: boolean;
+  supportsPrefixCaching?: PrefixCachingSupport;
+  supportsConstrainedDecoding?: boolean;
+  constrainedDecodingMethod?: "json_schema" | "gbnf_grammar";
+  supportsFim?: boolean;
+  fimTokenFormat?: {
+    prefix: string;
+    suffix: string;
+    middle: string;
+  };
+  speculativeDecoding?: SpeculativeDecodingConfig;
+}
+
+export interface HardwareProfile {
+  platform: "apple-silicon" | "nvidia-cuda" | "generic-cpu";
+  vramMb?: number;
+  computeCapability?: string;
+  unifiedMemoryMb?: number;
+}
+
+export interface BackendHealthStatus {
+  status: "healthy" | "degraded" | "down";
+  lastCheck: string;
+  restartCount: number;
+  consecutiveFailures: number;
+}
+
+export interface SpeculativeDecodingConfig {
+  supported: boolean;
+  draftModelId?: string;
+  numSpeculativeTokens?: number;
+  flag?: string;
+}
+
+export interface PromptCacheMetrics {
+  hitRate: number;
+  totalRequests: number;
+  cacheHits: number;
+  lastUpdated: string;
 }
 
 export type InferenceBenchmarkProfile = "interactive" | "batch" | "tool_heavy";

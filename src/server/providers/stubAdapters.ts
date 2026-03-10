@@ -11,6 +11,7 @@ import type {
   ReasoningMode,
 } from "../../shared/contracts";
 import { resolveOnPremQwenModelPlugin } from "./modelPlugins";
+import { resolveOnPremInferenceBackend } from "./inferenceBackends";
 
 interface OpenAiLikeConfig {
   baseUrl: string;
@@ -100,6 +101,20 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+function extractCacheHit(response: Response, body: Record<string, unknown>): boolean | null {
+  const cacheHeader = response.headers.get("x-cache-hit");
+  if (cacheHeader !== null) {
+    return cacheHeader === "true" || cacheHeader === "1";
+  }
+
+  const tokensCached = (body as { tokens_cached?: unknown }).tokens_cached;
+  if (typeof tokensCached === "number") {
+    return tokensCached > 0;
+  }
+
+  return null;
+}
+
 abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
   abstract id: "openai-compatible" | "onprem-qwen";
   abstract label: string;
@@ -152,11 +167,13 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
     };
   }
 
-  protected async buildRequestBody(input: ProviderSendInput) {
+  protected async buildRequestBody(input: ProviderSendInput, options?: { stream?: boolean }) {
     const config = await this.resolveConfig();
     const overrideModel = toStringOrNull(input.metadata?.model);
     const overrideTemperature = toNumber(input.metadata?.temperature, config.temperature);
     const overrideMaxTokens = Math.max(64, Math.floor(toNumber(input.metadata?.maxTokens, config.maxTokens)));
+    const jsonMode = input.metadata?.jsonMode === true;
+    const backend = resolveOnPremInferenceBackend(config.inferenceBackendId);
     return {
       config,
       body: {
@@ -164,7 +181,11 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
         messages: buildPromptMessages(input.messages),
         temperature: overrideTemperature,
         max_tokens: overrideMaxTokens,
-        stream: false,
+        stream: options?.stream ?? false,
+        ...(jsonMode && backend.supportsJsonMode
+          ? { response_format: { type: "json_object" } }
+          : {}),
+        ...(backend.id === "llama-cpp-openai" ? { cache_prompt: true } : {}),
       },
     };
   }
@@ -194,6 +215,8 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
     const usage = (json.usage as Record<string, unknown> | undefined) || {};
     const text = extractAssistantText(json).trim();
 
+    const cacheHit = extractCacheHit(response, json);
+
     return {
       text,
       providerResponseId: null,
@@ -206,29 +229,110 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
         outputTokens: toNumber(usage.completion_tokens, 0),
         totalTokens: toNumber(usage.total_tokens, 0),
       },
+      metadata: cacheHit !== null ? { cacheHit } : undefined,
     };
   }
 
   async *stream(input: ProviderSendInput): AsyncGenerator<ProviderStreamEvent> {
-    const output = await this.send(input);
-    const text = output.text || "";
-    if (!text) {
+    const { config, body } = await this.buildRequestBody(input, { stream: true });
+    const endpoint = `${config.baseUrl}/chat/completions`;
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        endpoint,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
+          },
+          body: JSON.stringify(body),
+        },
+        config.timeoutMs
+      );
+    } catch {
+      // Network error — fall back to non-streaming send
+      const output = await this.send(input);
+      if (output.text) {
+        yield { type: "token", value: output.text };
+      }
       yield { type: "done", usage: output.usage };
       return;
     }
 
-    const chunkSize = 56;
-    for (let i = 0; i < text.length; i += chunkSize) {
-      yield {
-        type: "token",
-        value: text.slice(i, i + chunkSize),
-      };
+    if (!response.ok) {
+      const raw = await response.text();
+      throw new Error(`${this.id} provider error ${response.status}: ${raw}`);
     }
 
-    yield {
-      type: "done",
-      usage: output.usage,
-    };
+    if (!response.body) {
+      // No streaming body — fall back to non-streaming send
+      const output = await this.send(input);
+      if (output.text) {
+        yield { type: "token", value: output.text };
+      }
+      yield { type: "done", usage: output.usage };
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let usage: ProviderSendOutput["usage"] | undefined;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(":")) continue;
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") {
+            yield { type: "done", usage };
+            return;
+          }
+
+          try {
+            const parsed = JSON.parse(data) as Record<string, unknown>;
+            const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : null;
+            if (choice && typeof choice === "object") {
+              const delta = (choice as Record<string, unknown>).delta;
+              if (delta && typeof delta === "object") {
+                const content = (delta as Record<string, unknown>).content;
+                if (typeof content === "string" && content) {
+                  yield { type: "token", value: content };
+                }
+              }
+            }
+
+            // Extract usage from the final chunk if present
+            const chunkUsage = parsed.usage as Record<string, unknown> | undefined;
+            if (chunkUsage) {
+              usage = {
+                inputTokens: toNumber(chunkUsage.prompt_tokens, 0),
+                outputTokens: toNumber(chunkUsage.completion_tokens, 0),
+                totalTokens: toNumber(chunkUsage.total_tokens, 0),
+              };
+            }
+          } catch {
+            // Skip malformed SSE data lines
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    yield { type: "done", usage };
   }
 
   classifyError(err: unknown): ProviderErrorClass {
@@ -333,7 +437,7 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
     reasoningMode: ((process.env.ONPREM_QWEN_REASONING_MODE || "off") as ReasoningMode),
   };
 
-  protected override async buildRequestBody(input: ProviderSendInput) {
+  protected override async buildRequestBody(input: ProviderSendInput, options?: { stream?: boolean }) {
     const config = await this.resolveConfig();
     const plugin = resolveOnPremQwenModelPlugin(config.pluginId || undefined);
     const model = toStringOrNull(input.metadata?.model) || config.model || plugin.runtimeModel;
@@ -343,6 +447,8 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
     const requestedReasoningMode = (toStringOrNull(input.metadata?.reasoningMode) as ReasoningMode | null) ?? config.reasoningMode ?? "off";
     const effectiveReasoningMode =
       requestedReasoningMode === "auto" ? (input.modelRole === "review_deep" ? "on" : "off") : requestedReasoningMode;
+    const jsonMode = input.metadata?.jsonMode === true;
+    const backend = resolveOnPremInferenceBackend(config.inferenceBackendId);
 
     return {
       config,
@@ -351,7 +457,7 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
         messages: buildPromptMessages(input.messages),
         temperature,
         max_tokens: maxTokens,
-        stream: false,
+        stream: options?.stream ?? false,
         ...(isQwen35Family
           ? effectiveReasoningMode === "on"
             ? {
@@ -366,6 +472,10 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
                 top_k: 20,
               }
           : {}),
+        ...(jsonMode && backend.supportsJsonMode
+          ? { response_format: { type: "json_object" } }
+          : {}),
+        ...(backend.id === "llama-cpp-openai" ? { cache_prompt: true } : {}),
         metadata: {
           plugin_id: plugin.id,
           hf_repo: plugin.hfRepo,

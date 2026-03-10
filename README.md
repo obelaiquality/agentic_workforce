@@ -401,7 +401,7 @@ npm test
 npx vitest run
 ```
 
-142 tests across 15 test files covering:
+312 tests across 24 test files covering:
 - Provider routing and factory
 - Blueprint extraction and helpers
 - Patch manifest parsing
@@ -410,6 +410,16 @@ npx vitest run
 - Inference scoring
 - Privacy scanner
 - Benchmark manifests
+- Inference backends (FIM, speculative decoding, startup commands)
+- Doom-loop detection (fingerprinting, sliding window)
+- Adaptive context compaction (5-stage pressure-based)
+- Tool result optimization (shell, file, search, build output)
+- System reminders (interval and event-triggered injection)
+- Edit matcher chain (8-level progressive matching)
+- Tree-sitter analyzer (optional native integration)
+- Shadow git snapshots (per-step undo)
+- Dual-memory architecture (episodic + working memory)
+- Agent architecture integration (cross-service pipeline)
 
 ### E2E desktop acceptance
 
@@ -455,6 +465,7 @@ npm run build:server   # Backend (tsup)
 | `npm run doctor` | Run preflight health checks |
 | `npm test` | Run unit tests (vitest) |
 | `npm run test:e2e:desktop-acceptance` | Run full Electron E2E test |
+| `npm run test:integration:agent-architecture` | Run agent architecture integration tests |
 | `npx prisma db push` | Sync Prisma schema to database |
 | `npx prisma generate` | Regenerate Prisma client |
 
@@ -659,6 +670,16 @@ src/
       repoService.ts                # Repo registry + worktree management
       approvalService.ts            # Human-in-the-loop approvals
       benchmarkService.ts           # Blueprint-aware benchmark scoring
+      inferenceTuningService.ts     # VRAM detection, health monitoring, cache metrics
+      doomLoopDetector.ts           # MD5 fingerprint doom-loop detection
+      contextCompactionService.ts   # 5-stage adaptive context compaction
+      toolResultOptimizer.ts        # Per-tool output optimization
+      systemReminderService.ts      # Blueprint-aware instruction reminders
+      editMatcherChain.ts           # 8-level progressive edit matching
+      treeSitterAnalyzer.ts         # Optional tree-sitter code analysis
+      shadowGitService.ts           # Per-step git snapshots for undo
+      memoryService.ts              # Dual-memory (episodic + working)
+      shellDetect.ts                # Cross-platform shell detection
       patchHelpers.ts               # Patch parsing + application
       blueprintHelpers.ts           # Blueprint extraction helpers
       codebaseHelpers.ts            # File tree + content helpers
@@ -667,7 +688,7 @@ src/
       client.ts                     # Rust sidecar gRPC client
       manager.ts                    # Sidecar lifecycle management
   shared/
-    contracts.ts                    # All domain types (1175 lines)
+    contracts.ts                    # All domain types (HardwareProfile, BackendHealth, SpeculativeDecoding, etc.)
 electron/
   main.mjs                         # Electron main process
 prisma/
@@ -835,11 +856,12 @@ flowchart TD
 
 ### Active engineering priorities
 
-1. **Local 4B follow-up edit reliability** — expanding deterministic templates and improving unconstrained edit quality
-2. **Blueprint-aware verification and reporting** — tighter enforcement visibility
-3. **E2E acceptance harness** — maintaining 22-check comprehensive test suite
-4. **Mission-control BFF unification** — server-side snapshot aggregation
-5. **Single-agent reliability first** — mutating parallelism deferred until single-agent path is consistently green
+1. **Agent reliability** — doom-loop detection, system reminders, edit matcher chain for robust execution
+2. **Context management** — adaptive compaction, tool result optimization, dual-memory architecture
+3. **Hardware-aware inference** — VRAM detection, speculative decoding, backend health monitoring
+4. **Local 4B follow-up edit reliability** — expanding deterministic templates and improving unconstrained edit quality
+5. **Blueprint-aware verification and reporting** — tighter enforcement visibility
+6. **Single-agent reliability first** — mutating parallelism deferred until single-agent path is consistently green
 
 ### Key architectural decisions
 
@@ -849,6 +871,10 @@ flowchart TD
 - **chooseEditStrategy guard**: files >150 lines use diff/search-replace instead of full-file rewrite.
 - **Bounded repair**: max 3 repair rounds, failure taxonomy drives repair, not vague re-prompting.
 - **BFF snapshot aggregation**: `MissionControlService` composes snapshot, console events, blueprint, and codebase into one response.
+- **Doom-loop detection**: MD5 fingerprint sliding window catches stuck agent loops before burning tokens.
+- **Adaptive context compaction**: 5-stage pressure-based compaction prevents context overflow in long sessions.
+- **Edit matcher chain**: 8-level progressive matching (exact → whitespace-normalized → indent-flexible → fuzzy → similarity) absorbs LLM edit imprecision.
+- **Dual-memory**: episodic memory (compressed task summaries) + working memory (sliding window) improves long-session reasoning.
 
 ### Roadmap
 
@@ -858,7 +884,9 @@ Remaining deferred items:
 - Cloud-aware prompt caching (Section 7)
 - Mutating multi-agent parallelism (Section 8 conditions)
 - Candidate-training-data promotion (Section 4.4)
-- Cross-platform inference backend lifecycle (Section 10 — auto-detection, managed subprocess, Linux/Windows packaging)
+- Cross-platform inference backend lifecycle (Section 10)
+- Tree-sitter native grammar compilation (Section 16)
+- Shadow git snapshot API endpoint (Section 16)
 - Broader arbitrary multi-file follow-up edit reliability
 
 ---

@@ -6,10 +6,13 @@ import { listOnPremInferenceBackends, resolveOnPremInferenceBackend } from "../p
 import { resolveOnPremQwenModelPlugin } from "../providers/modelPlugins";
 import type {
   BackendBenchmarkResult,
+  BackendHealthStatus,
+  HardwareProfile,
   InferenceAutotuneResult,
   InferenceBenchmarkProfile,
   OnPremInferenceBackendDescriptor,
   OnPremInferenceBackendId,
+  PromptCacheMetrics,
 } from "../../shared/contracts";
 import { getCandidateOrderForHardware, scoreBenchmark } from "./inferenceScoring";
 import { V2EventService } from "./v2EventService";
@@ -102,21 +105,85 @@ export class InferenceTuningService {
     });
   }
 
-  private getHardwareProfile(): "apple-silicon" | "nvidia-cuda" | "generic-cpu" {
+  private cachedHardwareProfile: HardwareProfile | null = null;
+
+  getHardwareProfile(): HardwareProfile {
+    if (this.cachedHardwareProfile) {
+      return this.cachedHardwareProfile;
+    }
+
+    const profile = this.detectHardwareProfile();
+    this.cachedHardwareProfile = profile;
+    return profile;
+  }
+
+  private detectHardwareProfile(): HardwareProfile {
     if (process.platform === "darwin" && process.arch === "arm64") {
-      return "apple-silicon";
+      let unifiedMemoryMb: number | undefined;
+      try {
+        const result = spawnSync("sysctl", ["-n", "hw.memsize"], {
+          encoding: "utf-8",
+          timeout: 3000,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        if (result.status === 0 && result.stdout) {
+          const bytes = parseInt(result.stdout.trim(), 10);
+          if (Number.isFinite(bytes) && bytes > 0) {
+            unifiedMemoryMb = Math.round(bytes / (1024 * 1024));
+          }
+        }
+      } catch {
+        // sysctl unavailable
+      }
+      return { platform: "apple-silicon", unifiedMemoryMb };
     }
 
     if (process.env.CUDA_VISIBLE_DEVICES || process.env.NVIDIA_VISIBLE_DEVICES) {
-      return "nvidia-cuda";
+      return { platform: "nvidia-cuda", ...this.probeNvidiaGpu() };
     }
 
     const nvidia = spawnSync("nvidia-smi", [], { stdio: "ignore", timeout: 2500, shell: process.platform === "win32" });
     if (nvidia.status === 0) {
-      return "nvidia-cuda";
+      return { platform: "nvidia-cuda", ...this.probeNvidiaGpu() };
     }
 
-    return "generic-cpu";
+    return { platform: "generic-cpu" };
+  }
+
+  private probeNvidiaGpu(): { vramMb?: number; computeCapability?: string } {
+    try {
+      const result = spawnSync(
+        "nvidia-smi",
+        ["--query-gpu=memory.total,compute_cap", "--format=csv,noheader,nounits"],
+        { encoding: "utf-8", timeout: 4000, stdio: ["ignore", "pipe", "pipe"] }
+      );
+      if (result.status === 0 && result.stdout) {
+        const line = result.stdout.trim().split("\n")[0];
+        const parts = line.split(",").map((s) => s.trim());
+        const vramMb = parseInt(parts[0], 10);
+        const computeCapability = parts[1] || undefined;
+        return {
+          vramMb: Number.isFinite(vramMb) && vramMb > 0 ? vramMb : undefined,
+          computeCapability,
+        };
+      }
+    } catch {
+      // nvidia-smi query failed
+    }
+    return {};
+  }
+
+  canLoadModel(minVramGb: number): boolean {
+    const profile = this.getHardwareProfile();
+    if (profile.platform === "apple-silicon") {
+      const availableMb = profile.unifiedMemoryMb ?? 0;
+      return availableMb >= minVramGb * 1024;
+    }
+    if (profile.platform === "nvidia-cuda") {
+      const availableMb = profile.vramMb ?? 0;
+      return availableMb >= minVramGb * 1024;
+    }
+    return false;
   }
 
   private async getOnPremConfig() {
@@ -282,7 +349,8 @@ export class InferenceTuningService {
     });
     const profile = input.profile;
     const config = await this.getOnPremConfig();
-    const hardware = this.getHardwareProfile();
+    const hwProfile = this.getHardwareProfile();
+    const hardware = hwProfile.platform;
     const candidateOrder = getCandidateOrderForHardware(hardware);
     const descriptorMap = new Map(listOnPremInferenceBackends().map((item) => [item.id, item]));
     const activeProbeUrl = config.baseUrl.replace(/\/+$/, "");
@@ -638,5 +706,156 @@ export class InferenceTuningService {
       selected: row.selected,
       metadata: row.metadata as Record<string, unknown>,
     }));
+  }
+
+  // --- Phase 2: Backend Health Monitoring ---
+
+  private healthTimers = new Map<OnPremInferenceBackendId, NodeJS.Timeout>();
+  private healthState = new Map<OnPremInferenceBackendId, BackendHealthStatus>();
+  private readonly HEALTH_INTERVAL_MS = 30000;
+  private readonly HEALTH_FAILURE_THRESHOLD = 3;
+  private readonly BACKOFF_BASE_MS = 5000;
+
+  startHealthMonitoring(backendId: OnPremInferenceBackendId, baseUrl: string) {
+    if (this.healthTimers.has(backendId)) return;
+
+    this.healthState.set(backendId, {
+      status: "healthy",
+      lastCheck: new Date().toISOString(),
+      restartCount: 0,
+      consecutiveFailures: 0,
+    });
+
+    const timer = setInterval(() => {
+      void this.checkHealth(backendId, baseUrl);
+    }, this.HEALTH_INTERVAL_MS);
+
+    this.healthTimers.set(backendId, timer);
+  }
+
+  stopHealthMonitoring(backendId: OnPremInferenceBackendId) {
+    const timer = this.healthTimers.get(backendId);
+    if (timer) {
+      clearInterval(timer);
+      this.healthTimers.delete(backendId);
+    }
+  }
+
+  getHealthStatus(backendId: OnPremInferenceBackendId): BackendHealthStatus | null {
+    return this.healthState.get(backendId) ?? null;
+  }
+
+  getAllHealthStatuses(): Map<OnPremInferenceBackendId, BackendHealthStatus> {
+    return new Map(this.healthState);
+  }
+
+  private async checkHealth(backendId: OnPremInferenceBackendId, baseUrl: string) {
+    const state = this.healthState.get(backendId);
+    if (!state) return;
+
+    const healthUrl = `${stripV1Suffix(baseUrl)}/health`;
+    const modelsUrl = `${baseUrl.replace(/\/+$/, "")}/models`;
+
+    let healthy = false;
+    try {
+      const response = await fetchWithTimeout(healthUrl, { method: "GET" }, 5000);
+      healthy = response.ok;
+    } catch {
+      try {
+        const response = await fetchWithTimeout(modelsUrl, { method: "GET" }, 5000);
+        healthy = response.ok;
+      } catch {
+        healthy = false;
+      }
+    }
+
+    state.lastCheck = new Date().toISOString();
+
+    if (healthy) {
+      state.consecutiveFailures = 0;
+      state.status = "healthy";
+    } else {
+      state.consecutiveFailures += 1;
+      if (state.consecutiveFailures >= this.HEALTH_FAILURE_THRESHOLD) {
+        state.status = "down";
+        publishEvent("global", "inference.backend.health.down", {
+          backendId,
+          consecutiveFailures: state.consecutiveFailures,
+          restartCount: state.restartCount,
+        });
+        await this.attemptRestart(backendId, state);
+      } else {
+        state.status = "degraded";
+        publishEvent("global", "inference.backend.health.degraded", {
+          backendId,
+          consecutiveFailures: state.consecutiveFailures,
+        });
+      }
+    }
+
+    this.healthState.set(backendId, state);
+  }
+
+  private async attemptRestart(backendId: OnPremInferenceBackendId, state: BackendHealthStatus) {
+    const maxRestarts = 3;
+    if (state.restartCount >= maxRestarts) {
+      publishEvent("global", "inference.backend.health.restart_limit", {
+        backendId,
+        restartCount: state.restartCount,
+      });
+      return;
+    }
+
+    const backoffMs = this.BACKOFF_BASE_MS * Math.pow(3, state.restartCount);
+    state.restartCount += 1;
+
+    publishEvent("global", "inference.backend.health.restarting", {
+      backendId,
+      restartCount: state.restartCount,
+      backoffMs,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
+    const existing = runtimeProcesses.get(backendId);
+    if (existing) {
+      existing.kill("SIGTERM");
+      runtimeProcesses.delete(backendId);
+    }
+
+    try {
+      await this.startBackend({ actor: "health_monitor", backendId });
+      state.consecutiveFailures = 0;
+      state.status = "healthy";
+    } catch {
+      state.status = "down";
+    }
+  }
+
+  // --- Phase 10: Prompt Cache Metrics ---
+
+  private cacheHitWindow: boolean[] = [];
+  private readonly CACHE_WINDOW_SIZE = 100;
+
+  recordCacheResult(hit: boolean) {
+    this.cacheHitWindow.push(hit);
+    if (this.cacheHitWindow.length > this.CACHE_WINDOW_SIZE) {
+      this.cacheHitWindow.shift();
+    }
+  }
+
+  getCacheMetrics(): PromptCacheMetrics {
+    const total = this.cacheHitWindow.length;
+    const hits = this.cacheHitWindow.filter(Boolean).length;
+    return {
+      hitRate: total > 0 ? hits / total : 0,
+      totalRequests: total,
+      cacheHits: hits,
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  resetCacheMetrics() {
+    this.cacheHitWindow = [];
   }
 }
