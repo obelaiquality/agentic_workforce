@@ -16,6 +16,7 @@ Built with Electron + React + Fastify + Prisma + local Qwen models (MLX). Runs e
 - [Recommended First Tasks](#recommended-first-tasks)
 - [Product Surfaces](#product-surfaces)
 - [Model Roles](#model-roles)
+- [Inference Backends](#inference-backends)
 - [Project Blueprint](#project-blueprint)
 - [Optional Providers](#optional-providers)
 - [Testing](#testing)
@@ -77,12 +78,11 @@ The operator flow in the UI:
 | Requirement | Version | Notes |
 |---|---|---|
 | **Node.js** | 20+ | Runtime for server and frontend |
-| **Python** | 3.11+ | Required for mlx_lm local model server |
+| **Python** | 3.11+ | For local model server (mlx_lm, vLLM, etc.) |
 | **Docker** | Any modern | For PostgreSQL (docker-compose) |
-| **macOS** | Apple Silicon | MLX inference requires Apple Silicon |
 | **Rust** | Latest stable | For the optional sidecar binary |
 
-> **Apple Silicon is required** for local model inference via MLX. The full product path (local Qwen 4B/0.8B) only works on Apple Silicon Macs.
+Plus **one** local inference backend (see [Inference Backends](#inference-backends) below).
 
 ---
 
@@ -118,22 +118,35 @@ npx prisma db push
 
 This creates all tables from the Prisma schema (67 models).
 
-### 5. Start the local model server
+### 5. Start a local inference backend
 
-In a **separate terminal**:
+The app needs a local model server exposing the OpenAI-compatible API. Pick the backend that matches your hardware (see [Inference Backends](#inference-backends) for all options).
+
+**macOS Apple Silicon** (default):
 
 ```bash
 pip install --upgrade mlx-lm
-python3 -m mlx_lm.server \
-  --model mlx-community/Qwen3.5-4B-4bit \
-  --host 127.0.0.1 \
-  --port 8000
+python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000
+```
+
+**Linux with NVIDIA GPU**:
+
+```bash
+pip install vllm
+vllm serve Qwen/Qwen3.5-4B --host 127.0.0.1 --port 8000
+```
+
+**Any platform (Ollama)**:
+
+```bash
+ollama pull qwen3.5:4b && ollama serve
 ```
 
 Verify it's running:
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/health   # MLX / vLLM
+curl http://127.0.0.1:11434/v1/models  # Ollama
 ```
 
 ### 6. Launch the desktop app
@@ -263,6 +276,55 @@ flowchart TD
   style Review fill:#d97706,color:#fff
   style Escalate fill:#dc2626,color:#fff
 ```
+
+---
+
+## Inference Backends
+
+The app talks to local models via the **OpenAI-compatible `/v1/chat/completions` API**. Any backend that exposes this API works without code changes — just configure the backend ID and base URL in `.env`.
+
+### Supported backends
+
+| Backend | Platform | `.env` backend ID | Default Port | Install |
+|---|---|---|---|---|
+| **MLX-LM** | macOS Apple Silicon | `mlx-lm` | 8000 | `pip install mlx-lm` |
+| **vLLM** | Linux + NVIDIA GPU | `vllm-openai` | 8000 | `pip install vllm` |
+| **SGLang** | Linux + NVIDIA GPU | `sglang` | 30000 | `pip install sglang` |
+| **TensorRT-LLM** | Linux + NVIDIA GPU | `trtllm-openai` | 8000 | NVIDIA container |
+| **llama.cpp** | Any (CPU/GPU) | `llama-cpp-openai` | 8080 | Build from source or `brew install llama.cpp` |
+| **Ollama** | Any | `ollama-openai` | 11434 | [ollama.com](https://ollama.com) |
+| **Transformers** | Any | `transformers-openai` | 8000 | `pip install transformers` |
+
+### Platform quick reference
+
+| Platform | Recommended | Easiest |
+|---|---|---|
+| **macOS Apple Silicon** | MLX-LM (fastest) | Ollama |
+| **Linux + NVIDIA** | vLLM (best throughput) | Ollama |
+| **Linux CPU-only** | llama.cpp (GGUF) | Ollama |
+| **Windows** | Ollama (native) | Ollama |
+| **Windows + NVIDIA** | Ollama or vLLM via WSL2 | Ollama |
+
+### Configuration
+
+Set three env vars in `.env` to switch backends:
+
+```bash
+ONPREM_QWEN_INFERENCE_BACKEND=mlx-lm          # Backend ID from table above
+ONPREM_QWEN_BASE_URL=http://127.0.0.1:8000/v1 # Base URL for the backend
+ONPREM_QWEN_MODEL=mlx-community/Qwen3.5-4B-4bit  # Model identifier (varies by backend)
+```
+
+**Model identifiers by backend:**
+
+| Backend | 4B model | 0.8B model |
+|---|---|---|
+| MLX-LM | `mlx-community/Qwen3.5-4B-4bit` | `Qwen/Qwen3.5-0.8B` |
+| vLLM | `Qwen/Qwen3.5-4B` | `Qwen/Qwen3.5-0.8B` |
+| Ollama | `qwen3.5:4b` | `qwen3.5:0.8b` |
+| llama.cpp | Path to `.gguf` file | Path to `.gguf` file |
+
+> See [`long_term_upgrades.md` Section 10](long_term_upgrades.md#10-cross-platform-inference-backend-strategy) for the full cross-platform roadmap including auto-detection, managed subprocess lifecycle, and platform-specific packaging.
 
 ---
 

@@ -846,7 +846,143 @@ interface ShareableRunReport {
 
 ---
 
-## 10. Source Reference Set
+## 10. Cross-Platform Inference Backend Strategy
+
+### 10.1 Current state
+
+The app already ships a **backend registry** (`src/server/providers/inferenceBackends.ts`) with 7 inference backends and a **model plugin registry** (`src/server/providers/modelPlugins.ts`) that maps model identifiers to backend-specific runtime artifacts.
+
+All backends expose the **OpenAI-compatible `/v1/chat/completions` API**, so the `OnPremQwenAdapter` in `stubAdapters.ts` works identically regardless of which backend is running — the only difference is the startup command and base URL.
+
+#### Registered backends
+
+| Backend | ID | Optimized For | Default Port | Startup Command |
+|---|---|---|---|---|
+| MLX-LM | `mlx-lm` | Apple Silicon | 8000 | `python3 -m mlx_lm.server --model {{model}}` |
+| vLLM | `vllm-openai` | NVIDIA CUDA | 8000 | `vllm serve {{model}}` |
+| SGLang | `sglang` | NVIDIA CUDA | 30000 | `python3 -m sglang.launch_server --model-path {{model}}` |
+| TensorRT-LLM | `trtllm-openai` | NVIDIA CUDA | 8000 | `trtllm-serve {{model}}` |
+| llama.cpp | `llama-cpp-openai` | Portable (CPU/GPU) | 8080 | `llama-server --model /path/to/model.gguf` |
+| Transformers | `transformers-openai` | Portable | 8000 | `python3 scripts/local_qwen_openai_server.py` |
+| Ollama | `ollama-openai` | Portable | 11434 | `ollama serve` |
+
+#### Platform compatibility matrix
+
+| Platform | Best backend | Alternative | Notes |
+|---|---|---|---|
+| **macOS Apple Silicon** | MLX-LM | Ollama, llama.cpp | MLX is fastest; Ollama is easiest |
+| **Linux + NVIDIA GPU** | vLLM | SGLang, TensorRT-LLM | vLLM for throughput; SGLang for latency; TRT-LLM for production |
+| **Linux CPU-only** | llama.cpp | Ollama, Transformers | GGUF quantization keeps memory low |
+| **Windows + NVIDIA** | Ollama | llama.cpp (WSL), vLLM (WSL) | Ollama is native Windows; vLLM requires WSL2 |
+| **Windows CPU-only** | Ollama | llama.cpp | Ollama is simplest; llama.cpp for more control |
+
+### 10.2 What works today
+
+- [x] Backend registry with 7 backends and platform tags (`apple-silicon`, `nvidia-cuda`, `portable`)
+- [x] Model plugin registry with recommended backend per model
+- [x] `ONPREM_QWEN_INFERENCE_BACKEND` env var selects backend at startup
+- [x] `ONPREM_QWEN_BASE_URL` overrides default URL for any backend
+- [x] All backends share the same OpenAI-compatible adapter — no code changes needed to switch
+- [x] Settings UI exposes backend selector and startup command template
+- [x] Inference backend benchmark types exist (`BackendBenchmarkResult`, `InferenceAutotuneResult`)
+
+### 10.3 Remaining work for full cross-platform support
+
+#### Phase A — Backend auto-detection and guided setup
+- [ ] Detect available hardware at startup (Apple Silicon, NVIDIA GPU, CPU-only) and pre-select the optimal backend
+- [ ] Add a `doctor` check that validates the selected backend is installed and reachable
+- [ ] Show platform-appropriate setup instructions in the Settings UI (not just startup command templates)
+- [ ] Add a one-click "Start backend" button in Settings that runs the startup command in a managed subprocess
+
+#### Phase B — Model artifact resolution per backend
+- [ ] Resolve model artifacts per backend (e.g. MLX uses `mlx-community/Qwen3.5-4B-4bit`, vLLM uses `Qwen/Qwen3.5-4B`, llama.cpp uses a GGUF file path)
+- [ ] Model plugin registry should map `hfRepo` -> backend-specific `runtimeModel` for each registered backend, not just the recommended one
+- [ ] Add GGUF model registry entries for llama.cpp (Q4_K_M, Q5_K_M quantizations of Qwen 3.5 0.8B and 4B)
+
+#### Phase C — Startup lifecycle management
+- [ ] Manage inference backend as a child process (start, health-check, restart, stop) similar to how the API server is managed by Electron
+- [ ] Graceful shutdown of backend on app exit
+- [ ] Health check polling with automatic restart on backend crash
+- [ ] Surface backend health status in the preflight gate and mission header
+
+#### Phase D — Windows and Linux packaging
+- [ ] Electron packaging for Linux (AppImage, deb)
+- [ ] Electron packaging for Windows (NSIS installer)
+- [ ] Platform-specific model download helpers (MLX weights for macOS, GGUF for Windows/Linux CPU, HF weights for CUDA)
+- [ ] Docker Compose variant that bundles vLLM + PostgreSQL for headless Linux server deployment
+
+#### Phase E — Inference backend benchmarking
+- [ ] Implement the existing `BackendBenchmarkResult` and `InferenceAutotuneResult` types as a real benchmark runner
+- [ ] Auto-select backend based on benchmark results (latency, throughput, error rate)
+- [ ] Store benchmark results per hardware profile for consistent recommendations
+
+### 10.4 How to run on each platform today
+
+#### macOS Apple Silicon (default path)
+
+```bash
+pip install --upgrade mlx-lm
+python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000
+```
+
+Set in `.env`:
+```
+ONPREM_QWEN_INFERENCE_BACKEND=mlx-lm
+ONPREM_QWEN_BASE_URL=http://127.0.0.1:8000/v1
+ONPREM_QWEN_MODEL=mlx-community/Qwen3.5-4B-4bit
+```
+
+#### Linux with NVIDIA GPU
+
+```bash
+pip install vllm
+vllm serve Qwen/Qwen3.5-4B --host 127.0.0.1 --port 8000
+```
+
+Set in `.env`:
+```
+ONPREM_QWEN_INFERENCE_BACKEND=vllm-openai
+ONPREM_QWEN_BASE_URL=http://127.0.0.1:8000/v1
+ONPREM_QWEN_MODEL=Qwen/Qwen3.5-4B
+```
+
+#### Any platform with Ollama
+
+```bash
+# Install Ollama from https://ollama.com
+ollama pull qwen3.5:4b
+ollama serve
+```
+
+Set in `.env`:
+```
+ONPREM_QWEN_INFERENCE_BACKEND=ollama-openai
+ONPREM_QWEN_BASE_URL=http://127.0.0.1:11434/v1
+ONPREM_QWEN_MODEL=qwen3.5:4b
+```
+
+#### Any platform with llama.cpp
+
+```bash
+# Download GGUF weights
+# Build or install llama-server
+llama-server --model Qwen3.5-4B-Q4_K_M.gguf --host 127.0.0.1 --port 8080 --ctx-size 32768
+```
+
+Set in `.env`:
+```
+ONPREM_QWEN_INFERENCE_BACKEND=llama-cpp-openai
+ONPREM_QWEN_BASE_URL=http://127.0.0.1:8080/v1
+ONPREM_QWEN_MODEL=Qwen3.5-4B-Q4_K_M
+```
+
+### 10.5 Design principle
+
+The app should **never hard-depend on one inference runtime**. The abstraction boundary is the OpenAI-compatible API. Any backend that exposes `/v1/chat/completions` with the same request/response contract works without application changes. Platform-specific logic belongs in the backend registry and startup lifecycle, not in the adapter or service layers.
+
+---
+
+## 11. Source Reference Set
 - [Anthropic: Building effective agents](https://www.anthropic.com/research/building-effective-agents/)
 - [Anthropic prompt engineering overview](https://docs.anthropic.com/en/docs/prompt-engineering)
 - [Anthropic tool use overview](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)
