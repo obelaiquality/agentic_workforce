@@ -94,31 +94,7 @@ Plus **one** local inference backend (see [Inference Backends](#inference-backen
 npm install
 ```
 
-### 2. Copy environment config
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` if you want to change ports or add API keys. Defaults work out of the box for local operation.
-
-### 3. Start PostgreSQL
-
-```bash
-npm run db:up
-```
-
-This starts a PostgreSQL 16 container on port **5433** via docker-compose.
-
-### 4. Initialize the database
-
-```bash
-npx prisma db push
-```
-
-This creates all tables from the Prisma schema (67 models).
-
-### 5. Start a local inference backend
+### 2. Start a local inference backend
 
 The app needs a local model server exposing the OpenAI-compatible API. Pick the backend that matches your hardware (see [Inference Backends](#inference-backends) for all options).
 
@@ -149,13 +125,29 @@ curl http://127.0.0.1:8000/health   # MLX / vLLM
 curl http://127.0.0.1:11434/v1/models  # Ollama
 ```
 
-### 6. Launch the desktop app
+### 3. Launch the desktop app
 
 ```bash
 npm run start:desktop
 ```
 
-This runs the bootstrap check, starts Vite + Fastify, and opens the Electron window.
+This single command handles all remaining setup automatically:
+- Copies `.env.example` to `.env` if `.env` doesn't exist
+- Runs preflight doctor checks
+- Starts PostgreSQL via docker-compose (port 5433)
+- Pushes the Prisma schema (67 models)
+- Generates the Prisma client
+- Builds the Rust sidecar
+- Starts Vite + Fastify + Electron
+
+> **Manual setup**: If you prefer to run steps individually or `start:desktop` has trouble, you can run them separately:
+> ```bash
+> cp .env.example .env        # Create env config (edit to add API keys)
+> npm run db:up                # Start PostgreSQL
+> npx prisma db push           # Initialize database schema
+> npx prisma generate          # Generate Prisma client
+> npm run dev:desktop           # Start Vite + Electron (Electron spawns the API)
+> ```
 
 ---
 
@@ -220,16 +212,17 @@ The follow-up component scenarios (StatusBadge, ProgressBar, ThemeToggle, Format
 
 ## Product Surfaces
 
-### Normal surfaces
+### Sidebar sections
 
-| Surface | Purpose |
+| Section | Purpose |
 |---|---|
-| **Landing** | Connect repos, create projects, view blueprint |
-| **Live State** | Execution status, run timeline, active execution panel |
+| **Live State** | Landing view (when no project active), execution status, run timeline, active execution panel |
 | **Codebase** | Real file tree and file contents from the managed worktree |
 | **Console** | Real event stream (execution, verification, provider, indexing) |
 | **Projects** | Project list, GitHub connections, repo management |
 | **Settings** | Provider config, model settings, Labs toggle |
+
+When no project is active, Live State shows the **Landing / Mission Control** view where you connect repos and create projects.
 
 ### Internal / advanced (behind Settings > Labs)
 
@@ -332,13 +325,17 @@ ONPREM_QWEN_MODEL=mlx-community/Qwen3.5-4B-4bit  # Model identifier (varies by b
 
 Every connected project gets a **Project Blueprint** — the operating contract for that repo.
 
-The blueprint is auto-extracted from:
+The blueprint text is auto-extracted from these files (when present):
 - `AGENTS.md`
 - `README.md` / `README`
-- `docs/` directory
-- `package.json` (scripts, dependencies)
-- Lint/test/build config
-- CI config (`.github/workflows/`)
+- `docs/architecture.md`
+- `docs/onboarding.md`
+- `guidelines/Guidelines.md`
+
+Repo guidelines (lint, test, build commands) are separately extracted from:
+- `package.json` scripts (`lint`, `test`, `build`, `typecheck`)
+- `Cargo.toml` (for Rust repos)
+- These feed into the blueprint's verification command selection
 
 ### Blueprint sections
 
@@ -404,7 +401,7 @@ npm test
 npx vitest run
 ```
 
-141+ tests across 15+ test files covering:
+142 tests across 15 test files covering:
 - Provider routing and factory
 - Blueprint extraction and helpers
 - Patch manifest parsing
@@ -446,7 +443,7 @@ npm run build:server   # Backend (tsup)
 | Command | Purpose |
 |---|---|
 | `npm run start:desktop` | Full startup: bootstrap + dev + Electron |
-| `npm run dev:desktop` | Start Vite + Electron (assumes API running) |
+| `npm run dev:desktop` | Start Vite + Electron (Electron spawns the API server) |
 | `npm run dev:api` | Start the Fastify API server in watch mode |
 | `npm run dev` | Start Vite dev server only |
 | `npm run build` | Build frontend for production |
@@ -749,10 +746,16 @@ classDiagram
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/v8/mission/snapshot` | Full mission state (BFF aggregation) |
+| `GET /api/v8/mission/timeline` | Run narrative timeline |
+| `GET /api/v8/mission/codebase` | Codebase summary for active project |
 | `GET /api/v8/mission/codebase/tree` | File tree from managed worktree |
 | `GET /api/v8/mission/codebase/file` | File content from managed worktree |
-| `GET /api/v8/mission/console` | Console event stream |
+| `GET /api/v8/mission/console` | Console event list |
+| `GET /api/v8/mission/console/stream` | SSE console event stream |
+| `GET /api/v8/mission/overseer` | Overseer state for active project |
 | `GET /api/v8/projects/:id/blueprint` | Project blueprint |
+| `GET /api/v8/projects/:id/blueprint/sources` | Blueprint extraction source refs |
+| `GET /api/v8/projects/:id/scaffold/status` | Scaffold execution status |
 | `GET /api/v8/projects/:id/report/latest` | Latest run report |
 
 **Commands:**
@@ -760,10 +763,14 @@ classDiagram
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/v8/projects/connect/local` | Connect a local repo |
+| `POST /api/v8/projects/connect/github` | Connect a GitHub repo |
+| `POST /api/v8/projects/open-recent` | Reopen a recently used project |
 | `POST /api/v8/projects/bootstrap/empty` | Bootstrap new project from empty folder |
+| `POST /api/v8/projects/:id/scaffold/plan` | Plan scaffold for new project |
 | `POST /api/v8/projects/:id/scaffold/execute` | Execute scaffold for new project |
 | `POST /api/v8/projects/:id/blueprint/generate` | Generate blueprint from repo |
 | `POST /api/v8/projects/:id/blueprint/update` | Update blueprint with overrides |
+| `POST /api/v8/mission/overseer/chat` | Send message to overseer |
 | `POST /api/v8/mission/overseer/route.review` | Review execution route |
 | `POST /api/v8/mission/overseer/execute` | Execute coding objective |
 | `POST /api/v8/mission/approval/decide` | Approve or reject pending action |
@@ -782,9 +789,9 @@ flowchart TD
   Factory --> OpenAICompat["OpenAI-Compatible<br/>Generic adapter"]
   Factory --> OpenAIResp["OpenAI Responses<br/>Cloud escalation"]
 
-  OnPrem --> MLX["mlx_lm.server<br/>Apple Silicon"]
-  OnPrem --> Ollama["Ollama<br/>(optional)"]
-  OnPrem --> VLLM["vLLM<br/>(optional)"]
+  OnPrem --> MLX["MLX-LM<br/>Apple Silicon"]
+  OnPrem --> VLLM["vLLM / SGLang / TRT-LLM<br/>NVIDIA CUDA"]
+  OnPrem --> Portable["Ollama / llama.cpp<br/>Any platform"]
 
   QwenCLI --> Acct1["Account 1"]
   QwenCLI --> Acct2["Account 2"]
@@ -851,6 +858,7 @@ Remaining deferred items:
 - Cloud-aware prompt caching (Section 7)
 - Mutating multi-agent parallelism (Section 8 conditions)
 - Candidate-training-data promotion (Section 4.4)
+- Cross-platform inference backend lifecycle (Section 10 — auto-detection, managed subprocess, Linux/Windows packaging)
 - Broader arbitrary multi-file follow-up edit reliability
 
 ---
