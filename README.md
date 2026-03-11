@@ -428,8 +428,18 @@ Then in **Settings** you can:
 
 1. keep OpenAI as **Escalate-only**
 2. or switch **Runtime mode** to **OpenAI API** and run all roles from one OpenAI model
+3. or use **Role routing** to assign different OpenAI or Local Qwen models per responsibility:
+   - `Fast`
+   - `Build`
+   - `Review`
+   - `Escalate`
 
-The app now fetches the live model list from your account’s `GET /v1/models` response, so the model picker is not hardcoded. `gpt-5-nano` is the default quick preset.
+The app now fetches the live model list from your account’s `GET /v1/models` response, so the model picker is not hardcoded. `gpt-5-nano` is the default quick preset, and the recommended OpenAI role setup prefers:
+
+- `Fast` -> `gpt-5-nano`
+- `Build` -> latest available Codex-family model
+- `Review` -> stronger GPT-5 general model
+- `Escalate` -> highest-capability GPT-5 model available on your account
 
 ### Qwen CLI (multi-account failover)
 

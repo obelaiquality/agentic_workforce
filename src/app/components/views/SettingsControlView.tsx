@@ -29,6 +29,87 @@ import { useUiStore } from "../../store/uiStore";
 import { Chip, Panel, PanelHeader } from "../UI";
 
 type SettingsTab = "basic" | "accounts" | "advanced" | "labs";
+type ModelRoleKey = "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+
+const ROLE_ORDER: ModelRoleKey[] = ["utility_fast", "coder_default", "review_deep", "overseer_escalation"];
+const ROLE_LABELS: Record<ModelRoleKey, string> = {
+  utility_fast: "Fast",
+  coder_default: "Build",
+  review_deep: "Review",
+  overseer_escalation: "Escalate",
+};
+
+function pickFirstAvailable(preferred: string[], available: string[], fallback: string) {
+  for (const model of preferred) {
+    if (available.includes(model)) return model;
+  }
+  return fallback;
+}
+
+function recommendedOpenAiRoleBindings(
+  availableModels: string[],
+  fallbackModel: string
+): Record<ModelRoleKey, { role: ModelRoleKey; providerId: "openai-responses"; pluginId: null; model: string; temperature: number; maxTokens: number; reasoningMode: "off" | "on" }> {
+  const fastModel = pickFirstAvailable(
+    ["gpt-5-nano", "gpt-5.1-nano", "gpt-4.1-nano", "gpt-4o-mini"],
+    availableModels,
+    fallbackModel
+  );
+  const buildModel = pickFirstAvailable(
+    ["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex", "gpt-5-codex", "gpt-5.1-codex-mini", "gpt-5-mini"],
+    availableModels,
+    fastModel
+  );
+  const reviewModel = pickFirstAvailable(
+    ["gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini"],
+    availableModels,
+    buildModel
+  );
+  const escalateModel = pickFirstAvailable(
+    ["gpt-5.4-pro", "gpt-5.4", "gpt-5.2-pro", "gpt-5-pro", "gpt-5.2", "gpt-5.1", "gpt-5"],
+    availableModels,
+    reviewModel
+  );
+
+  return {
+    utility_fast: {
+      role: "utility_fast",
+      providerId: "openai-responses",
+      pluginId: null,
+      model: fastModel,
+      temperature: 0,
+      maxTokens: 900,
+      reasoningMode: "off",
+    },
+    coder_default: {
+      role: "coder_default",
+      providerId: "openai-responses",
+      pluginId: null,
+      model: buildModel,
+      temperature: 0.1,
+      maxTokens: 1800,
+      reasoningMode: "off",
+    },
+    review_deep: {
+      role: "review_deep",
+      providerId: "openai-responses",
+      pluginId: null,
+      model: reviewModel,
+      temperature: 0.05,
+      maxTokens: 2200,
+      reasoningMode: "on",
+    },
+    overseer_escalation: {
+      role: "overseer_escalation",
+      providerId: "openai-responses",
+      pluginId: null,
+      model: escalateModel,
+      temperature: 0.05,
+      maxTokens: 2400,
+      reasoningMode: "on",
+    },
+  };
+}
 
 function LabeledInput({
   label,
@@ -287,6 +368,57 @@ export function SettingsControlView() {
       toolRewardScale: 0.6,
     },
   };
+  const currentRoleBindings = useMemo(() => {
+    const raw = (settingsQuery.data?.items.modelRoles ?? {}) as Record<string, Record<string, unknown>>;
+    return {
+      utility_fast: {
+        role: "utility_fast" as const,
+        providerId: (raw.utility_fast?.providerId as "onprem-qwen" | "openai-responses" | undefined) ?? "onprem-qwen",
+        pluginId: (raw.utility_fast?.pluginId as string | null | undefined) ?? "qwen3.5-0.8b",
+        model: (raw.utility_fast?.model as string | undefined) ?? "Qwen/Qwen3.5-0.8B",
+        temperature: (raw.utility_fast?.temperature as number | undefined) ?? 0.1,
+        maxTokens: (raw.utility_fast?.maxTokens as number | undefined) ?? 900,
+        reasoningMode: (raw.utility_fast?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "off",
+      },
+      coder_default: {
+        role: "coder_default" as const,
+        providerId: (raw.coder_default?.providerId as "onprem-qwen" | "openai-responses" | undefined) ?? "onprem-qwen",
+        pluginId: (raw.coder_default?.pluginId as string | null | undefined) ?? onPremSettings.pluginId,
+        model: (raw.coder_default?.model as string | undefined) ?? onPremSettings.model,
+        temperature: (raw.coder_default?.temperature as number | undefined) ?? 0.12,
+        maxTokens: (raw.coder_default?.maxTokens as number | undefined) ?? 1800,
+        reasoningMode: (raw.coder_default?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "off",
+      },
+      review_deep: {
+        role: "review_deep" as const,
+        providerId: (raw.review_deep?.providerId as "onprem-qwen" | "openai-responses" | undefined) ?? "onprem-qwen",
+        pluginId: (raw.review_deep?.pluginId as string | null | undefined) ?? onPremSettings.pluginId,
+        model: (raw.review_deep?.model as string | undefined) ?? onPremSettings.model,
+        temperature: (raw.review_deep?.temperature as number | undefined) ?? 0.08,
+        maxTokens: (raw.review_deep?.maxTokens as number | undefined) ?? 2200,
+        reasoningMode: (raw.review_deep?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "on",
+      },
+      overseer_escalation: {
+        role: "overseer_escalation" as const,
+        providerId: (raw.overseer_escalation?.providerId as "onprem-qwen" | "openai-responses" | undefined) ?? "openai-responses",
+        pluginId: (raw.overseer_escalation?.pluginId as string | null | undefined) ?? null,
+        model: (raw.overseer_escalation?.model as string | undefined) ?? openAiResponsesSettings.model,
+        temperature: (raw.overseer_escalation?.temperature as number | undefined) ?? 0.05,
+        maxTokens: (raw.overseer_escalation?.maxTokens as number | undefined) ?? 2400,
+        reasoningMode: (raw.overseer_escalation?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "on",
+      },
+    };
+  }, [settingsQuery.data?.items.modelRoles, onPremSettings.model, onPremSettings.pluginId, openAiResponsesSettings.model]);
+
+  const onPremPluginOptions = useMemo(
+    () =>
+      (onPremPluginsQuery.data?.items ?? []).map((plugin) => ({
+        id: plugin.id,
+        model: plugin.runtimeModel,
+        label: plugin.label,
+      })),
+    [onPremPluginsQuery.data?.items]
+  );
 
   const selectedOnPremPlugin = (onPremPluginsQuery.data?.items ?? []).find((plugin) => plugin.id === onPremSettings.pluginId);
   const selectedInferenceBackend = (onPremBackendsQuery.data?.items ?? []).find((backend) => backend.id === onPremSettings.inferenceBackendId);
@@ -296,6 +428,28 @@ export function SettingsControlView() {
     () => new Map((authSessionsQuery.data?.items ?? []).map((item) => [item.accountId, item])),
     [authSessionsQuery.data?.items]
   );
+  const applyModelRoles = (nextBindings: Record<ModelRoleKey, Record<string, unknown>>) => {
+    updateSettingsMutation.mutate({ modelRoles: nextBindings });
+  };
+  const updateRoleBinding = (role: ModelRoleKey, patch: Record<string, unknown>) => {
+    applyModelRoles({
+      ...currentRoleBindings,
+      [role]: {
+        ...currentRoleBindings[role],
+        ...patch,
+        role,
+      },
+    });
+  };
+  const applyRecommendedOpenAiRoles = () => {
+    setProviderMutation.mutate("openai-responses");
+    applyModelRoles(
+      recommendedOpenAiRoleBindings(
+        openAiModels.map((item) => item.id),
+        openAiResponsesSettings.model || "gpt-5-nano"
+      )
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -421,6 +575,12 @@ export function SettingsControlView() {
                     Restore Local Qwen
                   </button>
                   <button
+                    onClick={applyRecommendedOpenAiRoles}
+                    className="rounded-lg border border-fuchsia-500/30 bg-fuchsia-500/10 px-4 py-2 text-sm text-fuchsia-100"
+                  >
+                    Apply Recommended OpenAI Roles
+                  </button>
+                  <button
                     onClick={() => queryClient.invalidateQueries({ queryKey: ["openai-models"] })}
                     className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
                   >
@@ -430,6 +590,132 @@ export function SettingsControlView() {
                 <div className="text-xs text-zinc-500">
                   Models are fetched live from your account’s OpenAI `/v1/models` list. Default quick preset is <code>gpt-5-nano</code>.
                   {openAiModelsQuery.data?.error ? ` ${openAiModelsQuery.data.error}` : ""}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-white font-medium">Role routing</div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      Configure which provider and model each responsibility role should use. Recommended OpenAI setup uses a Codex-family model for `Build` when available.
+                    </div>
+                  </div>
+                  <Chip variant="subtle">hybrid capable</Chip>
+                </div>
+                <div className="space-y-3">
+                  {ROLE_ORDER.map((role) => {
+                    const binding = currentRoleBindings[role];
+                    const provider = binding.providerId === "openai-responses" ? "openai-responses" : "onprem-qwen";
+                    const selectedPlugin = onPremPluginOptions.find((plugin) => plugin.id === binding.pluginId) ?? onPremPluginOptions[0];
+                    const openAiRecommendation = recommendedOpenAiRoleBindings(
+                      openAiModels.map((item) => item.id),
+                      openAiResponsesSettings.model || "gpt-5-nano"
+                    )[role].model;
+
+                    return (
+                      <div key={role} className="rounded-lg border border-white/10 bg-black/20 p-3 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-white">{ROLE_LABELS[role]}</div>
+                            <div className="text-xs text-zinc-500">{role}</div>
+                          </div>
+                          {provider === "openai-responses" ? <Chip variant="ok">OpenAI API</Chip> : <Chip variant="subtle">Local Qwen</Chip>}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[150px_1fr_110px] gap-3">
+                          <label className="space-y-1 block">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Provider</div>
+                            <select
+                              value={provider}
+                              onChange={(event) => {
+                                const nextProvider = event.target.value as "onprem-qwen" | "openai-responses";
+                                if (nextProvider === "openai-responses") {
+                                  updateRoleBinding(role, {
+                                    providerId: "openai-responses",
+                                    pluginId: null,
+                                    model:
+                                      role === "coder_default"
+                                        ? openAiRecommendation
+                                        : openAiResponsesSettings.model || openAiRecommendation,
+                                  });
+                                } else {
+                                  updateRoleBinding(role, {
+                                    providerId: "onprem-qwen",
+                                    pluginId: selectedPlugin?.id ?? onPremSettings.pluginId,
+                                    model: selectedPlugin?.model ?? onPremSettings.model,
+                                  });
+                                }
+                              }}
+                              className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                            >
+                              <option value="onprem-qwen">Local Qwen</option>
+                              <option value="openai-responses">OpenAI API</option>
+                            </select>
+                          </label>
+                          <label className="space-y-1 block">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Model</div>
+                            {provider === "openai-responses" ? (
+                              <select
+                                value={binding.model}
+                                onChange={(event) => updateRoleBinding(role, { providerId: "openai-responses", pluginId: null, model: event.target.value })}
+                                className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                              >
+                                {openAiModels.length === 0 ? <option value={binding.model}>{binding.model}</option> : null}
+                                {openAiModels.map((model) => (
+                                  <option key={model.id} value={model.id}>
+                                    {model.id}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <select
+                                value={binding.pluginId ?? selectedPlugin?.id ?? ""}
+                                onChange={(event) => {
+                                  const nextPlugin = onPremPluginOptions.find((plugin) => plugin.id === event.target.value);
+                                  if (!nextPlugin) return;
+                                  updateRoleBinding(role, {
+                                    providerId: "onprem-qwen",
+                                    pluginId: nextPlugin.id,
+                                    model: nextPlugin.model,
+                                  });
+                                }}
+                                className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                              >
+                                {onPremPluginOptions.map((plugin) => (
+                                  <option key={plugin.id} value={plugin.id}>
+                                    {plugin.label}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </label>
+                          <label className="space-y-1 block">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Thinking</div>
+                            <select
+                              value={binding.reasoningMode ?? "off"}
+                              onChange={(event) => updateRoleBinding(role, { reasoningMode: event.target.value as "off" | "on" | "auto" })}
+                              className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                            >
+                              <option value="off">off</option>
+                              <option value="on">on</option>
+                              <option value="auto">auto</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                          <span>Temp {binding.temperature}</span>
+                          <span>·</span>
+                          <span>Max {binding.maxTokens} tokens</span>
+                          {provider === "openai-responses" && role === "coder_default" ? (
+                            <>
+                              <span>·</span>
+                              <span>Recommended build model: {openAiRecommendation}</span>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

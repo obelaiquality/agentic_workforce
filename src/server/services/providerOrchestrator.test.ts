@@ -37,7 +37,7 @@ const DEFAULT_BINDINGS: Record<ModelRole, ModelRoleBinding> = {
     role: "overseer_escalation",
     providerId: "openai-responses",
     pluginId: null,
-    model: "gpt-5-mini",
+    model: "gpt-5-nano",
     temperature: 0.1,
     maxTokens: 2200,
   },
