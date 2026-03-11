@@ -980,40 +980,40 @@ function WorkflowCard({
               </div>
             ) : null}
 
-            <div className="mt-3 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
-              <div
-                className={cn(
-                  "h-full rounded-full",
-                  lane === "completed"
-                    ? "bg-gradient-to-r from-emerald-500 to-emerald-300"
-                    : lane === "needs_review"
-                    ? "bg-gradient-to-r from-violet-500 to-violet-300"
-                    : lane === "in_progress"
-                    ? "bg-gradient-to-r from-fuchsia-500 to-fuchsia-300"
-                    : "bg-gradient-to-r from-cyan-500 to-cyan-300"
-                )}
-                style={{ width: `${progressForCard(item)}%` }}
-              />
-            </div>
+            {lane !== "in_progress" ? (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.04]">
+                <div
+                  className={cn(
+                    "h-full rounded-full",
+                    lane === "completed"
+                      ? "bg-gradient-to-r from-emerald-500 to-emerald-300"
+                      : lane === "needs_review"
+                      ? "bg-gradient-to-r from-violet-500 to-violet-300"
+                      : "bg-gradient-to-r from-cyan-500 to-cyan-300"
+                  )}
+                  style={{ width: `${progressForCard(item)}%` }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
 
       {expanded ? (
         <div className="overflow-hidden border-t border-white/6 bg-black/[0.08]">
-          <div className="ml-5 space-y-3 px-4 pb-4 pt-3.5">
-            <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2.5 px-3 pb-3.5 pt-3">
+            <div className="grid grid-cols-2 gap-1.5">
               <MetaStat label="Priority" value={item.priority} />
               <MetaStat label="Risk" value={item.risk} />
               <MetaStat label="Status" value={STATUS_LABELS[item.rawStatus] || item.rawStatus} />
               <MetaStat label="Verification" value={item.verificationState || "pending"} />
             </div>
 
-            <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
+            <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Execution Snapshot</div>
-                  <div className="mt-2 text-sm leading-6 text-white">
+                  <div className="mt-1.5 text-[13px] leading-5 text-white">
                     {taskDetail?.route
                       ? `${executionModeLabel(taskDetail.route.executionMode)} · ${modelRoleLabel(taskDetail.route.modelRole)}`
                       : item.blockedReason || "Route review will sharpen the execution plan."}
@@ -1023,7 +1023,7 @@ function WorkflowCard({
                   {progressForCard(item)}%
                 </Chip>
               </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.04]">
+              <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-white/[0.04]">
                 <div
                   className={cn(
                     "h-full rounded-full",
@@ -1038,15 +1038,15 @@ function WorkflowCard({
                   style={{ width: `${progressForCard(item)}%` }}
                 />
               </div>
-              <div className="mt-2 text-[11px] text-zinc-500">
+              <div className="mt-1.5 text-[11px] text-zinc-500">
                 Updated {formatDistanceToNow(new Date(item.lastUpdatedAt), { addSuffix: true })}
               </div>
               {item.blockedReason ? (
-                <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{item.blockedReason}</div>
+                <div className="mt-2.5 rounded-lg border border-amber-500/20 bg-amber-500/8 p-2.5 text-xs text-amber-100">{item.blockedReason}</div>
               ) : null}
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-1.5">
               <MiniCountCard
                 label="Files"
                 value={taskDetail?.impactedFiles.length || contextPack?.files.length || item.impactedFiles.length}
@@ -1061,10 +1061,10 @@ function WorkflowCard({
               />
             </div>
 
-            <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
+            <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">At a Glance</div>
-              <div className="mt-2 space-y-2">
-                <div className="text-sm leading-6 text-white">
+              <div className="mt-1.5 space-y-2">
+                <div className="text-[13px] leading-5 text-white">
                   {taskDetail?.workflowSummary || "Open detail for files, notes, logs, and full verification context."}
                 </div>
                 {events.length ? (
@@ -1088,7 +1088,7 @@ function WorkflowCard({
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 pt-1">
+            <div className="flex flex-wrap gap-2 pt-0.5">
               {allowedTransitions.map((nextLane) => (
                 <button
                   key={`${item.workflowId}-${nextLane}`}
@@ -1116,9 +1116,9 @@ function WorkflowCard({
 
 function MiniCountCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[14px] border border-white/8 bg-black/20 px-3 py-2.5">
-      <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-white">{value}</div>
+    <div className="rounded-[12px] border border-white/8 bg-black/20 px-2.5 py-2">
+      <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">{label}</div>
+      <div className="mt-0.5 text-[22px] font-semibold leading-none text-white">{value}</div>
     </div>
   );
 }
@@ -1702,9 +1702,9 @@ function DetailBlock({ label, items, empty }: { label: string; items: string[]; 
 
 function MetaStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[18px] border border-white/8 bg-black/20 px-3 py-3">
-      <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">{label}</div>
-      <div className="mt-1 text-sm text-zinc-200">{value}</div>
+    <div className="rounded-[14px] border border-white/8 bg-black/20 px-2.5 py-2.5">
+      <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">{label}</div>
+      <div className="mt-0.5 text-[13px] leading-5 text-zinc-200">{value}</div>
     </div>
   );
 }
