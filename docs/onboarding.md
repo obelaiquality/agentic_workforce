@@ -2,9 +2,17 @@
 
 ## Goal
 
-Get to one clean success signal fast, then attach a repo and validate the benchmark path.
+Get one real success signal fast:
+- launch the desktop app
+- connect or create a repo
+- scaffold or run one bounded change
+- inspect the result in `Live State`, `Codebase`, and `Console`
 
-## 0-5 min: Install and Boot
+The product is now centered on the command-center flow, not a separate backlog/admin flow.
+
+## 0-5 min: Boot the Product
+
+From [/Users/neilslab/agentic_workforce](/Users/neilslab/agentic_workforce):
 
 ```bash
 npm install
@@ -12,85 +20,132 @@ npm run start:desktop
 ```
 
 Expected:
-- desktop shell opens
-- `doctor` shows no hard blockers
+- Electron window opens
+- local API is reachable on `127.0.0.1:8787`
+- `Live State` loads as the primary command center
 
-## 5-10 min: Verify the Default Runtime
+## 5-10 min: Verify the Default Local Runtime
 
-The default coding runtime is local `Qwen 3.5 4B`, served by default as `mlx-community/Qwen3.5-4B-4bit` on Apple Silicon.
+The default coding runtime is local `Qwen 3.5 4B`.
 
-If you have not started it yet, run in another terminal:
+If it is not already running, start it in another terminal:
 
 ```bash
 python3 -m pip install --upgrade mlx-lm
 python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000 --temp 0.15 --max-tokens 1600
 ```
 
-Then in the app:
-
-1. Open `Settings`.
-2. Confirm provider `On-Prem Qwen`.
-3. Confirm base URL `http://127.0.0.1:8000/v1`.
-4. Open `Overseer`.
-5. Send `Reply with exactly: APP_READY_OK`.
-
-Optional terminal health check:
+Optional health check:
 
 ```bash
 curl -sS http://127.0.0.1:8000/health
 ```
 
-## 10-15 min: Validate Backlog and Basic State
+In the app:
+1. Open `Settings`
+2. Confirm provider `On-Prem Qwen`
+3. Confirm base URL `http://127.0.0.1:8000/v1`
+4. Return to `Live State`
 
-1. Open `Backlog`.
-2. Create one ticket.
-3. Move it to another column.
-4. Return to `Overseer` and confirm the app still feels responsive.
+## 10-15 min: Create or Connect a Project
 
-## 15-20 min: Validate Repos
+### Fastest path: New project
+1. Open `Projects`
+2. Click `New Project`
+3. Choose an empty folder
+4. Keep the default template: `TypeScript App`
+5. Let the app initialize Git, create the managed worktree, generate a blueprint, scaffold the app, and verify it
 
-1. Open `Repos`.
-2. Click `Import Managed Pack`.
-3. Activate one pack from the header switcher.
-4. Confirm guideline and repo state panels populate.
+### Existing repo path
+1. Open `Projects`
+2. Click `Choose Local Repo`
+3. Pick a local Git repo
+4. Let the app build the blueprint and code graph
 
-## 20-25 min: Validate Benchmarks
+Expected:
+- project appears in the header switcher
+- `Projects` shows the active project and blueprint summary
+- `Live State` is now populated
 
-1. Open `Benchmarks`.
-2. Pick the active managed pack.
-3. Start a benchmark run.
-4. Execute the task through the app.
-5. Recompute the scorecard.
+## 15-20 min: Use the Command Center
 
-Expected today:
-- the benchmark pipeline runs end to end
-- the scorecard is machine-generated
-- baseline runs may still fail until autonomous code-apply is fully wired
+Return to `Live State`.
 
-## 25-30 min: Optional Provider Variants
+The screen is organized into:
+- top `Overseer Command` card
+- workflow summary row
+- four-lane workflow board
+- right-side detail drawer
 
-### Qwen CLI Accounts
+Lanes:
+- `Backlog`
+- `In Progress`
+- `Needs Review`
+- `Completed`
 
-1. Open `Settings`.
-2. Select provider `Qwen CLI`.
-3. Use `Create + Auth` for a fresh account or `Import Current` for an existing `~/.qwen` login.
-4. Verify the account becomes `ready`.
+What to try:
+1. Type a bounded objective in the command card
+2. Click `Review Route`
+3. Click `Execute`
+4. Watch the workflow card move through the board
+5. Click a card to expand it inline
+6. Open the task detail drawer for logs, approvals, authored notes, and verification
 
-### OpenAI Escalation
+## 20-25 min: Inspect Real Outputs
 
-Add to `.env`:
+### Codebase
+1. Open `Codebase`
+2. Confirm you can browse real files from the managed worktree
+3. Open the generated or modified source file
 
-```bash
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.4
-```
+### Console
+1. Open `Console`
+2. Confirm you see real:
+   - execution events
+   - verification events
+   - provider events
+   - approvals
+   - indexing events
 
-Restart `npm run start:desktop` and select `OpenAI Responses` only when you want escalation.
+The console is no longer synthetic. If it is empty, it means nothing happened yet.
 
-## Daily Checklist
+## 25-30 min: Run a Proven Task
 
-- `npm run doctor`
-- confirm the active provider and runtime health
-- check pending approvals
-- verify the active repo in the header switcher
-- re-run the critical Playwright or benchmark path after meaningful changes
+Recommended first tasks:
+
+1. `Scaffold a TypeScript app with tests and documentation`
+2. `Add a status badge component and test it. Update docs if needed.`
+3. `Change the hero headline and update the test`
+
+The current local 4B flow is strongest on bounded, explicit changes with clear verification.
+
+## What is Real Today
+
+- Desktop app flow
+- Local repo connect
+- New project bootstrap from an empty folder
+- Project blueprint generation
+- Four-lane kanban command board
+- Drag/drop lane transitions
+- Inline workflow expansion
+- Right-side task detail drawer
+- Threaded authored notes/comments
+- Real Codebase view
+- Real Console view
+- Local verification with lint/test/build
+
+## What Is Still Advanced or Secondary
+
+- Browser preview is secondary and cannot use the native folder picker
+- OpenAI escalation is optional
+- Qwen CLI multi-account failover is optional
+- Benchmarks, distillation, and other internal tooling live behind `Settings > Labs`
+
+## Daily Operator Checklist
+
+- launch with `npm run start:desktop`
+- confirm local runtime health
+- confirm the active project in the header
+- use `Live State` for workflow status and execution
+- use `Codebase` and `Console` to inspect evidence
+- use the drawer for threaded notes, approvals, and verification detail

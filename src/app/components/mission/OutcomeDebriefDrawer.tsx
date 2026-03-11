@@ -17,18 +17,26 @@ export function OutcomeDebriefDrawer({
   const pass = verification?.pass ?? false;
   const verificationMetadata = (verification?.metadata ?? {}) as Record<string, unknown>;
   const shareMetadata = (shareReport?.metadata ?? {}) as Record<string, unknown>;
-  const verificationReasons = asStringArray(verificationMetadata.verification_reasons).length
-    ? asStringArray(verificationMetadata.verification_reasons)
-    : asStringArray(shareMetadata.verification_reasons);
-  const enforcedRules = asStringArray(verificationMetadata.enforced_rules).length
-    ? asStringArray(verificationMetadata.enforced_rules)
-    : asStringArray(shareMetadata.enforced_rules);
-  const verificationCommands = asStringArray(verificationMetadata.verification_commands).length
-    ? asStringArray(verificationMetadata.verification_commands)
-    : [...(verification?.changedFileChecks || []), ...(verification?.impactedTests || [])];
-  const repairedFiles = asStringArray(verificationMetadata.repaired_files).length
-    ? asStringArray(verificationMetadata.repaired_files)
-    : asStringArray(shareMetadata.repaired_files);
+  const verificationReasons = uniqueStrings(
+    asStringArray(verificationMetadata.verification_reasons).length
+      ? asStringArray(verificationMetadata.verification_reasons)
+      : asStringArray(shareMetadata.verification_reasons)
+  );
+  const enforcedRules = uniqueStrings(
+    asStringArray(verificationMetadata.enforced_rules).length
+      ? asStringArray(verificationMetadata.enforced_rules)
+      : asStringArray(shareMetadata.enforced_rules)
+  );
+  const verificationCommands = uniqueStrings(
+    asStringArray(verificationMetadata.verification_commands).length
+      ? asStringArray(verificationMetadata.verification_commands)
+      : [...(verification?.changedFileChecks || []), ...(verification?.impactedTests || [])]
+  );
+  const repairedFiles = uniqueStrings(
+    asStringArray(verificationMetadata.repaired_files).length
+      ? asStringArray(verificationMetadata.repaired_files)
+      : asStringArray(shareMetadata.repaired_files)
+  );
 
   return (
     <Panel>
@@ -56,8 +64,8 @@ export function OutcomeDebriefDrawer({
                 Verification failures
               </div>
               <ul className="mt-2 space-y-1 text-xs text-rose-100/80">
-                {verification.failures.slice(0, 4).map((failure) => (
-                  <li key={failure}>• {failure}</li>
+                {uniqueStrings(verification.failures).slice(0, 4).map((failure, index) => (
+                  <li key={`failure-${index}`}>• {failure}</li>
                 ))}
               </ul>
             </div>
@@ -74,8 +82,8 @@ export function OutcomeDebriefDrawer({
             <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Why these checks ran</div>
               <ul className="mt-2 space-y-1 text-xs leading-5 text-zinc-300">
-                {verificationReasons.slice(0, 4).map((reason) => (
-                  <li key={reason}>• {reason}</li>
+                {verificationReasons.slice(0, 4).map((reason, index) => (
+                  <li key={`reason-${index}`}>• {reason}</li>
                 ))}
               </ul>
             </div>
@@ -85,8 +93,8 @@ export function OutcomeDebriefDrawer({
             <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Repair loop touched</div>
               <ul className="mt-2 space-y-1 text-xs leading-5 text-zinc-300">
-                {repairedFiles.slice(0, 6).map((file) => (
-                  <li key={file}>• {file}</li>
+                {repairedFiles.slice(0, 6).map((file, index) => (
+                  <li key={`repair-${index}`}>• {file}</li>
                 ))}
               </ul>
             </div>
@@ -122,8 +130,8 @@ export function OutcomeDebriefDrawer({
             <div className="rounded-lg border border-white/5 bg-black/20 p-3">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Rules enforced</div>
               <div className="mt-2 flex flex-wrap gap-2">
-                {enforcedRules.map((rule) => (
-                  <span key={rule} className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-300">
+                {enforcedRules.map((rule, index) => (
+                  <span key={`rule-${index}`} className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-300">
                     {rule}
                   </span>
                 ))}
@@ -136,8 +144,8 @@ export function OutcomeDebriefDrawer({
                 {[
                   blueprint.testingPolicy.requiredForBehaviorChange ? "Tests required for behavior changes" : "Tests optional by default",
                   blueprint.documentationPolicy.updateUserFacingDocs ? "Docs updates expected" : "Docs optional by default",
-                ].map((rule) => (
-                  <span key={rule} className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-300">
+                ].map((rule, index) => (
+                  <span key={`blueprint-rule-${index}`} className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-300">
                     {rule}
                   </span>
                 ))}
@@ -149,8 +157,8 @@ export function OutcomeDebriefDrawer({
             <div className="rounded-lg border border-white/5 bg-black/20 p-3">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Verification commands</div>
               <ul className="mt-2 space-y-1 text-[11px] font-mono text-zinc-300">
-                {verificationCommands.slice(0, 6).map((command) => (
-                  <li key={command}>{command}</li>
+                {verificationCommands.slice(0, 6).map((command, index) => (
+                  <li key={`command-${index}`}>{command}</li>
                 ))}
               </ul>
             </div>
@@ -163,4 +171,8 @@ export function OutcomeDebriefDrawer({
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function uniqueStrings(value: string[]) {
+  return Array.from(new Set(value.filter(Boolean)));
 }

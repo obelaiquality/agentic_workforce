@@ -55,10 +55,15 @@ import type {
   Ticket,
   TaskLifecycleStatus,
   TaskAllocation,
+  TicketCommentThread,
   V2CommandLogItem,
   V2PolicyPendingItem,
   V2TaskBoard,
   VerificationBundle,
+  WorkflowCardSummary,
+  WorkflowMoveRequest,
+  WorkflowStatusPillar,
+  WorkflowTaskDetail,
   WorkflowStateRecord,
   OnPremInferenceBackendDescriptor,
   OnPremQwenModelPlugin,
@@ -172,12 +177,14 @@ export async function updateQwenAccount(id: string, patch: Partial<QwenAccountPr
 export async function reauthQwenAccount(id: string) {
   return apiRequest<{ ok: true; item: QwenAccountProfile }>(`/api/v1/providers/qwen/accounts/${id}/reauth`, {
     method: "POST",
+    body: JSON.stringify({}),
   });
 }
 
 export async function startQwenAccountAuth(id: string) {
   return apiRequest<{ ok: true; item: QwenAccountAuthSession }>(`/api/v1/providers/qwen/accounts/${id}/auth/start`, {
     method: "POST",
+    body: JSON.stringify({}),
   });
 }
 
@@ -259,6 +266,23 @@ export async function moveTicket(id: string, status: Ticket["status"]) {
     method: "POST",
     body: JSON.stringify({ status }),
   });
+}
+
+export async function listTicketComments(ticketId: string) {
+  return apiRequest<{ items: TicketCommentThread[] }>(`/api/v1/tickets/${ticketId}/comments`);
+}
+
+export async function addTicketComment(
+  ticketId: string,
+  input: { author?: string; body: string; parentCommentId?: string | null }
+) {
+  return apiRequest<{ ok: true; item: TicketCommentThread }>(
+    `/api/v1/tickets/${ticketId}/comments`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  );
 }
 
 export async function getBoard(repoId?: string) {
@@ -1330,6 +1354,36 @@ export async function getMissionSnapshotV8(query?: {
   return apiRequest<{ item: MissionControlSnapshot }>(`/api/v8/mission/snapshot${suffix}`);
 }
 
+export async function getMissionBacklogV8(query?: {
+  projectId?: string | null;
+  ticketId?: string | null;
+  runId?: string | null;
+  sessionId?: string | null;
+}) {
+  const params = new URLSearchParams();
+  if (query?.projectId) params.set("projectId", query.projectId);
+  if (query?.ticketId) params.set("ticketId", query.ticketId);
+  if (query?.runId) params.set("runId", query.runId);
+  if (query?.sessionId) params.set("sessionId", query.sessionId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ pillars: WorkflowStatusPillar[]; items: WorkflowCardSummary[] }>(`/api/v8/mission/backlog${suffix}`);
+}
+
+export async function getMissionTaskDetailV8(query: { taskId: string; projectId?: string | null }) {
+  const params = new URLSearchParams({ taskId: query.taskId });
+  if (query.projectId) {
+    params.set("projectId", query.projectId);
+  }
+  return apiRequest<{ item: WorkflowTaskDetail | null }>(`/api/v8/mission/task-detail?${params.toString()}`);
+}
+
+export async function moveMissionWorkflowV8(input: WorkflowMoveRequest) {
+  return apiRequest<{ item: { moved: boolean; ticket: Ticket | null } }>("/api/v8/mission/workflow.move", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function getMissionCodebaseTreeV8(projectId: string) {
   return apiRequest<{ items: CodebaseTreeNode[] }>(`/api/v8/mission/codebase/tree?projectId=${encodeURIComponent(projectId)}`);
 }
@@ -1369,6 +1423,7 @@ export async function getProjectBlueprintSourcesV8(projectId: string) {
 export async function generateProjectBlueprintV8(projectId: string) {
   return apiRequest<{ item: ProjectBlueprint }>(`/api/v8/projects/${projectId}/blueprint/generate`, {
     method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

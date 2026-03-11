@@ -2,23 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, Code2, FolderGit2, Orbit, Settings, Terminal } from "lucide-react";
 import { PreflightGate } from "./components/PreflightGate";
 import { Chip } from "./components/UI";
-import { ChangeBriefStrip } from "./components/ChangeBriefStrip";
-import { RunTimelineRail } from "./components/RunTimelineRail";
-import { StreamProgressBoard } from "./components/StreamProgressBoard";
-import { ActiveExecutionPanel } from "./components/ActiveExecutionPanel";
-import { TaskInsightPanel } from "./components/TaskInsightPanel";
 import { CodebaseView } from "./components/views/CodebaseView";
 import { ConsoleView } from "./components/views/ConsoleView";
 import { SettingsControlView } from "./components/views/SettingsControlView";
-import { MissionHeaderStrip } from "./components/mission/MissionHeaderStrip";
-import { SynthesizerPanel } from "./components/mission/SynthesizerPanel";
-import { OutcomeDebriefDrawer } from "./components/mission/OutcomeDebriefDrawer";
-import { OverseerDrawer } from "./components/mission/OverseerDrawer";
 import { ProjectsWorkspaceView } from "./components/views/ProjectsWorkspaceView";
-import { LandingMissionView } from "./components/views/LandingMissionView";
 import { useMissionControlLiveData } from "./hooks/useMissionControlLiveData";
 import { useUiStore } from "./store/uiStore";
-import { ProjectBlueprintPanel } from "./components/mission/ProjectBlueprintPanel";
+import { CommandCenterView } from "./components/views/CommandCenterView";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
 type LiveTab = "Execution" | "Agents" | "Patterns" | "Telemetry";
@@ -40,6 +30,7 @@ function normalizeSection(value: string | null | undefined): SidebarSection {
 export default function App() {
   const activeSection = useUiStore((state) => state.activeSection);
   const setActiveSection = useUiStore((state) => state.setActiveSection);
+  const selectedWorkflowId = useUiStore((state) => state.selectedWorkflowId);
   const labsMode = useUiStore((state) => state.labsMode);
   const mission = useMissionControlLiveData();
   const [liveTab, setLiveTab] = useState<LiveTab>("Execution");
@@ -61,8 +52,40 @@ export default function App() {
 
   const criticalCount = mission.pendingApprovals.length + (mission.runPhase === "error" ? 1 : 0);
   const headerRepos = useMemo(() => mission.headerRepos, [mission.headerRepos]);
-  const showLanding = sidebarSection === "live" && liveTab === "Execution" && !mission.selectedRepo;
-
+  const selectedWorkflowCard = useMemo(
+    () => mission.workflowCards.find((workflow) => workflow.workflowId === selectedWorkflowId) || null,
+    [mission.workflowCards, selectedWorkflowId]
+  );
+  const selectedWorkflowTicket = useMemo(
+    () => mission.tickets.find((ticket) => ticket.id === selectedWorkflowId) || null,
+    [mission.tickets, selectedWorkflowId]
+  );
+  const workflowFocusedFiles = useMemo(() => {
+    if (!selectedWorkflowId) return [];
+    if (mission.selectedTicket?.id === selectedWorkflowId) {
+      return Array.from(new Set([...(mission.contextPack?.files || []), ...(mission.contextPack?.tests || []), ...(mission.contextPack?.docs || [])]));
+    }
+    return Array.from(
+      new Set([
+        ...(selectedWorkflowCard?.impactedFiles || []),
+        ...(selectedWorkflowCard?.impactedTests || []),
+        ...(selectedWorkflowCard?.impactedDocs || []),
+      ])
+    );
+  }, [
+    mission.contextPack?.docs,
+    mission.contextPack?.files,
+    mission.contextPack?.tests,
+    mission.selectedTicket?.id,
+    selectedWorkflowCard?.impactedDocs,
+    selectedWorkflowCard?.impactedFiles,
+    selectedWorkflowCard?.impactedTests,
+    selectedWorkflowId,
+  ]);
+  const workflowConsoleLogs = useMemo(
+    () => (selectedWorkflowId ? mission.consoleLogs.filter((log) => log.taskId === selectedWorkflowId) : []),
+    [mission.consoleLogs, selectedWorkflowId]
+  );
   return (
     <PreflightGate>
       <div className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
@@ -192,107 +215,7 @@ export default function App() {
                   </div>
 
                   {liveTab === "Execution" && (
-                    <>
-                      {showLanding ? (
-                        <LandingMissionView
-                          chooseLocalRepo={mission.chooseLocalRepo}
-                          startNewProject={mission.startNewProject}
-                          newProjectTemplate={mission.newProjectTemplate}
-                          setNewProjectTemplate={mission.setNewProjectTemplate}
-                          initializeNewProject={mission.initializeNewProject}
-                          openProjects={mission.openProjects}
-                          openRecentPath={mission.connectRecentPath}
-                          recentRepoPaths={mission.recentRepoPaths}
-                          recentProjects={mission.recentRepos}
-                          activateRepo={mission.activateRepo}
-                          hasDesktopPicker={mission.hasDesktopPicker}
-                          repoPickerMessage={mission.repoPickerMessage}
-                          pendingBootstrap={mission.pendingBootstrap}
-                          isActing={mission.isActing}
-                          blueprint={mission.blueprint}
-                        />
-                      ) : (
-                        <>
-                          <MissionHeaderStrip
-                            repo={mission.selectedRepo}
-                            liveState={mission.liveState}
-                            route={mission.route}
-                            runSummary={mission.runSummary}
-                            actionCapabilities={mission.actionCapabilities}
-                            lastUpdatedAt={mission.lastUpdatedAt}
-                            isActing={mission.isActing}
-                            onRefresh={mission.refreshSnapshot}
-                            onStop={() => {}}
-                          />
-
-                        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(320px,360px)]">
-                          <div className="min-w-0 space-y-4">
-                            <ProjectBlueprintPanel
-                              blueprint={mission.blueprint}
-                              compact
-                              isActing={mission.isActing}
-                              onRegenerate={mission.regenerateBlueprint}
-                              onOpenDetails={mission.openProjects}
-                            />
-                            <ChangeBriefStrip briefs={mission.changeBriefs} onSelectTask={mission.setSelectedTicketId} />
-                            <RunTimelineRail runPhase={mission.runPhase} timeline={mission.timeline} />
-                            <StreamProgressBoard streams={mission.streams} onSelectTask={mission.setSelectedTicketId} />
-                            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-                              <ActiveExecutionPanel
-                                tasks={mission.tasks}
-                                selectedTaskId={mission.selectedTicket?.id || ""}
-                                spotlight={mission.spotlight}
-                                onSelectTask={mission.setSelectedTicketId}
-                                canRequeue={mission.actionCapabilities.canRequeue}
-                                canMarkActive={mission.actionCapabilities.canMarkActive}
-                                canComplete={mission.actionCapabilities.canComplete}
-                              />
-                              <SynthesizerPanel
-                                route={mission.route}
-                                contextPack={mission.contextPack}
-                                blockedByApprovals={mission.pendingApprovals.length > 0}
-                                onApplyRecommendation={mission.executeRoute}
-                              />
-                            </div>
-                            <TaskInsightPanel spotlight={mission.spotlight} />
-                            <OutcomeDebriefDrawer
-                              runSummary={mission.runSummary}
-                              verification={mission.verification}
-                              shareReport={mission.shareReport}
-                              blueprint={mission.blueprint}
-                            />
-                          </div>
-
-                          <OverseerDrawer
-                            repo={mission.selectedRepo}
-                            messages={mission.messages}
-                            input={mission.input}
-                            setInput={mission.setInput}
-                            route={mission.route}
-                            contextPack={mission.contextPack}
-                            pendingApprovals={mission.pendingApprovals}
-                            selectedModelRole={mission.selectedModelRole}
-                            setSelectedModelRole={mission.setSelectedModelRole}
-                            roleLabels={mission.roleLabels}
-                            actionMessage={mission.actionMessage}
-                            repoPickerMessage={mission.repoPickerMessage}
-                            hasDesktopPicker={mission.hasDesktopPicker}
-                            isActing={mission.isActing}
-                            streaming={mission.streaming}
-                            chooseLocalRepo={mission.chooseLocalRepo}
-                            connectGithub={mission.openProjects}
-                            openRecentPath={mission.connectRecentPath}
-                            reviewRoute={mission.reviewRoute}
-                            executeRoute={mission.executeRoute}
-                            sendMessage={mission.sendMessage}
-                            decideApproval={mission.decideApproval}
-                            recentRepoPaths={mission.recentRepoPaths}
-                            openProjects={mission.openProjects}
-                          />
-                        </div>
-                        </>
-                      )}
-                    </>
+                    <CommandCenterView mission={mission} />
                   )}
 
                   {liveTab !== "Execution" && (
@@ -314,7 +237,11 @@ export default function App() {
                       label={mission.selectedRepo ? "managed worktree" : "connect repo"}
                     />
                   </SectionHeader>
-                  <CodebaseView repoId={mission.selectedRepo?.id || null} />
+                  <CodebaseView
+                    repoId={mission.selectedRepo?.id || null}
+                    preferredPaths={workflowFocusedFiles}
+                    workflowTitle={selectedWorkflowTicket?.title || null}
+                  />
                 </>
               )}
 
@@ -323,7 +250,13 @@ export default function App() {
                   <SectionHeader title="Agent Console" description="Execution, approvals, provider events, and verification output in one live stream.">
                     <StatusDot color="emerald" label="real event stream" animate />
                   </SectionHeader>
-                  <ConsoleView projectId={mission.selectedRepo?.id || null} snapshotEvents={mission.consoleEvents} />
+                  <ConsoleView
+                    projectId={mission.selectedRepo?.id || null}
+                    snapshotEvents={mission.consoleEvents}
+                    workflowId={selectedWorkflowId}
+                    workflowTitle={selectedWorkflowTicket?.title || null}
+                    workflowLogs={workflowConsoleLogs}
+                  />
                 </>
               )}
 

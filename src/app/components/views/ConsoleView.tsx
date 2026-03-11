@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Filter, Terminal } from "lucide-react";
+import { Filter, Terminal, Workflow } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
 import { getMissionConsoleV8, openMissionConsoleStreamV8 } from "../../lib/apiClient";
 
@@ -20,9 +20,31 @@ const CATEGORY_LABELS: Record<string, string> = {
   indexing: "Indexing",
 };
 
-export function ConsoleView({ projectId, snapshotEvents }: { projectId: string | null; snapshotEvents?: ConsoleEvent[] }) {
+type WorkflowLog = {
+  id: string;
+  timestamp: string;
+  message: string;
+  level?: "info" | "warn" | "error" | "success" | "debug";
+  source?: string;
+  taskId?: string;
+};
+
+export function ConsoleView({
+  projectId,
+  snapshotEvents,
+  workflowId,
+  workflowTitle,
+  workflowLogs = [],
+}: {
+  projectId: string | null;
+  snapshotEvents?: ConsoleEvent[];
+  workflowId?: string | null;
+  workflowTitle?: string | null;
+  workflowLogs?: WorkflowLog[];
+}) {
   const [categoryFilter, setCategoryFilter] = useState<"all" | ConsoleEvent["category"]>("all");
   const [followTail, setFollowTail] = useState(true);
+  const [scope, setScope] = useState<"workflow" | "project">("project");
   const [liveEvents, setLiveEvents] = useState<ConsoleEvent[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -37,6 +59,14 @@ export function ConsoleView({ projectId, snapshotEvents }: { projectId: string |
   useEffect(() => {
     setLiveEvents([]);
   }, [projectId]);
+
+  useEffect(() => {
+    if (workflowId) {
+      setScope("workflow");
+    } else {
+      setScope("project");
+    }
+  }, [workflowId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -65,11 +95,32 @@ export function ConsoleView({ projectId, snapshotEvents }: { projectId: string |
     };
   }, [projectId]);
 
+  const workflowSnapshotEvents = useMemo<ConsoleEvent[]>(
+    () =>
+      workflowLogs.map((item) => ({
+        id: item.id,
+        projectId: projectId || "",
+        category: item.source === "approval" ? "approval" : item.source?.includes("verify") ? "verification" : "execution",
+        level: item.level || "info",
+        message: item.message,
+        createdAt: item.timestamp,
+        taskId: workflowId || item.taskId,
+      })),
+    [projectId, workflowId, workflowLogs]
+  );
+
   const logs = useMemo(() => {
-    const initial = snapshotEvents?.length ? snapshotEvents : (query.data?.items ?? []);
-    const merged = [...initial, ...liveEvents].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+    const initial =
+      scope === "workflow"
+        ? workflowSnapshotEvents
+        : snapshotEvents?.length
+        ? snapshotEvents
+        : (query.data?.items ?? []);
+    const streamed =
+      scope === "workflow" && workflowId ? liveEvents.filter((event) => event.taskId === workflowId) : liveEvents;
+    const merged = [...initial, ...streamed].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
     return merged.slice(-240);
-  }, [liveEvents, query.data?.items, snapshotEvents]);
+  }, [liveEvents, query.data?.items, scope, snapshotEvents, workflowId, workflowSnapshotEvents]);
 
   const filtered = useMemo(
     () => logs.filter((event) => (categoryFilter === "all" ? true : event.category === categoryFilter)),
@@ -98,47 +149,94 @@ export function ConsoleView({ projectId, snapshotEvents }: { projectId: string |
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-0.5 bg-[#121214] border border-white/8 rounded-lg p-1">
-          {(Object.keys(CATEGORY_LABELS) as Array<keyof typeof CATEGORY_LABELS>).map((category) => (
-            <button
-              key={category}
-              onClick={() => setCategoryFilter(category as "all" | ConsoleEvent["category"])}
-              className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${
-                categoryFilter === category ? "bg-zinc-700 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
-              }`}
-            >
-              {CATEGORY_LABELS[category]}
-            </button>
-          ))}
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            {workflowId ? (
+              <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                <button
+                  onClick={() => setScope("workflow")}
+                  className={`rounded-lg px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                    scope === "workflow"
+                      ? "border border-cyan-400/20 bg-cyan-500/[0.12] text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  Workflow
+                </button>
+                <button
+                  onClick={() => setScope("project")}
+                  className={`rounded-lg px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                    scope === "project"
+                      ? "border border-white/12 bg-white/[0.07] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  Project
+                </button>
+              </div>
+            ) : null}
+            <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+              {(Object.keys(CATEGORY_LABELS) as Array<keyof typeof CATEGORY_LABELS>).map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setCategoryFilter(category as "all" | ConsoleEvent["category"])}
+                  className={`rounded-lg px-2.5 py-1.5 text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                    categoryFilter === category
+                      ? "border border-white/12 bg-white/[0.08] text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {CATEGORY_LABELS[category]}
+                </button>
+              ))}
+            </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          {!followTail ? (
-            <button
-              onClick={() => {
-                setFollowTail(true);
-                bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-              }}
-              className="text-[10px] px-2.5 py-1 rounded-md border bg-zinc-800 text-zinc-200 border-zinc-700"
-            >
-              Jump to latest
-            </button>
-          ) : null}
-          <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
-            <Filter className="w-3 h-3" />
-            {filtered.length} entries
+            <div className="ml-auto flex items-center gap-2">
+              {!followTail ? (
+                <button
+                  onClick={() => {
+                    setFollowTail(true);
+                    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="rounded-lg border border-white/12 bg-white/[0.07] px-2.5 py-1.5 text-[10px] uppercase tracking-[0.14em] text-zinc-100"
+                >
+                  Jump to latest
+                </button>
+              ) : null}
+              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                <Filter className="w-3 h-3" />
+                {filtered.length} entries
+              </div>
+            </div>
           </div>
+
+          {workflowId && scope === "workflow" ? (
+            <div className="rounded-[18px] border border-cyan-500/16 bg-cyan-500/[0.06] px-4 py-3 text-xs text-cyan-100">
+              <div className="flex items-center gap-2 font-medium">
+                <Workflow className="h-3.5 w-3.5 text-cyan-300" />
+                {workflowTitle ? `${workflowTitle} telemetry` : "Workflow telemetry"}
+              </div>
+              <div className="mt-1 text-cyan-100/80">
+                Showing task-linked execution history first. Live project-wide events remain available under Project scope.
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className="bg-[#0a0a0b] border border-white/8 rounded-xl overflow-hidden flex flex-col" style={{ minHeight: 500 }}>
-        <div className="px-4 py-2 border-b border-white/5 bg-zinc-900/30 flex items-center gap-2 shrink-0">
-          <Terminal className="w-3.5 h-3.5 text-green-400" />
-          <span className="text-[10px] text-zinc-400 font-mono">mission-control — real event stream</span>
+      <div
+        className="overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(10,11,14,0.98),rgba(7,8,11,0.96))] shadow-[0_16px_44px_rgba(0,0,0,0.28)] flex flex-col"
+        style={{ minHeight: 500 }}
+      >
+        <div className="px-4 py-3 border-b border-white/6 bg-zinc-900/30 flex items-center gap-2 shrink-0">
+          <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-mono">
+            mission-control — {scope === "workflow" ? "workflow telemetry" : "real event stream"}
+          </span>
           <span className="ml-auto text-[10px] font-mono text-zinc-600">{query.isLoading ? "loading" : `${filtered.length} entries`}</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
         </div>
 
         <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">

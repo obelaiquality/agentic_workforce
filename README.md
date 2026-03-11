@@ -37,7 +37,8 @@ The system:
 3. Plans the change with a context-aware route
 4. Generates code using local models in a managed worktree
 5. Runs verification (lint, test, build)
-6. Produces a shareable report with evidence
+6. Surfaces the work in a command-center UI with a four-lane workflow board
+7. Produces a shareable report with evidence
 
 This is not a chatbot. It is a **bounded, verified worker system** for coding tasks.
 
@@ -68,8 +69,9 @@ The operator flow in the UI:
 3. **Ask the Overseer** — describe a change objective
 4. **Review route** — see the plan before execution
 5. **Execute** — model generates code in a managed worktree
-6. **Verify** — lint, test, and build run automatically
-7. **Inspect** — review code, console events, and the run report
+6. **Track the board** — drag workflows across `Backlog`, `In Progress`, `Needs Review`, and `Completed`
+7. **Verify** — lint, test, and build run automatically
+8. **Inspect** — review code, console events, comments, and the run report
 
 ---
 
@@ -181,17 +183,17 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
    - Scaffold the app (TypeScript + Vite + React)
    - Run verification (lint, test, build)
 6. Inspect results:
-   - **Codebase** tab — browse generated source files
-   - **Console** tab — see real execution and verification events
-   - **Live State** tab — see the run status and report
+   - **Live State** — command center with the workflow board and report
+   - **Codebase** — browse generated source files from the managed worktree
+   - **Console** — see real execution, verification, provider, and indexing events
 
 ### What the app looks like
 
-**Live State** — execution view with project blueprint, change briefs, overseer panel, and run status:
+**Live State** — the command center with Overseer command card, workflow summary row, and four-lane kanban board:
 
 ![Live State - Execution](docs/screenshots/01-shell.png)
 
-**Projects** — connect local repos, create new projects, view active blueprint with enforcement rules:
+**Projects** — connect local repos, create new projects, and manage the active project blueprint:
 
 ![Projects View](docs/screenshots/01b-projects.png)
 
@@ -199,11 +201,11 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
 
 ![Scaffold Complete](docs/screenshots/02-scaffold-complete.png)
 
-**Codebase Explorer** — browse real source files from the managed worktree with syntax highlighting:
+**Codebase Explorer** — browse real source files from the managed worktree, with impacted files visible first when context is available:
 
 ![Codebase Explorer](docs/screenshots/03-codebase.png)
 
-**Agent Console** — real event stream with execution, verification, provider, and indexing events:
+**Agent Console** — real event stream with execution, verification, provider, approval, and indexing events:
 
 ![Agent Console](docs/screenshots/04-console.png)
 
@@ -232,12 +234,31 @@ The follow-up component scenarios (StatusBadge, ProgressBar, ThemeToggle, Format
 | Section | Purpose |
 |---|---|
 | **Live State** | Landing view (when no project active), execution status, run timeline, active execution panel |
-| **Codebase** | Real file tree and file contents from the managed worktree |
-| **Console** | Real event stream (execution, verification, provider, indexing) |
+| **Codebase** | Real file tree and file contents from the managed worktree, scoped to impacted work when available |
+| **Console** | Real event stream (execution, verification, provider, approvals, indexing) |
 | **Projects** | Project list, GitHub connections, repo management |
 | **Settings** | Provider config, model settings, Labs toggle |
 
 When no project is active, Live State shows the **Landing / Mission Control** view where you connect repos and create projects.
+
+### Live State workflow board
+
+The center of the product is a four-lane command board:
+
+| Lane | Meaning |
+|---|---|
+| **Backlog** | Queued and ready for assignment |
+| **In Progress** | Currently active implementation work |
+| **Needs Review** | Waiting on verification follow-up or human review |
+| **Completed** | Verified work with report-ready output |
+
+Key behaviors:
+- Drag a workflow card between lanes to perform a real backend state transition.
+- Click a card to expand it inline without losing board context.
+- Use the right drawer for deeper task detail, threaded notes, approvals, logs, and verification summary.
+- `Blocked` is a card state, not a lane. Blocked items stay in their lane and sort to the top.
+
+The board is not decorative. It is backed by live ticket, run, approval, and verification data.
 
 ### Internal / advanced (behind Settings > Labs)
 
@@ -371,6 +392,14 @@ The blueprint drives:
 - Documentation enforcement
 - Run report generation
 - Benchmark scoring
+
+The current UI surfaces blueprint enforcement directly in the command center:
+- why lint/test/build commands were selected
+- whether docs were required
+- whether escalation was allowed
+- which policy rules were enforced in the final run
+
+The drawer and outcome panels also expose threaded authored notes and activity history for the selected workflow.
 
 ---
 
