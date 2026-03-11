@@ -40,7 +40,7 @@ export class ShadowGitService {
     const gitDir = path.join(this.snapshotDir, ".git");
     if (!fs.existsSync(gitDir)) {
       try {
-        execSync("git init", { cwd: this.snapshotDir, encoding: "utf8" });
+        execSync("git init -q -b main", { cwd: this.snapshotDir, encoding: "utf8" });
       } catch (err) {
         throw new Error(
           `Failed to initialize git repo in ${this.snapshotDir}: ${err instanceof Error ? err.message : String(err)}`

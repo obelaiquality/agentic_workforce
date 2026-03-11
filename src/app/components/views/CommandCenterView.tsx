@@ -1001,10 +1001,8 @@ function WorkflowCard({
 
       {expanded ? (
         <div className="overflow-hidden border-t border-white/6 bg-black/[0.08]">
-          <div className="ml-12 space-y-4 px-4 pb-4 pt-4">
-            <div className="text-[11px] leading-6 text-zinc-400">{item.subtitle}</div>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="ml-5 space-y-3 px-4 pb-4 pt-3.5">
+            <div className="grid grid-cols-2 gap-2">
               <MetaStat label="Priority" value={item.priority} />
               <MetaStat label="Risk" value={item.risk} />
               <MetaStat label="Status" value={STATUS_LABELS[item.rawStatus] || item.rawStatus} />
@@ -1012,74 +1010,82 @@ function WorkflowCard({
             </div>
 
             <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Workflow Summary</div>
-              <div className="mt-2 text-sm leading-6 text-white">
-                {taskDetail?.workflowSummary || item.blockedReason || "Open detail for deeper workflow state and verification context."}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Execution Snapshot</div>
+                  <div className="mt-2 text-sm leading-6 text-white">
+                    {taskDetail?.route
+                      ? `${executionModeLabel(taskDetail.route.executionMode)} · ${modelRoleLabel(taskDetail.route.modelRole)}`
+                      : item.blockedReason || "Route review will sharpen the execution plan."}
+                  </div>
+                </div>
+                <Chip variant="subtle" className={cn("text-[9px]", metricTone(lane))}>
+                  {progressForCard(item)}%
+                </Chip>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.04]">
+                <div
+                  className={cn(
+                    "h-full rounded-full",
+                    lane === "completed"
+                      ? "bg-gradient-to-r from-emerald-500 to-emerald-300"
+                      : lane === "needs_review"
+                      ? "bg-gradient-to-r from-violet-500 to-violet-300"
+                      : lane === "in_progress"
+                      ? "bg-gradient-to-r from-fuchsia-500 to-fuchsia-300"
+                      : "bg-gradient-to-r from-cyan-500 to-cyan-300"
+                  )}
+                  style={{ width: `${progressForCard(item)}%` }}
+                />
+              </div>
+              <div className="mt-2 text-[11px] text-zinc-500">
+                Updated {formatDistanceToNow(new Date(item.lastUpdatedAt), { addSuffix: true })}
               </div>
               {item.blockedReason ? (
                 <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{item.blockedReason}</div>
               ) : null}
             </div>
 
-            <div className="grid grid-cols-1 gap-2">
-              <DetailBlock
-                label="Impacted Files"
-                items={taskDetail?.impactedFiles.length ? taskDetail.impactedFiles.slice(0, 4) : contextPack?.files.slice(0, 4) || item.impactedFiles.slice(0, 4)}
-                empty="Route review will materialize the file set."
+            <div className="grid grid-cols-3 gap-2">
+              <MiniCountCard
+                label="Files"
+                value={taskDetail?.impactedFiles.length || contextPack?.files.length || item.impactedFiles.length}
               />
-              <DetailBlock
+              <MiniCountCard
                 label="Tests"
-                items={taskDetail?.impactedTests.length ? taskDetail.impactedTests.slice(0, 4) : contextPack?.tests.slice(0, 4) || item.impactedTests.slice(0, 4)}
-                empty="No impacted tests recorded yet."
+                value={taskDetail?.impactedTests.length || contextPack?.tests.length || item.impactedTests.length}
               />
-              <DetailBlock
+              <MiniCountCard
                 label="Docs"
-                items={taskDetail?.impactedDocs.length ? taskDetail.impactedDocs.slice(0, 4) : contextPack?.docs.slice(0, 4) || item.impactedDocs.slice(0, 4)}
-                empty="No documentation touchpoints recorded yet."
+                value={taskDetail?.impactedDocs.length || contextPack?.docs.length || item.impactedDocs.length}
               />
             </div>
 
             <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-                <Activity className="h-3 w-3 text-cyan-300" />
-                Recent Activity
-              </div>
-              {events.length ? (
-                <div className="mt-3 space-y-2">
-                  {events.map((event) => (
-                    <div key={event.id} className="flex items-start gap-2 text-xs text-zinc-300">
-                      <span
-                        className={cn(
-                          "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                          event.severity === "ERROR" ? "bg-rose-400" : event.severity === "WARNING" ? "bg-amber-400" : "bg-cyan-400"
-                        )}
-                      />
-                      <div className="min-w-0">
-                        <div className="leading-5">{event.message}</div>
-                        <div className="text-[10px] text-zinc-500">{formatDistanceToNow(new Date(event.timestamp), { addSuffix: true })}</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">At a Glance</div>
+              <div className="mt-2 space-y-2">
+                <div className="text-sm leading-6 text-white">
+                  {taskDetail?.workflowSummary || "Open detail for files, notes, logs, and full verification context."}
+                </div>
+                {events.length ? (
+                  <div className="flex items-start gap-2 text-xs text-zinc-400">
+                    <Activity className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                    <div className="min-w-0">
+                      <div className="line-clamp-2">{events[events.length - 1]?.message}</div>
+                      <div className="mt-1 text-[10px] text-zinc-500">
+                        {formatDistanceToNow(new Date(events[events.length - 1]!.timestamp), { addSuffix: true })}
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-3 text-xs text-zinc-500">No workflow events captured yet.</div>
-              )}
-            </div>
-
-            <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Verification Snapshot</div>
-              <div className="mt-2 text-sm text-white">
-                {taskDetail?.verification.length ? `${taskDetail.verification.length} verification signals captured` : "Verification will appear here after execution or review."}
+                  </div>
+                ) : null}
+                {taskDetail?.verification.length ? (
+                  <div className="text-xs text-zinc-400">
+                    {taskDetail.verification.length} verification signals captured
+                  </div>
+                ) : (
+                  <div className="text-xs text-zinc-500">Verification will appear after execution or review.</div>
+                )}
               </div>
-              {taskDetail?.verification.length ? (
-                <ul className="mt-2 space-y-1 text-xs text-zinc-400">
-                  {taskDetail.verification.slice(0, 3).map((entry, index) => (
-                    <li key={`${item.workflowId}-verify-${index}`} className="truncate">
-                      {entry}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
             </div>
 
             <div className="flex flex-wrap gap-2 pt-1">
@@ -1105,6 +1111,15 @@ function WorkflowCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function MiniCountCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-[14px] border border-white/8 bg-black/20 px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-white">{value}</div>
+    </div>
   );
 }
 

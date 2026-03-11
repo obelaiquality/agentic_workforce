@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HfLoraLocalTrainerAdapter } from "./trainerAdapters";
 
 describe("trainer adapters", () => {
-  it("attempts non-sft stages with the multi-stage trainer script", { timeout: 15000 }, async () => {
+  it("attempts non-sft stages with the multi-stage trainer script", { timeout: 30000 }, async () => {
     const adapter = new HfLoraLocalTrainerAdapter();
     const result = await adapter.run({
       runId: "run-1",

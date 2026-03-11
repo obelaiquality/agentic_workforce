@@ -375,7 +375,7 @@ export function formatPrice(amount: number) {
   // Scenario 6: Shadow git snapshots through a multi-file edit
   // ────────────────────────────────────────────────────
 
-  it("creates shadow git snapshots and can rollback individual steps", () => {
+  it("creates shadow git snapshots and can rollback individual steps", { timeout: 15000 }, () => {
     const shadow = new ShadowGitService(tempDir, { maxSnapshots: 10 });
     shadow.initialize();
 

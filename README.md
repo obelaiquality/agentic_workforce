@@ -150,15 +150,15 @@ npx prisma generate    # Generate Prisma client
 
 ### 5. Launch the desktop app
 
-**Recommended** — use `dev:desktop` to start Vite + Electron directly:
+**Canonical operator command**:
 
 ```bash
-npm run dev:desktop
+npm run start:desktop
 ```
 
-This starts the Vite dev server, the Fastify API server (port 8787), the Rust sidecar, and the Electron shell. The app opens automatically.
+This runs the normal bootstrap path and launches the Electron app.
 
-> **Alternative — full bootstrap**: `npm run start:desktop` runs all setup steps (env copy, doctor checks, Docker Postgres, Prisma, sidecar build) then launches the app. This requires Docker to be running. If you manage Postgres yourself or Docker isn't available, use `dev:desktop` instead.
+> **Faster dev path**: `npm run dev:desktop` starts Vite + the Electron shell directly. Use it when your API, database, and model runtime are already healthy and you just want the desktop UI quickly.
 
 > **Dev without Electron**: To run just the web UI (no Electron window):
 > ```bash
@@ -188,6 +188,12 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
    - **Console** — see real execution, verification, provider, and indexing events
 
 ### What the app looks like
+
+These screenshots are from the latest green desktop acceptance run on March 11, 2026. That run verified:
+- empty-folder bootstrap
+- TypeScript scaffold
+- follow-up `StatusBadge` feature edit
+- green `lint`, `test`, and `build`
 
 **Live State** — the command center with the Overseer command card, workflow summary row, and four-lane kanban board:
 
@@ -681,14 +687,11 @@ src/
     components/
       UI.tsx                        # Shared UI primitives (Panel, Chip, etc.)
       views/
-        LandingMissionView.tsx      # Landing / mission control
+        CommandCenterView.tsx       # Live State command center + kanban board
         CodebaseView.tsx            # File tree + source viewer
         ConsoleView.tsx             # Event stream viewer
         ProjectsWorkspaceView.tsx   # Project management
         SettingsControlView.tsx     # Settings + Labs
-        OverseerView.tsx            # Overseer execution surface
-        RunsView.tsx                # Run history + reports
-        ...
       mission/
         OverseerDrawer.tsx          # Execution drawer
         ProjectBlueprintPanel.tsx   # Blueprint display + overrides
@@ -722,6 +725,26 @@ src/
       doomLoopDetector.ts           # MD5 fingerprint doom-loop detection
       contextCompactionService.ts   # 5-stage adaptive context compaction
       toolResultOptimizer.ts        # Per-tool output optimization
+
+### Generated local state
+
+These directories are generated locally and can be cleaned when needed:
+
+```
+.local/repos/                      # Managed worktrees for connected projects
+.local/benchmark-runs/             # Benchmark run sandboxes
+output/playwright/                 # Acceptance and UI artifact runs
+dist/                              # Renderer build output
+dist-server/                       # Server build output
+dist-sidecar/                      # Sidecar build output
+```
+
+They are not the source of truth. The source of truth is:
+- `src/`
+- `prisma/`
+- `docs/`
+- `scripts/`
+- `rust/`
       systemReminderService.ts      # Blueprint-aware instruction reminders
       editMatcherChain.ts           # 8-level progressive edit matching
       treeSitterAnalyzer.ts         # Optional tree-sitter code analysis
