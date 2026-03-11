@@ -146,6 +146,51 @@ export function buildStartupCommand(
   return command;
 }
 
+function parseHostPort(baseUrl: string, fallback: string) {
+  try {
+    const parsed = new URL(baseUrl);
+    return {
+      host: parsed.hostname || "127.0.0.1",
+      port: parsed.port || new URL(fallback).port || "8000",
+    };
+  } catch {
+    const parsedFallback = new URL(fallback);
+    return {
+      host: parsedFallback.hostname || "127.0.0.1",
+      port: parsedFallback.port || "8000",
+    };
+  }
+}
+
+export function buildStartupCommandForBaseUrl(
+  backend: OnPremInferenceBackendDescriptor,
+  model: string,
+  baseUrl: string,
+  options?: { enableSpeculativeDecoding?: boolean; vramMb?: number }
+): string {
+  const { host, port } = parseHostPort(baseUrl, backend.baseUrlDefault);
+  const safeModel = JSON.stringify(model);
+
+  switch (backend.id) {
+    case "mlx-lm":
+      return `python3 -m mlx_lm.server --model ${safeModel} --host ${host} --port ${port} --temp 0.15 --max-tokens 1600`;
+    case "vllm-openai":
+      return `vllm serve ${safeModel} --host ${host} --port ${port} --enable-prefix-caching`;
+    case "sglang":
+      return `python3 -m sglang.launch_server --model-path ${safeModel} --host ${host} --port ${port}`;
+    case "trtllm-openai":
+      return `trtllm-serve ${safeModel} --host ${host} --port ${port}`;
+    case "llama-cpp-openai":
+      return `llama-server --model /path/to/model.gguf --host ${host} --port ${port} --ctx-size 32768 --cache-prompt`;
+    case "transformers-openai":
+      return `python3 scripts/local_qwen_openai_server.py --backend transformers --model ${safeModel} --host ${host} --port ${port}`;
+    case "ollama-openai":
+      return "ollama serve";
+    default:
+      return buildStartupCommand(backend, model, options);
+  }
+}
+
 export function buildFimPrompt(
   backend: OnPremInferenceBackendDescriptor,
   prefix: string,

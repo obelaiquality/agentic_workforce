@@ -163,6 +163,15 @@ export async function initDatabase() {
   });
 
   await prisma.appSetting.upsert({
+    where: { key: "onprem_qwen_role_runtime_configs" },
+    update: {},
+    create: {
+      key: "onprem_qwen_role_runtime_configs",
+      value: {},
+    },
+  });
+
+  await prisma.appSetting.upsert({
     where: { key: "openai_compatible_config" },
     update: {},
     create: {

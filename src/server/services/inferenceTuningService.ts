@@ -2,7 +2,11 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:chil
 import os from "node:os";
 import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
-import { listOnPremInferenceBackends, resolveOnPremInferenceBackend } from "../providers/inferenceBackends";
+import {
+  buildStartupCommandForBaseUrl,
+  listOnPremInferenceBackends,
+  resolveOnPremInferenceBackend,
+} from "../providers/inferenceBackends";
 import { resolveOnPremQwenModelPlugin } from "../providers/modelPlugins";
 import type {
   BackendBenchmarkResult,
@@ -10,6 +14,9 @@ import type {
   HardwareProfile,
   InferenceAutotuneResult,
   InferenceBenchmarkProfile,
+  LocalRuntimeRole,
+  OnPremRoleRuntimeStatus,
+  OnPremRoleRuntimeTestResult,
   OnPremInferenceBackendDescriptor,
   OnPremInferenceBackendId,
   PromptCacheMetrics,
@@ -18,6 +25,16 @@ import { getCandidateOrderForHardware, scoreBenchmark } from "./inferenceScoring
 import { V2EventService } from "./v2EventService";
 
 const runtimeProcesses = new Map<OnPremInferenceBackendId, ChildProcessWithoutNullStreams>();
+const roleRuntimeProcesses = new Map<LocalRuntimeRole, ChildProcessWithoutNullStreams>();
+
+type RoleRuntimeConfig = {
+  role: LocalRuntimeRole;
+  enabled: boolean;
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  backendId: OnPremInferenceBackendId;
+};
 
 function p95(values: number[]) {
   if (!values.length) return 0;
@@ -51,6 +68,42 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 function stripV1Suffix(baseUrl: string) {
   return baseUrl.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
+}
+
+function parseRoleRuntimeConfig(
+  raw: unknown,
+  fallback: {
+    baseUrl: string;
+    model: string;
+    inferenceBackendId: OnPremInferenceBackendId;
+  },
+  role: LocalRuntimeRole
+): RoleRuntimeConfig {
+  const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const plugin = resolveOnPremQwenModelPlugin(typeof value.pluginId === "string" ? value.pluginId : undefined);
+  const model =
+    typeof value.model === "string" && value.model.trim().length > 0
+      ? value.model
+      : plugin.runtimeModel !== "custom"
+        ? plugin.runtimeModel
+        : fallback.model;
+  const backendId =
+    typeof value.inferenceBackendId === "string"
+      ? (value.inferenceBackendId as OnPremInferenceBackendId)
+      : (plugin.recommendedBackend as OnPremInferenceBackendId) || fallback.inferenceBackendId;
+  const baseUrl =
+    typeof value.baseUrl === "string" && value.baseUrl.trim().length > 0
+      ? value.baseUrl.trim()
+      : resolveOnPremInferenceBackend(backendId).baseUrlDefault;
+  const enabled = value.enabled === true;
+  return {
+    role,
+    enabled,
+    configured: baseUrl.length > 0 && model.length > 0,
+    baseUrl,
+    model,
+    backendId,
+  };
 }
 
 export class InferenceTuningService {
@@ -214,6 +267,98 @@ export class InferenceTuningService {
       apiKey,
       inferenceBackendId,
       baseUrl,
+    };
+  }
+
+  private async getRoleRuntimeConfigs(): Promise<Record<LocalRuntimeRole, RoleRuntimeConfig>> {
+    const [baseConfig, row] = await Promise.all([
+      this.getOnPremConfig(),
+      prisma.appSetting.findUnique({ where: { key: "onprem_qwen_role_runtime_configs" } }),
+    ]);
+    const raw = (row?.value as Record<string, unknown> | null) || {};
+    return {
+      utility_fast: parseRoleRuntimeConfig(raw.utility_fast, baseConfig, "utility_fast"),
+      coder_default: parseRoleRuntimeConfig(raw.coder_default, baseConfig, "coder_default"),
+      review_deep: parseRoleRuntimeConfig(raw.review_deep, baseConfig, "review_deep"),
+    };
+  }
+
+  private async probeRuntime(baseUrl: string) {
+    const healthUrl = `${stripV1Suffix(baseUrl)}/health`;
+    const modelsUrl = `${baseUrl.replace(/\/+$/, "")}/models`;
+    try {
+      const response = await fetchWithTimeout(healthUrl, { method: "GET" }, 5000);
+      if (response.ok) {
+        return { healthy: true, modelCount: 0, message: "health endpoint reachable" };
+      }
+    } catch {
+      // fall through
+    }
+    try {
+      const response = await fetchWithTimeout(modelsUrl, { method: "GET" }, 5000);
+      if (response.ok) {
+        const payload = (await response.json()) as { data?: unknown[] };
+        return {
+          healthy: true,
+          modelCount: Array.isArray(payload.data) ? payload.data.length : 0,
+          message: "models endpoint reachable",
+        };
+      }
+      return {
+        healthy: false,
+        modelCount: 0,
+        message: `models endpoint returned ${response.status}`,
+      };
+    } catch (error) {
+      return {
+        healthy: false,
+        modelCount: 0,
+        message: error instanceof Error ? error.message : "runtime unavailable",
+      };
+    }
+  }
+
+  async listRoleRuntimeStatuses(): Promise<OnPremRoleRuntimeStatus[]> {
+    const configs = await this.getRoleRuntimeConfigs();
+    const roles = Object.keys(configs) as LocalRuntimeRole[];
+    return Promise.all(
+      roles.map(async (role) => {
+        const config = configs[role];
+        const process = roleRuntimeProcesses.get(role);
+        const probe = config.enabled && config.configured ? await this.probeRuntime(config.baseUrl) : null;
+        return {
+          role,
+          enabled: config.enabled,
+          configured: config.configured,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          backendId: config.backendId,
+          running: Boolean(process),
+          pid: process?.pid ?? null,
+          healthy: probe?.healthy ?? null,
+          message: probe?.message ?? (config.enabled ? "runtime not tested yet" : "dedicated runtime disabled"),
+        };
+      })
+    );
+  }
+
+  async testRoleRuntime(input: { role: LocalRuntimeRole }): Promise<OnPremRoleRuntimeTestResult> {
+    const configs = await this.getRoleRuntimeConfigs();
+    const config = configs[input.role];
+    const process = roleRuntimeProcesses.get(input.role);
+    const probe = config.enabled && config.configured ? await this.probeRuntime(config.baseUrl) : null;
+    return {
+      role: input.role,
+      enabled: config.enabled,
+      configured: config.configured,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      backendId: config.backendId,
+      running: Boolean(process),
+      pid: process?.pid ?? null,
+      healthy: probe?.healthy ?? false,
+      modelCount: probe?.modelCount ?? 0,
+      message: probe?.message ?? "runtime not configured",
     };
   }
 
@@ -653,6 +798,95 @@ export class InferenceTuningService {
       ok: true,
       backendId: input.backendId,
       stopped: true,
+    };
+  }
+
+  async startRoleRuntime(input: { actor: string; role: LocalRuntimeRole }) {
+    const configs = await this.getRoleRuntimeConfigs();
+    const config = configs[input.role];
+    if (!config.enabled || !config.configured) {
+      return {
+        ok: false,
+        role: input.role,
+        started: false,
+        reason: "dedicated runtime is disabled or incomplete",
+      };
+    }
+
+    const existing = roleRuntimeProcesses.get(input.role);
+    if (existing) {
+      return {
+        ok: true,
+        role: input.role,
+        started: false,
+        alreadyRunning: true,
+        pid: existing.pid ?? null,
+      };
+    }
+
+    const backend = resolveOnPremInferenceBackend(config.backendId);
+    const launchCommand = buildStartupCommandForBaseUrl(backend, config.model, config.baseUrl);
+    const child = spawn(launchCommand, {
+      cwd: process.cwd(),
+      env: process.env,
+      shell: true,
+      stdio: "pipe",
+    }) as ChildProcessWithoutNullStreams;
+
+    roleRuntimeProcesses.set(input.role, child);
+    child.on("exit", () => roleRuntimeProcesses.delete(input.role));
+
+    publishEvent("global", "inference.role_runtime.started", {
+      actor: input.actor,
+      role: input.role,
+      backendId: config.backendId,
+      baseUrl: config.baseUrl,
+      pid: child.pid ?? null,
+    });
+
+    return {
+      ok: true,
+      role: input.role,
+      started: true,
+      command: launchCommand,
+      pid: child.pid ?? null,
+    };
+  }
+
+  async stopRoleRuntime(input: { actor: string; role: LocalRuntimeRole }) {
+    const child = roleRuntimeProcesses.get(input.role);
+    if (!child) {
+      return {
+        ok: true,
+        role: input.role,
+        stopped: false,
+      };
+    }
+    child.kill("SIGTERM");
+    roleRuntimeProcesses.delete(input.role);
+
+    publishEvent("global", "inference.role_runtime.stopped", {
+      actor: input.actor,
+      role: input.role,
+    });
+
+    return {
+      ok: true,
+      role: input.role,
+      stopped: true,
+    };
+  }
+
+  async startEnabledRoleRuntimes(input: { actor: string }) {
+    const configs = await this.getRoleRuntimeConfigs();
+    const roles = (Object.keys(configs) as LocalRuntimeRole[]).filter((role) => configs[role].enabled && configs[role].configured);
+    const results = [];
+    for (const role of roles) {
+      results.push(await this.startRoleRuntime({ actor: input.actor, role }));
+    }
+    return {
+      ok: true,
+      started: results,
     };
   }
 

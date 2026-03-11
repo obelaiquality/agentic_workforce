@@ -6,6 +6,7 @@ import {
   bootstrapQwenAccount,
   createQwenAccount,
   getLatestInferenceBenchmarksV2,
+  listOnPremRoleRuntimes,
   getOpenAiBudgetV3,
   getSettings,
   listInferenceBackendsV2,
@@ -17,10 +18,14 @@ import {
   policyDecideV2,
   reauthQwenAccount,
   runInferenceAutotuneV2,
+  startEnabledOnPremRoleRuntimes,
   startInferenceBackendV2,
+  startOnPremRoleRuntime,
   startQwenAccountAuth,
   stopInferenceBackendV2,
+  stopOnPremRoleRuntime,
   switchInferenceBackendV2,
+  testOnPremRoleRuntime,
   updateQwenAccount,
   updateSettings,
   setRuntimeMode,
@@ -30,6 +35,7 @@ import { Chip, Panel, PanelHeader } from "../UI";
 
 type SettingsTab = "basic" | "accounts" | "advanced" | "labs";
 type ModelRoleKey = "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+type LocalRuntimeRoleKey = "utility_fast" | "coder_default" | "review_deep";
 
 const ROLE_ORDER: ModelRoleKey[] = ["utility_fast", "coder_default", "review_deep", "overseer_escalation"];
 const ROLE_LABELS: Record<ModelRoleKey, string> = {
@@ -38,6 +44,8 @@ const ROLE_LABELS: Record<ModelRoleKey, string> = {
   review_deep: "Review",
   overseer_escalation: "Escalate",
 };
+
+const LOCAL_RUNTIME_ROLES: LocalRuntimeRoleKey[] = ["utility_fast", "coder_default", "review_deep"];
 
 function pickFirstAvailable(preferred: string[], available: string[], fallback: string) {
   for (const model of preferred) {
@@ -134,6 +142,48 @@ function recommendedHybridRoleBindings(
   };
 }
 
+function groupOpenAiModels(
+  models: Array<{ id: string; created: number | null; ownedBy: string | null }>
+) {
+  const groups = new Map<string, Array<{ id: string; created: number | null; ownedBy: string | null }>>();
+
+  const classify = (modelId: string) => {
+    if (/^gpt-5(?:[.-].*codex.*|.*codex.*)$/i.test(modelId)) return "GPT-5 Codex";
+    if (/^gpt-5/i.test(modelId)) return "GPT-5";
+    if (/^gpt-4\.1/i.test(modelId)) return "GPT-4.1";
+    if (/^gpt-4o/i.test(modelId)) return "GPT-4o";
+    if (/^o\d|^o[1-9]|^o3|^o4/i.test(modelId)) return "O-Series";
+    return "Other";
+  };
+
+  for (const model of models) {
+    const label = classify(model.id);
+    if (!groups.has(label)) {
+      groups.set(label, []);
+    }
+    groups.get(label)!.push(model);
+  }
+
+  const order = ["GPT-5 Codex", "GPT-5", "GPT-4.1", "GPT-4o", "O-Series", "Other"];
+  return order
+    .filter((label) => groups.has(label))
+    .map((label) => ({
+      label,
+      items: groups.get(label)!.slice().sort((left, right) => left.id.localeCompare(right.id)),
+    }));
+}
+
+function suggestSiblingLocalBaseUrl(baseUrl: string, fallbackPort: number) {
+  try {
+    const parsed = new URL(baseUrl);
+    const port = Number(parsed.port || "8000");
+    parsed.port = String(Number.isFinite(port) ? port + 1 : fallbackPort);
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return `http://127.0.0.1:${fallbackPort}/v1`;
+  }
+}
+
 function LabeledInput({
   label,
   value,
@@ -187,6 +237,11 @@ export function SettingsControlView() {
   });
   const onPremPluginsQuery = useQuery({ queryKey: ["onprem-qwen-plugins"], queryFn: listModelPluginsV2 });
   const onPremBackendsQuery = useQuery({ queryKey: ["onprem-qwen-backends"], queryFn: listInferenceBackendsV2 });
+  const onPremRoleRuntimeStatusQuery = useQuery({
+    queryKey: ["onprem-qwen-role-runtimes"],
+    queryFn: listOnPremRoleRuntimes,
+    refetchInterval: 5000,
+  });
   const latestBenchmarksQuery = useQuery({
     queryKey: ["inference-benchmarks-latest", autotuneProfile],
     queryFn: () => getLatestInferenceBenchmarksV2(autotuneProfile),
@@ -248,6 +303,34 @@ export function SettingsControlView() {
   const updateSettingsMutation = useMutation({
     mutationFn: updateSettings,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["app-settings"] }),
+  });
+
+  const startEnabledRoleRuntimesMutation = useMutation({
+    mutationFn: () => startEnabledOnPremRoleRuntimes("user"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["onprem-qwen-role-runtimes"] });
+    },
+  });
+
+  const startRoleRuntimeMutation = useMutation({
+    mutationFn: (role: LocalRuntimeRoleKey) => startOnPremRoleRuntime({ actor: "user", role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["onprem-qwen-role-runtimes"] });
+    },
+  });
+
+  const stopRoleRuntimeMutation = useMutation({
+    mutationFn: (role: LocalRuntimeRoleKey) => stopOnPremRoleRuntime({ actor: "user", role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["onprem-qwen-role-runtimes"] });
+    },
+  });
+
+  const testRoleRuntimeMutation = useMutation({
+    mutationFn: (role: LocalRuntimeRoleKey) => testOnPremRoleRuntime({ actor: "user", role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["onprem-qwen-role-runtimes"] });
+    },
   });
 
   const runtimeModeMutation = useMutation({
@@ -356,6 +439,7 @@ export function SettingsControlView() {
         return left.id.localeCompare(right.id);
       });
   }, [openAiModelsQuery.data?.items, openAiResponsesSettings.model]);
+  const openAiModelGroups = useMemo(() => groupOpenAiModels(openAiModels), [openAiModels]);
   const parallelRuntime = settingsQuery.data?.items.parallelRuntime ?? {
     maxLocalLanes: 4,
     maxExpandedLanes: 6,
@@ -432,6 +516,56 @@ export function SettingsControlView() {
       },
     };
   }, [settingsQuery.data?.items.modelRoles, onPremSettings.model, onPremSettings.pluginId, openAiResponsesSettings.model]);
+  const onPremRoleRuntimes = useMemo(() => {
+    const raw = (settingsQuery.data?.items.onPremQwenRoleRuntimes ?? {}) as Record<string, Record<string, unknown>>;
+    return {
+      utility_fast: {
+        enabled: Boolean(raw.utility_fast?.enabled),
+        baseUrl: (raw.utility_fast?.baseUrl as string | undefined) ?? "",
+        apiKey: (raw.utility_fast?.apiKey as string | undefined) ?? "",
+        inferenceBackendId: (raw.utility_fast?.inferenceBackendId as string | undefined) ?? "",
+        pluginId: (raw.utility_fast?.pluginId as string | undefined) ?? "qwen3.5-0.8b",
+        model: (raw.utility_fast?.model as string | undefined) ?? "Qwen/Qwen3.5-0.8B",
+        reasoningMode: (raw.utility_fast?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "off",
+        timeoutMs: (raw.utility_fast?.timeoutMs as number | undefined) ?? 120000,
+        temperature: (raw.utility_fast?.temperature as number | undefined) ?? 0.1,
+        maxTokens: (raw.utility_fast?.maxTokens as number | undefined) ?? 900,
+      },
+      coder_default: {
+        enabled: Boolean(raw.coder_default?.enabled),
+        baseUrl: (raw.coder_default?.baseUrl as string | undefined) ?? "",
+        apiKey: (raw.coder_default?.apiKey as string | undefined) ?? "",
+        inferenceBackendId: (raw.coder_default?.inferenceBackendId as string | undefined) ?? "",
+        pluginId: (raw.coder_default?.pluginId as string | undefined) ?? onPremSettings.pluginId,
+        model: (raw.coder_default?.model as string | undefined) ?? onPremSettings.model,
+        reasoningMode: (raw.coder_default?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "off",
+        timeoutMs: (raw.coder_default?.timeoutMs as number | undefined) ?? onPremSettings.timeoutMs,
+        temperature: (raw.coder_default?.temperature as number | undefined) ?? 0.12,
+        maxTokens: (raw.coder_default?.maxTokens as number | undefined) ?? 1800,
+      },
+      review_deep: {
+        enabled: Boolean(raw.review_deep?.enabled),
+        baseUrl: (raw.review_deep?.baseUrl as string | undefined) ?? "",
+        apiKey: (raw.review_deep?.apiKey as string | undefined) ?? "",
+        inferenceBackendId: (raw.review_deep?.inferenceBackendId as string | undefined) ?? "",
+        pluginId: (raw.review_deep?.pluginId as string | undefined) ?? onPremSettings.pluginId,
+        model: (raw.review_deep?.model as string | undefined) ?? onPremSettings.model,
+        reasoningMode: (raw.review_deep?.reasoningMode as "off" | "on" | "auto" | undefined) ?? "on",
+        timeoutMs: (raw.review_deep?.timeoutMs as number | undefined) ?? onPremSettings.timeoutMs,
+        temperature: (raw.review_deep?.temperature as number | undefined) ?? 0.08,
+        maxTokens: (raw.review_deep?.maxTokens as number | undefined) ?? 2200,
+      },
+    };
+  }, [
+    settingsQuery.data?.items.onPremQwenRoleRuntimes,
+    onPremSettings.model,
+    onPremSettings.pluginId,
+    onPremSettings.timeoutMs,
+  ]);
+  const onPremRoleRuntimeStatuses = useMemo(
+    () => new Map((onPremRoleRuntimeStatusQuery.data?.items ?? []).map((item) => [item.role, item])),
+    [onPremRoleRuntimeStatusQuery.data?.items]
+  );
 
   const onPremPluginOptions = useMemo(
     () =>
@@ -454,6 +588,9 @@ export function SettingsControlView() {
   const applyModelRoles = (nextBindings: Record<ModelRoleKey, Record<string, unknown>>) => {
     updateSettingsMutation.mutate({ modelRoles: nextBindings });
   };
+  const applyOnPremRoleRuntimes = (nextRuntimes: Record<LocalRuntimeRoleKey, Record<string, unknown>>) => {
+    updateSettingsMutation.mutate({ onPremQwenRoleRuntimes: nextRuntimes });
+  };
   const updateRoleBinding = (role: ModelRoleKey, patch: Record<string, unknown>) => {
     applyModelRoles({
       ...currentRoleBindings,
@@ -461,6 +598,15 @@ export function SettingsControlView() {
         ...currentRoleBindings[role],
         ...patch,
         role,
+      },
+    });
+  };
+  const updateOnPremRoleRuntime = (role: LocalRuntimeRoleKey, patch: Record<string, unknown>) => {
+    applyOnPremRoleRuntimes({
+      ...onPremRoleRuntimes,
+      [role]: {
+        ...onPremRoleRuntimes[role],
+        ...patch,
       },
     });
   };
@@ -483,6 +629,80 @@ export function SettingsControlView() {
         onPremSettings.model
       )
     );
+  };
+  const applyRecommendedLocalSplit = () => {
+    const utilityPlugin = onPremPluginOptions.find((plugin) => plugin.id === "qwen3.5-0.8b");
+    const utilityModel = utilityPlugin?.model ?? "Qwen/Qwen3.5-0.8B";
+    const utilityBaseUrl = suggestSiblingLocalBaseUrl(onPremSettings.baseUrl, 8001);
+
+    setProviderMutation.mutate("onprem-qwen");
+    runtimeModeMutation.mutate("local_qwen");
+    applyModelRoles({
+      ...currentRoleBindings,
+      utility_fast: {
+        ...currentRoleBindings.utility_fast,
+        role: "utility_fast",
+        providerId: "onprem-qwen",
+        pluginId: utilityPlugin?.id ?? "qwen3.5-0.8b",
+        model: utilityModel,
+        reasoningMode: "off",
+        maxTokens: 900,
+      },
+      coder_default: {
+        ...currentRoleBindings.coder_default,
+        role: "coder_default",
+        providerId: "onprem-qwen",
+        pluginId: onPremSettings.pluginId,
+        model: onPremSettings.model,
+        reasoningMode: "off",
+      },
+      review_deep: {
+        ...currentRoleBindings.review_deep,
+        role: "review_deep",
+        providerId: "onprem-qwen",
+        pluginId: onPremSettings.pluginId,
+        model: onPremSettings.model,
+        reasoningMode: "on",
+      },
+    });
+    applyOnPremRoleRuntimes({
+      utility_fast: {
+        enabled: true,
+        baseUrl: utilityBaseUrl,
+        apiKey: "",
+        inferenceBackendId: onPremSettings.inferenceBackendId,
+        pluginId: utilityPlugin?.id ?? "qwen3.5-0.8b",
+        model: utilityModel,
+        reasoningMode: "off",
+        timeoutMs: 120000,
+        temperature: 0.1,
+        maxTokens: 900,
+      },
+      coder_default: {
+        enabled: true,
+        baseUrl: onPremSettings.baseUrl,
+        apiKey: onPremSettings.apiKey,
+        inferenceBackendId: onPremSettings.inferenceBackendId,
+        pluginId: onPremSettings.pluginId,
+        model: onPremSettings.model,
+        reasoningMode: "off",
+        timeoutMs: onPremSettings.timeoutMs,
+        temperature: 0.12,
+        maxTokens: 1800,
+      },
+      review_deep: {
+        enabled: true,
+        baseUrl: onPremSettings.baseUrl,
+        apiKey: onPremSettings.apiKey,
+        inferenceBackendId: onPremSettings.inferenceBackendId,
+        pluginId: onPremSettings.pluginId,
+        model: onPremSettings.model,
+        reasoningMode: "on",
+        timeoutMs: onPremSettings.timeoutMs,
+        temperature: 0.08,
+        maxTokens: 2200,
+      },
+    });
   };
 
   return (
@@ -581,10 +801,14 @@ export function SettingsControlView() {
                       className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
                     >
                       {openAiModels.length === 0 ? <option value={openAiResponsesSettings.model}>{openAiResponsesSettings.model}</option> : null}
-                      {openAiModels.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.id}
-                        </option>
+                      {openAiModelGroups.map((group) => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.items.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.id}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                   </label>
@@ -701,10 +925,14 @@ export function SettingsControlView() {
                                 className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
                               >
                                 {openAiModels.length === 0 ? <option value={binding.model}>{binding.model}</option> : null}
-                                {openAiModels.map((model) => (
-                                  <option key={model.id} value={model.id}>
-                                    {model.id}
-                                  </option>
+                                {openAiModelGroups.map((group) => (
+                                  <optgroup key={group.label} label={group.label}>
+                                    {group.items.map((model) => (
+                                      <option key={model.id} value={model.id}>
+                                        {model.id}
+                                      </option>
+                                    ))}
+                                  </optgroup>
                                 ))}
                               </select>
                             ) : (
@@ -794,6 +1022,219 @@ export function SettingsControlView() {
                 </div>
                 <div className="text-xs text-zinc-500">Use `off` for fast default coding, `on` for deeper review paths, and `auto` when role routing should decide.</div>
               </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-white font-medium">Local role runtimes</div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      Optional dedicated local endpoints per role. Use this when you want `Fast` on a smaller local model and `Build` on a larger one at the same time.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Chip variant="subtle">optional</Chip>
+                    <button
+                      onClick={applyRecommendedLocalSplit}
+                      className="rounded-lg border border-fuchsia-500/30 bg-fuchsia-500/10 px-3 py-1.5 text-xs text-fuchsia-100"
+                    >
+                      Apply recommended local split
+                    </button>
+                    <button
+                      onClick={() => startEnabledRoleRuntimesMutation.mutate()}
+                      className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-100"
+                    >
+                      Start enabled runtimes
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {LOCAL_RUNTIME_ROLES.map((role) => {
+                    const runtime = onPremRoleRuntimes[role];
+                    const status = onPremRoleRuntimeStatuses.get(role);
+                    const selectedPlugin =
+                      onPremPluginOptions.find((plugin) => plugin.id === runtime.pluginId) ?? onPremPluginOptions[0];
+                    const statusVariant = status?.healthy
+                      ? "ok"
+                      : status?.running
+                        ? "warn"
+                        : "subtle";
+                    const statusLabel = status?.healthy
+                      ? "healthy"
+                      : status?.running
+                        ? "running"
+                        : runtime.enabled
+                          ? "stopped"
+                          : "disabled";
+                    const issues: string[] = [];
+                    if (runtime.enabled && !runtime.baseUrl.trim()) issues.push("missing base URL");
+                    if (runtime.enabled && !runtime.model.trim()) issues.push("missing model");
+                    const backendLabel =
+                      (onPremBackendsQuery.data?.items ?? []).find((backend) => backend.id === runtime.inferenceBackendId)?.label ??
+                      "plugin/default";
+
+                    return (
+                      <div key={role} className="rounded-lg border border-white/10 bg-black/20 p-3 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-medium text-white">{ROLE_LABELS[role]}</div>
+                              <Chip variant={statusVariant}>{statusLabel}</Chip>
+                              {status?.pid ? <Chip variant="subtle">pid {status.pid}</Chip> : null}
+                            </div>
+                            <div className="text-xs text-zinc-500 mt-1">
+                              {runtime.enabled
+                                ? "Uses its own local runtime endpoint"
+                                : "Falls back to the default local runtime above"}
+                            </div>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-zinc-300">
+                            <span>Dedicated runtime</span>
+                            <input
+                              type="checkbox"
+                              checked={runtime.enabled}
+                              onChange={(event) =>
+                                updateOnPremRoleRuntime(role, {
+                                  enabled: event.target.checked,
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                          <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Endpoint</div>
+                            <div className="mt-1 text-xs text-zinc-200 break-all">{runtime.baseUrl || "not set"}</div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Backend</div>
+                            <div className="mt-1 text-xs text-zinc-200">{backendLabel}</div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Model</div>
+                            <div className="mt-1 text-xs text-zinc-200 break-all">{runtime.model || "not set"}</div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Diagnostics</div>
+                            <div className="mt-1 text-xs text-zinc-200">
+                              {issues.length > 0 ? issues.join(" · ") : status?.message ?? "Ready to test or start"}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_1fr_110px] gap-3">
+                          <LabeledInput
+                            label="Base URL"
+                            value={runtime.baseUrl}
+                            onChange={(value) => updateOnPremRoleRuntime(role, { baseUrl: value })}
+                            placeholder={role === "utility_fast" ? "http://127.0.0.1:8001/v1" : "http://127.0.0.1:8000/v1"}
+                          />
+                          <label className="space-y-1 block">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Backend</div>
+                            <select
+                              value={runtime.inferenceBackendId}
+                              onChange={(event) =>
+                                updateOnPremRoleRuntime(role, {
+                                  inferenceBackendId: event.target.value,
+                                })
+                              }
+                              className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                            >
+                              <option value="">plugin/default</option>
+                              {(onPremBackendsQuery.data?.items ?? []).map((backend) => (
+                                <option key={backend.id} value={backend.id}>
+                                  {backend.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="space-y-1 block">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Plugin</div>
+                            <select
+                              value={runtime.pluginId}
+                              onChange={(event) => {
+                                const nextPlugin = onPremPluginOptions.find((plugin) => plugin.id === event.target.value);
+                                if (!nextPlugin) return;
+                                updateOnPremRoleRuntime(role, {
+                                  pluginId: nextPlugin.id,
+                                  model: nextPlugin.model,
+                                });
+                              }}
+                              className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                            >
+                              {onPremPluginOptions.map((plugin) => (
+                                <option key={plugin.id} value={plugin.id}>
+                                  {plugin.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="space-y-1 block">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Thinking</div>
+                            <select
+                              value={runtime.reasoningMode}
+                              onChange={(event) =>
+                                updateOnPremRoleRuntime(role, {
+                                  reasoningMode: event.target.value as "off" | "on" | "auto",
+                                })
+                              }
+                              className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                            >
+                              <option value="off">off</option>
+                              <option value="on">on</option>
+                              <option value="auto">auto</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <LabeledInput
+                            label="Model"
+                            value={runtime.model}
+                            onChange={(value) => updateOnPremRoleRuntime(role, { model: value })}
+                          />
+                          <LabeledInput
+                            label="Timeout ms"
+                            value={String(runtime.timeoutMs)}
+                            onChange={(value) => updateOnPremRoleRuntime(role, { timeoutMs: Number(value) || 0 })}
+                          />
+                          <LabeledInput
+                            label="Max tokens"
+                            value={String(runtime.maxTokens)}
+                            onChange={(value) => updateOnPremRoleRuntime(role, { maxTokens: Number(value) || 0 })}
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            onClick={() => testRoleRuntimeMutation.mutate(role)}
+                            disabled={!runtime.enabled}
+                            className="rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-40"
+                          >
+                            {testRoleRuntimeMutation.isPending && testRoleRuntimeMutation.variables === role ? "Testing..." : "Test"}
+                          </button>
+                          <button
+                            onClick={() => startRoleRuntimeMutation.mutate(role)}
+                            disabled={!runtime.enabled}
+                            className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-100 disabled:opacity-40"
+                          >
+                            {startRoleRuntimeMutation.isPending && startRoleRuntimeMutation.variables === role ? "Starting..." : "Start"}
+                          </button>
+                          <button
+                            onClick={() => stopRoleRuntimeMutation.mutate(role)}
+                            disabled={!runtime.enabled}
+                            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100 disabled:opacity-40"
+                          >
+                            {stopRoleRuntimeMutation.isPending && stopRoleRuntimeMutation.variables === role ? "Stopping..." : "Stop"}
+                          </button>
+                          <div className="text-xs text-zinc-500">
+                            {status?.message ?? "Configure a dedicated endpoint, then test or start it."}
+                          </div>
+                        </div>
+                        <div className="text-xs text-zinc-500">
+                          Current plugin: {selectedPlugin?.label ?? runtime.pluginId}. Configure a second local server and point this role at it to get a true simultaneous multi-model setup.
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </Panel>
 
@@ -843,10 +1284,14 @@ export function SettingsControlView() {
                     className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
                   >
                     {openAiModels.length === 0 ? <option value={openAiResponsesSettings.model}>{openAiResponsesSettings.model}</option> : null}
-                    {openAiModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.id}
-                      </option>
+                    {openAiModelGroups.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.items.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.id}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </label>

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { listOnPremInferenceBackends, resolveOnPremInferenceBackend, buildStartupCommand, buildFimPrompt } from "./inferenceBackends";
+import {
+  listOnPremInferenceBackends,
+  resolveOnPremInferenceBackend,
+  buildStartupCommand,
+  buildStartupCommandForBaseUrl,
+  buildFimPrompt,
+} from "./inferenceBackends";
 
 describe("On-prem inference backends", () => {
   it("exposes MLX as the default backend", () => {
@@ -123,5 +129,26 @@ describe("On-prem inference backends", () => {
     const transformers = resolveOnPremInferenceBackend("transformers-openai");
     const prompt = buildFimPrompt(transformers, "prefix", "suffix");
     expect(prompt).toBeNull();
+  });
+
+  it("builds MLX startup commands against a dedicated base URL", () => {
+    const mlx = resolveOnPremInferenceBackend("mlx-lm");
+    const cmd = buildStartupCommandForBaseUrl(mlx, "Qwen/Qwen3.5-0.8B", "http://127.0.0.1:8001/v1");
+    expect(cmd).toContain("--host 127.0.0.1");
+    expect(cmd).toContain("--port 8001");
+    expect(cmd).toContain("--model \"Qwen/Qwen3.5-0.8B\"");
+  });
+
+  it("builds transformers startup commands against a dedicated base URL", () => {
+    const transformers = resolveOnPremInferenceBackend("transformers-openai");
+    const cmd = buildStartupCommandForBaseUrl(
+      transformers,
+      "mlx-community/Qwen3.5-4B-4bit",
+      "http://127.0.0.1:8010/v1"
+    );
+    expect(cmd).toContain("scripts/local_qwen_openai_server.py");
+    expect(cmd).toContain("--host 127.0.0.1");
+    expect(cmd).toContain("--port 8010");
+    expect(cmd).toContain("--model \"mlx-community/Qwen3.5-4B-4bit\"");
   });
 });

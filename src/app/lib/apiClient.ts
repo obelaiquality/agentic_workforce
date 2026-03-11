@@ -68,6 +68,8 @@ import type {
   OnPremInferenceBackendDescriptor,
   OnPremQwenModelPlugin,
   OutcomeEvidence,
+  OnPremRoleRuntimeStatus,
+  OnPremRoleRuntimeTestResult,
 } from "../../shared/contracts";
 
 interface ApiConfig {
@@ -151,6 +153,50 @@ export async function listOnPremQwenPlugins() {
 
 export async function listOnPremInferenceBackends() {
   return apiRequest<{ items: OnPremInferenceBackendDescriptor[] }>("/api/v1/providers/onprem/backends");
+}
+
+export async function listOnPremRoleRuntimes() {
+  return apiRequest<{ items: OnPremRoleRuntimeStatus[] }>("/api/v1/providers/onprem/role-runtimes");
+}
+
+export async function testOnPremRoleRuntime(input: {
+  actor: string;
+  role: "utility_fast" | "coder_default" | "review_deep";
+}) {
+  return apiRequest<{ item: OnPremRoleRuntimeTestResult }>("/api/v1/providers/onprem/role-runtimes/test", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function startOnPremRoleRuntime(input: {
+  actor: string;
+  role: "utility_fast" | "coder_default" | "review_deep";
+}) {
+  return apiRequest<{ ok: boolean; role: string; started: boolean; alreadyRunning?: boolean; pid?: number | null; reason?: string }>(
+    "/api/v1/providers/onprem/role-runtimes/start",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  );
+}
+
+export async function stopOnPremRoleRuntime(input: {
+  actor: string;
+  role: "utility_fast" | "coder_default" | "review_deep";
+}) {
+  return apiRequest<{ ok: boolean; role: string; stopped: boolean }>("/api/v1/providers/onprem/role-runtimes/stop", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function startEnabledOnPremRoleRuntimes(actor = "user") {
+  return apiRequest<{ ok: boolean; started: Array<Record<string, unknown>> }>("/api/v1/providers/onprem/role-runtimes/start-enabled", {
+    method: "POST",
+    body: JSON.stringify({ actor }),
+  });
 }
 
 export async function createQwenAccount(input: { label: string; profilePath: string; keychainRef?: string }) {
@@ -646,6 +692,18 @@ export async function getSettings() {
         temperature: number;
         maxTokens: number;
       };
+      onPremQwenRoleRuntimes: Record<string, {
+        enabled?: boolean;
+        baseUrl?: string;
+        apiKey?: string;
+        inferenceBackendId?: string;
+        pluginId?: string;
+        model?: string;
+        reasoningMode?: "off" | "on" | "auto";
+        timeoutMs?: number;
+        temperature?: number;
+        maxTokens?: number;
+      }>;
       openAiCompatible: {
         baseUrl: string;
         apiKey: string;
@@ -720,6 +778,18 @@ export async function updateSettings(input: {
     temperature?: number;
     maxTokens?: number;
   };
+  onPremQwenRoleRuntimes?: Record<string, {
+    enabled?: boolean;
+    baseUrl?: string;
+    apiKey?: string;
+    inferenceBackendId?: string;
+    pluginId?: string;
+    model?: string;
+    reasoningMode?: "off" | "on" | "auto";
+    timeoutMs?: number;
+    temperature?: number;
+    maxTokens?: number;
+  }>;
   openAiCompatible?: {
     baseUrl?: string;
     apiKey?: string;

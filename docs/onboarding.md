@@ -45,7 +45,12 @@ In the app:
 1. Open `Settings`
 2. Confirm provider `On-Prem Qwen`
 3. Confirm base URL `http://127.0.0.1:8000/v1`
-4. Return to `Live State`
+4. If you want a true local split:
+   - open `Settings > Providers > Local role runtimes`
+   - click `Apply recommended local split`
+   - click `Start enabled runtimes`
+   - use `Test` on `Fast`, `Build`, and `Review`
+5. Return to `Live State`
 
 ## 10-15 min: Create or Connect a Project
 

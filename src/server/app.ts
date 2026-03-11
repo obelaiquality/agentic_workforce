@@ -97,6 +97,12 @@ const setRuntimeModeSchema = z.object({
   openAiModel: z.string().trim().optional(),
 });
 
+const roleRuntimeRoleSchema = z.enum(["utility_fast", "coder_default", "review_deep"]);
+const roleRuntimeActionSchema = z.object({
+  actor: z.string().min(1),
+  role: roleRuntimeRoleSchema,
+});
+
 const createAccountSchema = z.object({
   label: z.string().min(1),
   profilePath: z.string().min(1),
@@ -1371,6 +1377,40 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     return {
       items: await inferenceTuningService.listBackends(),
     };
+  });
+
+  app.get("/api/v1/providers/onprem/role-runtimes", async () => {
+    return {
+      items: await inferenceTuningService.listRoleRuntimeStatuses(),
+    };
+  });
+
+  app.post("/api/v1/providers/onprem/role-runtimes/test", async (request) => {
+    const input = roleRuntimeActionSchema.parse(request.body);
+    return {
+      item: await inferenceTuningService.testRoleRuntime({ role: input.role }),
+    };
+  });
+
+  app.post("/api/v1/providers/onprem/role-runtimes/start", async (request) => {
+    const input = roleRuntimeActionSchema.parse(request.body);
+    return inferenceTuningService.startRoleRuntime({
+      actor: input.actor,
+      role: input.role,
+    });
+  });
+
+  app.post("/api/v1/providers/onprem/role-runtimes/stop", async (request) => {
+    const input = roleRuntimeActionSchema.parse(request.body);
+    return inferenceTuningService.stopRoleRuntime({
+      actor: input.actor,
+      role: input.role,
+    });
+  });
+
+  app.post("/api/v1/providers/onprem/role-runtimes/start-enabled", async (request) => {
+    const input = z.object({ actor: z.string().min(1) }).parse(request.body);
+    return inferenceTuningService.startEnabledRoleRuntimes({ actor: input.actor });
   });
 
   app.get("/api/v2/inference/benchmarks/latest", async (request) => {
@@ -3247,6 +3287,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const safety = await prisma.appSetting.findUnique({ where: { key: "safety_policy" } });
     const qwen = await prisma.appSetting.findUnique({ where: { key: "qwen_cli_config" } });
     const onPrem = await prisma.appSetting.findUnique({ where: { key: "onprem_qwen_config" } });
+    const onPremRoleRuntimes = await prisma.appSetting.findUnique({ where: { key: "onprem_qwen_role_runtime_configs" } });
     const openAiCompat = await prisma.appSetting.findUnique({ where: { key: "openai_compatible_config" } });
     const openAiResponses = await prisma.appSetting.findUnique({ where: { key: "openai_responses_config" } });
     const modelRoles = await prisma.appSetting.findUnique({ where: { key: "model_role_bindings" } });
@@ -3254,6 +3295,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const distill = await prisma.appSetting.findUnique({ where: { key: "distill_config" } });
     const qwenValue = (qwen?.value as Record<string, unknown>) || {};
     const onPremValue = (onPrem?.value as Record<string, unknown>) || {};
+    const onPremRoleRuntimesValue = (onPremRoleRuntimes?.value as Record<string, unknown>) || {};
     const openAiCompatValue = (openAiCompat?.value as Record<string, unknown>) || {};
     const openAiResponsesValue = (openAiResponses?.value as Record<string, unknown>) || {};
     const modelRolesValue = (modelRoles?.value as Record<string, unknown>) || {};
@@ -3325,6 +3367,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
               ? onPremValue.maxTokens
               : 1600,
         },
+        onPremQwenRoleRuntimes: onPremRoleRuntimesValue,
         openAiCompatible: {
           baseUrl:
             typeof openAiCompatValue.baseUrl === "string" && openAiCompatValue.baseUrl.trim()
@@ -3525,6 +3568,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         temperature?: number;
         maxTokens?: number;
       };
+      onPremQwenRoleRuntimes?: Record<string, unknown>;
       openAiCompatible?: {
         baseUrl?: string;
         apiKey?: string;
@@ -3644,6 +3688,14 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         where: { key: "onprem_qwen_config" },
         update: { value: next },
         create: { key: "onprem_qwen_config", value: next },
+      });
+    }
+
+    if (input.onPremQwenRoleRuntimes) {
+      await prisma.appSetting.upsert({
+        where: { key: "onprem_qwen_role_runtime_configs" },
+        update: { value: input.onPremQwenRoleRuntimes },
+        create: { key: "onprem_qwen_role_runtime_configs", value: input.onPremQwenRoleRuntimes },
       });
     }
 

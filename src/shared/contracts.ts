@@ -1,6 +1,7 @@
 export type ProviderId = "qwen-cli" | "openai-compatible" | "onprem-qwen" | "openai-responses";
 
 export type ModelRole = "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+export type LocalRuntimeRole = "utility_fast" | "coder_default" | "review_deep";
 
 export type ReasoningMode = "off" | "on" | "auto";
 
@@ -188,6 +189,23 @@ export interface ProviderDescriptor {
   enabled: boolean;
   kind?: "local" | "cloud";
   capabilities?: ProviderCapabilities;
+}
+
+export interface OnPremRoleRuntimeStatus {
+  role: LocalRuntimeRole;
+  enabled: boolean;
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  backendId: OnPremInferenceBackendId;
+  running: boolean;
+  pid: number | null;
+  healthy: boolean | null;
+  message: string | null;
+}
+
+export interface OnPremRoleRuntimeTestResult extends OnPremRoleRuntimeStatus {
+  modelCount: number;
 }
 
 export type TaskLifecycleStatus =

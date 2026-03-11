@@ -2,6 +2,7 @@ import { prisma } from "../db";
 import type {
   CreateSessionInput,
   LlmProviderAdapter,
+  ModelRole,
   ProviderAvailability,
   ProviderErrorClass,
   ProviderSendInput,
@@ -24,6 +25,10 @@ interface OpenAiLikeConfig {
   inferenceBackendId: string | null;
   reasoningMode: ReasoningMode | null;
 }
+
+type RoleScopedOnPremRuntime = Partial<OpenAiLikeConfig> & {
+  enabled?: boolean;
+};
 
 function normalizeBaseUrl(value: string) {
   return value.replace(/\/+$/, "");
@@ -132,7 +137,10 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
   supportsTools = true;
 
   async createSession(input: CreateSessionInput): Promise<ProviderSession> {
-    const config = await this.resolveConfig();
+    const config = await this.resolveConfigForContext({
+      modelRole: input.modelRole,
+      metadata: input.metadata,
+    });
     return {
       id: input.sessionId,
       provider: this.id,
@@ -167,8 +175,18 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
     };
   }
 
+  protected async resolveConfigForContext(_context?: {
+    modelRole?: ModelRole;
+    metadata?: Record<string, unknown>;
+  }): Promise<OpenAiLikeConfig> {
+    return this.resolveConfig();
+  }
+
   protected async buildRequestBody(input: ProviderSendInput, options?: { stream?: boolean }) {
-    const config = await this.resolveConfig();
+    const config = await this.resolveConfigForContext({
+      modelRole: input.modelRole,
+      metadata: input.metadata,
+    });
     const overrideModel = toStringOrNull(input.metadata?.model);
     const overrideTemperature = toNumber(input.metadata?.temperature, config.temperature);
     const overrideMaxTokens = Math.max(64, Math.floor(toNumber(input.metadata?.maxTokens, config.maxTokens)));
@@ -404,6 +422,80 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
   }
 }
 
+function parseRoleScopedOnPremRuntime(value: unknown): RoleScopedOnPremRuntime | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const enabled = typeof record.enabled === "boolean" ? record.enabled : true;
+
+  const runtime: RoleScopedOnPremRuntime = { enabled };
+
+  if (typeof record.baseUrl === "string" && record.baseUrl.trim()) {
+    runtime.baseUrl = normalizeBaseUrl(record.baseUrl);
+  }
+  if (typeof record.apiKey === "string") {
+    runtime.apiKey = record.apiKey.trim();
+  }
+  if (typeof record.model === "string" && record.model.trim()) {
+    runtime.model = record.model.trim();
+  }
+  if (typeof record.pluginId === "string" && record.pluginId.trim()) {
+    runtime.pluginId = record.pluginId.trim();
+  }
+  if (typeof record.inferenceBackendId === "string" && record.inferenceBackendId.trim()) {
+    runtime.inferenceBackendId = record.inferenceBackendId.trim();
+  }
+  if (typeof record.timeoutMs === "number" && Number.isFinite(record.timeoutMs)) {
+    runtime.timeoutMs = Math.max(5000, Math.floor(record.timeoutMs));
+  }
+  if (typeof record.temperature === "number" && Number.isFinite(record.temperature)) {
+    runtime.temperature = Math.min(1.5, Math.max(0, record.temperature));
+  }
+  if (typeof record.maxTokens === "number" && Number.isFinite(record.maxTokens)) {
+    runtime.maxTokens = Math.max(64, Math.floor(record.maxTokens));
+  }
+  if (
+    record.reasoningMode === "off" ||
+    record.reasoningMode === "on" ||
+    record.reasoningMode === "auto"
+  ) {
+    runtime.reasoningMode = record.reasoningMode;
+  }
+
+  return runtime;
+}
+
+export function resolveRoleScopedOnPremConfig(
+  baseConfig: OpenAiLikeConfig,
+  rawRoleConfigs: unknown,
+  modelRole?: ModelRole
+): OpenAiLikeConfig {
+  if (!modelRole || !rawRoleConfigs || typeof rawRoleConfigs !== "object") {
+    return baseConfig;
+  }
+
+  const entry = (rawRoleConfigs as Record<string, unknown>)[modelRole];
+  const runtime = parseRoleScopedOnPremRuntime(entry);
+  if (!runtime || runtime.enabled === false) {
+    return baseConfig;
+  }
+
+  return {
+    ...baseConfig,
+    baseUrl: runtime.baseUrl ?? baseConfig.baseUrl,
+    apiKey: runtime.apiKey ?? baseConfig.apiKey,
+    model: runtime.model ?? baseConfig.model,
+    timeoutMs: runtime.timeoutMs ?? baseConfig.timeoutMs,
+    temperature: runtime.temperature ?? baseConfig.temperature,
+    maxTokens: runtime.maxTokens ?? baseConfig.maxTokens,
+    pluginId: runtime.pluginId ?? baseConfig.pluginId,
+    inferenceBackendId: runtime.inferenceBackendId ?? baseConfig.inferenceBackendId,
+    reasoningMode: runtime.reasoningMode ?? baseConfig.reasoningMode,
+  };
+}
+
 export class OpenAiCompatibleAdapter extends BaseOpenAiLikeAdapter {
   id = "openai-compatible" as const;
   label = "OpenAI-Compatible";
@@ -437,8 +529,22 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
     reasoningMode: ((process.env.ONPREM_QWEN_REASONING_MODE || "off") as ReasoningMode),
   };
 
+  protected override async resolveConfigForContext(context?: {
+    modelRole?: ModelRole;
+    metadata?: Record<string, unknown>;
+  }): Promise<OpenAiLikeConfig> {
+    const baseConfig = await super.resolveConfig();
+    const row = await prisma.appSetting.findUnique({
+      where: { key: "onprem_qwen_role_runtime_configs" },
+    });
+    return resolveRoleScopedOnPremConfig(baseConfig, row?.value ?? {}, context?.modelRole);
+  }
+
   protected override async buildRequestBody(input: ProviderSendInput, options?: { stream?: boolean }) {
-    const config = await this.resolveConfig();
+    const config = await this.resolveConfigForContext({
+      modelRole: input.modelRole,
+      metadata: input.metadata,
+    });
     const plugin = resolveOnPremQwenModelPlugin(config.pluginId || undefined);
     const model = toStringOrNull(input.metadata?.model) || config.model || plugin.runtimeModel;
     const temperature = Math.min(1.5, Math.max(0, toNumber(input.metadata?.temperature, config.temperature)));
