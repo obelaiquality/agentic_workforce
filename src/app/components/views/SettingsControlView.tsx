@@ -66,7 +66,7 @@ function recommendedOpenAiRoleBindings(
     buildModel
   );
   const escalateModel = pickFirstAvailable(
-    ["gpt-5.4-pro", "gpt-5.4", "gpt-5.2-pro", "gpt-5-pro", "gpt-5.2", "gpt-5.1", "gpt-5"],
+    ["gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5.4-pro", "gpt-5.2-pro", "gpt-5-pro"],
     availableModels,
     reviewModel
   );
@@ -108,6 +108,29 @@ function recommendedOpenAiRoleBindings(
       maxTokens: 2400,
       reasoningMode: "on",
     },
+  };
+}
+
+function recommendedHybridRoleBindings(
+  availableModels: string[],
+  fallbackOpenAiModel: string,
+  localPluginId: string,
+  localModel: string
+): Record<ModelRoleKey, { role: ModelRoleKey; providerId: "onprem-qwen" | "openai-responses"; pluginId: string | null; model: string; temperature: number; maxTokens: number; reasoningMode: "off" | "on" }> {
+  const openAiBindings = recommendedOpenAiRoleBindings(availableModels, fallbackOpenAiModel);
+  return {
+    utility_fast: {
+      role: "utility_fast",
+      providerId: "onprem-qwen",
+      pluginId: localPluginId,
+      model: localModel,
+      temperature: 0.1,
+      maxTokens: 900,
+      reasoningMode: "off",
+    },
+    coder_default: openAiBindings.coder_default,
+    review_deep: openAiBindings.review_deep,
+    overseer_escalation: openAiBindings.overseer_escalation,
   };
 }
 
@@ -450,6 +473,17 @@ export function SettingsControlView() {
       )
     );
   };
+  const applyRecommendedHybridRoles = () => {
+    setProviderMutation.mutate("onprem-qwen");
+    applyModelRoles(
+      recommendedHybridRoleBindings(
+        openAiModels.map((item) => item.id),
+        openAiResponsesSettings.model || "gpt-5-nano",
+        onPremSettings.pluginId,
+        onPremSettings.model
+      )
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -581,6 +615,12 @@ export function SettingsControlView() {
                     Apply Recommended OpenAI Roles
                   </button>
                   <button
+                    onClick={applyRecommendedHybridRoles}
+                    className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-100"
+                  >
+                    Apply Hybrid Recommended
+                  </button>
+                  <button
                     onClick={() => queryClient.invalidateQueries({ queryKey: ["openai-models"] })}
                     className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
                   >
@@ -598,7 +638,7 @@ export function SettingsControlView() {
                   <div>
                     <div className="text-sm text-white font-medium">Role routing</div>
                     <div className="text-xs text-zinc-500 mt-1">
-                      Configure which provider and model each responsibility role should use. Recommended OpenAI setup uses a Codex-family model for `Build` when available.
+                      Configure which provider and model each responsibility role should use. Recommended OpenAI setup uses a Codex-family model for `Build` when available. Hybrid recommended keeps `Fast` on local Qwen and uses OpenAI for `Build`, `Review`, and `Escalate`.
                     </div>
                   </div>
                   <Chip variant="subtle">hybrid capable</Chip>

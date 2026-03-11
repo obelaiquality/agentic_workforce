@@ -439,7 +439,14 @@ The app now fetches the live model list from your account’s `GET /v1/models` r
 - `Fast` -> `gpt-5-nano`
 - `Build` -> latest available Codex-family model
 - `Review` -> stronger GPT-5 general model
-- `Escalate` -> highest-capability GPT-5 model available on your account
+- `Escalate` -> `gpt-5.4`
+
+There is also a **Hybrid Recommended** preset:
+
+- `Fast` -> current local Qwen runtime
+- `Build` -> latest available Codex-family model
+- `Review` -> `gpt-5.4`
+- `Escalate` -> `gpt-5.4`
 
 ### Qwen CLI (multi-account failover)
 

@@ -11,6 +11,7 @@ import { _electron as electron } from "playwright-core";
 const root = "/Users/neilslab/agentic_workforce";
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.join(root, "output", "playwright", `desktop-acceptance-${timestamp}`);
+const runtimePreset = process.env.E2E_RUNTIME_PRESET || "default";
 async function getFreePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -136,6 +137,70 @@ async function apiPost(resource, body) {
   return response.json();
 }
 
+async function apiPatch(resource, body) {
+  const response = await fetch(`${apiBaseUrl}${resource}`, {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      "x-local-api-token": apiToken,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`PATCH ${resource} failed: ${response.status} ${await response.text()}`);
+  }
+  return response.json();
+}
+
+async function applyRuntimePreset() {
+  if (runtimePreset === "openai_all") {
+    await apiPost("/api/v1/settings/runtime-mode", {
+      mode: "openai_api",
+      openAiModel: "gpt-5-nano",
+    });
+    await apiPatch("/api/v1/settings", {
+      modelRoles: {
+        utility_fast: {
+          role: "utility_fast",
+          providerId: "openai-responses",
+          pluginId: null,
+          model: "gpt-5-nano",
+          temperature: 0,
+          maxTokens: 900,
+          reasoningMode: "off",
+        },
+        coder_default: {
+          role: "coder_default",
+          providerId: "openai-responses",
+          pluginId: null,
+          model: "gpt-5.3-codex",
+          temperature: 0.1,
+          maxTokens: 1800,
+          reasoningMode: "off",
+        },
+        review_deep: {
+          role: "review_deep",
+          providerId: "openai-responses",
+          pluginId: null,
+          model: "gpt-5.4",
+          temperature: 0.05,
+          maxTokens: 2200,
+          reasoningMode: "on",
+        },
+        overseer_escalation: {
+          role: "overseer_escalation",
+          providerId: "openai-responses",
+          pluginId: null,
+          model: "gpt-5.4",
+          temperature: 0.05,
+          maxTokens: 2400,
+          reasoningMode: "on",
+        },
+      },
+    });
+  }
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
@@ -160,8 +225,10 @@ function normalizePathForMatch(value) {
 }
 
 async function main() {
-  const modelHealth = await fetch("http://127.0.0.1:8000/health").then((response) => response.ok).catch(() => false);
-  assert(modelHealth, "Local model runtime is not healthy on 127.0.0.1:8000");
+  if (runtimePreset !== "openai_all") {
+    const modelHealth = await fetch("http://127.0.0.1:8000/health").then((response) => response.ok).catch(() => false);
+    assert(modelHealth, "Local model runtime is not healthy on 127.0.0.1:8000");
+  }
 
   log(`output: ${outputDir}`);
   log(`repo: ${tempRepoDir}`);
@@ -203,6 +270,7 @@ async function main() {
   });
 
   await waitForHttp(`${apiBaseUrl}/health?token=${apiToken}`, 120000);
+  await applyRuntimePreset();
 
   const page = await electronApp.firstWindow();
   await page.setViewportSize({ width: 1640, height: 980 });
