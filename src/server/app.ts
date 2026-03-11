@@ -91,6 +91,12 @@ const setActiveProviderSchema = z.object({
   providerId: z.enum(["qwen-cli", "openai-compatible", "onprem-qwen", "openai-responses"]),
 });
 
+const setRuntimeModeSchema = z.object({
+  mode: z.enum(["local_qwen", "openai_api"]),
+  openAiApiKey: z.string().trim().optional(),
+  openAiModel: z.string().trim().optional(),
+});
+
 const createAccountSchema = z.object({
   label: z.string().min(1),
   profilePath: z.string().min(1),
@@ -137,6 +143,101 @@ const bootstrapQwenAccountSchema = z.object({
   label: z.string().min(1),
   importCurrentAuth: z.boolean().optional(),
 });
+
+function defaultLocalQwenRoleBindings() {
+  return {
+    utility_fast: {
+      role: "utility_fast",
+      providerId: "onprem-qwen",
+      pluginId: "qwen3.5-0.8b",
+      model: "Qwen/Qwen3.5-0.8B",
+      temperature: 0.1,
+      maxTokens: 900,
+      reasoningMode: "off",
+    },
+    coder_default: {
+      role: "coder_default",
+      providerId: "onprem-qwen",
+      pluginId: process.env.ONPREM_QWEN_PLUGIN || "qwen3.5-4b",
+      model: process.env.ONPREM_QWEN_MODEL || "mlx-community/Qwen3.5-4B-4bit",
+      temperature: 0.12,
+      maxTokens: 1800,
+      reasoningMode: "off",
+    },
+    review_deep: {
+      role: "review_deep",
+      providerId: "onprem-qwen",
+      pluginId: process.env.ONPREM_QWEN_PLUGIN || "qwen3.5-4b",
+      model: process.env.ONPREM_QWEN_MODEL || "mlx-community/Qwen3.5-4B-4bit",
+      temperature: 0.08,
+      maxTokens: 2200,
+      reasoningMode: "on",
+    },
+    overseer_escalation: {
+      role: "overseer_escalation",
+      providerId: "openai-responses",
+      pluginId: null,
+      model: process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
+      temperature: 0.1,
+      maxTokens: 2200,
+    },
+  };
+}
+
+function openAiUnifiedRoleBindings(model: string) {
+  return {
+    utility_fast: {
+      role: "utility_fast",
+      providerId: "openai-responses",
+      pluginId: null,
+      model,
+      temperature: 0,
+      maxTokens: 900,
+      reasoningMode: "off",
+    },
+    coder_default: {
+      role: "coder_default",
+      providerId: "openai-responses",
+      pluginId: null,
+      model,
+      temperature: 0.1,
+      maxTokens: 1800,
+      reasoningMode: "off",
+    },
+    review_deep: {
+      role: "review_deep",
+      providerId: "openai-responses",
+      pluginId: null,
+      model,
+      temperature: 0.05,
+      maxTokens: 2200,
+      reasoningMode: "on",
+    },
+    overseer_escalation: {
+      role: "overseer_escalation",
+      providerId: "openai-responses",
+      pluginId: null,
+      model,
+      temperature: 0.05,
+      maxTokens: 2400,
+      reasoningMode: "on",
+    },
+  };
+}
+
+function inferRuntimeMode(activeProvider: string, modelRolesValue: Record<string, unknown>) {
+  const roles = ["utility_fast", "coder_default", "review_deep", "overseer_escalation"] as const;
+  const allOpenAi = roles.every((role) => {
+    const value = modelRolesValue[role];
+    return value && typeof value === "object" && (value as { providerId?: unknown }).providerId === "openai-responses";
+  });
+
+  if (activeProvider === "openai-responses" && allOpenAi) {
+    return "openai_api" as const;
+  }
+
+  return "local_qwen" as const;
+}
 
 const decideApprovalSchema = z.object({
   decision: z.enum(["approved", "rejected"]),
@@ -3142,6 +3243,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   });
 
   app.get("/api/v1/settings", async () => {
+    const activeProvider = await prisma.appSetting.findUnique({ where: { key: "active_provider" } });
     const safety = await prisma.appSetting.findUnique({ where: { key: "safety_policy" } });
     const qwen = await prisma.appSetting.findUnique({ where: { key: "qwen_cli_config" } });
     const onPrem = await prisma.appSetting.findUnique({ where: { key: "onprem_qwen_config" } });
@@ -3155,6 +3257,10 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const openAiCompatValue = (openAiCompat?.value as Record<string, unknown>) || {};
     const openAiResponsesValue = (openAiResponses?.value as Record<string, unknown>) || {};
     const modelRolesValue = (modelRoles?.value as Record<string, unknown>) || {};
+    const activeProviderValue =
+      typeof activeProvider?.value === "string" && activeProvider.value.trim()
+        ? activeProvider.value
+        : "onprem-qwen";
     const parallelRuntimeValue = (parallelRuntime?.value as Record<string, unknown>) || {};
     const distillValue = (distill?.value as Record<string, unknown>) || {};
     const qwenArgs = Array.isArray(qwenValue.args)
@@ -3257,7 +3363,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
           model:
             typeof openAiResponsesValue.model === "string" && openAiResponsesValue.model.trim()
               ? openAiResponsesValue.model
-              : process.env.OPENAI_RESPONSES_MODEL || "gpt-5-mini",
+              : process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
           timeoutMs:
             typeof openAiResponsesValue.timeoutMs === "number"
               ? openAiResponsesValue.timeoutMs
@@ -3279,6 +3385,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
               ? openAiResponsesValue.toolPolicy
               : { enableFileSearch: false, enableRemoteMcp: false },
         },
+        runtimeMode: inferRuntimeMode(activeProviderValue, modelRolesValue),
         modelRoles: modelRolesValue,
         parallelRuntime: {
           maxLocalLanes:
@@ -3577,7 +3684,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
           (typeof previous.apiKey === "string" ? previous.apiKey : process.env.OPENAI_API_KEY ?? ""),
         model:
           input.openAiResponses.model ??
-          (typeof previous.model === "string" ? previous.model : process.env.OPENAI_RESPONSES_MODEL ?? "gpt-5-mini"),
+          (typeof previous.model === "string" ? previous.model : process.env.OPENAI_RESPONSES_MODEL ?? "gpt-5-nano"),
         timeoutMs:
           input.openAiResponses.timeoutMs ??
           (typeof previous.timeoutMs === "number" ? previous.timeoutMs : 120000),
@@ -3784,6 +3891,124 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     });
 
     return { ok: true };
+  });
+
+  app.post("/api/v1/settings/runtime-mode", async (request) => {
+    const payload = setRuntimeModeSchema.parse(request.body);
+    const chosenModel = payload.openAiModel?.trim() || "gpt-5-nano";
+
+    if (payload.mode === "openai_api") {
+      const current = await prisma.appSetting.findUnique({ where: { key: "openai_responses_config" } });
+      const previous = (current?.value as Record<string, unknown>) || {};
+      const nextOpenAiConfig = {
+        baseUrl:
+          typeof previous.baseUrl === "string" && previous.baseUrl.trim()
+            ? previous.baseUrl
+            : process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1",
+        apiKey:
+          payload.openAiApiKey?.trim() ||
+          (typeof previous.apiKey === "string" ? previous.apiKey : process.env.OPENAI_API_KEY ?? ""),
+        model: chosenModel,
+        timeoutMs:
+          typeof previous.timeoutMs === "number"
+            ? previous.timeoutMs
+            : Number(process.env.OPENAI_RESPONSES_TIMEOUT_MS || 120000),
+        reasoningEffort:
+          typeof previous.reasoningEffort === "string" && previous.reasoningEffort.trim()
+            ? previous.reasoningEffort
+            : (process.env.OPENAI_RESPONSES_REASONING_EFFORT || "medium"),
+        dailyBudgetUsd:
+          typeof previous.dailyBudgetUsd === "number" ? previous.dailyBudgetUsd : Number(process.env.OPENAI_RESPONSES_DAILY_BUDGET_USD || 25),
+        perRunBudgetUsd:
+          typeof previous.perRunBudgetUsd === "number" ? previous.perRunBudgetUsd : Number(process.env.OPENAI_RESPONSES_PER_RUN_BUDGET_USD || 5),
+        toolPolicy:
+          typeof previous.toolPolicy === "object" && previous.toolPolicy
+            ? previous.toolPolicy
+            : { enableFileSearch: false, enableRemoteMcp: false },
+      };
+
+      await prisma.appSetting.upsert({
+        where: { key: "openai_responses_config" },
+        update: { value: nextOpenAiConfig },
+        create: { key: "openai_responses_config", value: nextOpenAiConfig },
+      });
+
+      await prisma.appSetting.upsert({
+        where: { key: "model_role_bindings" },
+        update: { value: openAiUnifiedRoleBindings(chosenModel) },
+        create: { key: "model_role_bindings", value: openAiUnifiedRoleBindings(chosenModel) },
+      });
+
+      await prisma.appSetting.upsert({
+        where: { key: "active_provider" },
+        update: { value: "openai-responses" },
+        create: { key: "active_provider", value: "openai-responses" },
+      });
+
+      return { ok: true, mode: "openai_api" };
+    }
+
+    await prisma.appSetting.upsert({
+      where: { key: "model_role_bindings" },
+      update: { value: defaultLocalQwenRoleBindings() },
+      create: { key: "model_role_bindings", value: defaultLocalQwenRoleBindings() },
+    });
+
+    await prisma.appSetting.upsert({
+      where: { key: "active_provider" },
+      update: { value: "onprem-qwen" },
+      create: { key: "active_provider", value: "onprem-qwen" },
+    });
+
+    return { ok: true, mode: "local_qwen" };
+  });
+
+  app.get("/api/v1/openai/models", async () => {
+    const configRow = await prisma.appSetting.findUnique({ where: { key: "openai_responses_config" } });
+    const config = (configRow?.value as Record<string, unknown> | null) || {};
+    const baseUrl =
+      typeof config.baseUrl === "string" && config.baseUrl.trim()
+        ? config.baseUrl.replace(/\/+$/, "")
+        : (process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
+    const apiKey =
+      (typeof config.apiKey === "string" && config.apiKey.trim() ? config.apiKey : process.env.OPENAI_API_KEY || "").trim();
+
+    if (!apiKey) {
+      return {
+        items: [] as Array<{ id: string; created: number | null; ownedBy: string | null }>,
+        error: "OpenAI API key is not configured",
+      };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${baseUrl}/models`, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+        },
+        signal: controller.signal,
+      });
+      const raw = await response.text();
+      if (!response.ok) {
+        return { items: [] as Array<{ id: string; created: number | null; ownedBy: string | null }>, error: raw };
+      }
+      const payload = JSON.parse(raw) as { data?: Array<Record<string, unknown>> };
+      const items = Array.isArray(payload.data)
+        ? payload.data
+            .map((item) => ({
+              id: typeof item.id === "string" ? item.id : "",
+              created: typeof item.created === "number" ? item.created : null,
+              ownedBy: typeof item.owned_by === "string" ? item.owned_by : null,
+            }))
+            .filter((item) => item.id)
+            .sort((a, b) => a.id.localeCompare(b.id))
+        : [];
+      return { items };
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   app.setErrorHandler((error, _request, reply) => {

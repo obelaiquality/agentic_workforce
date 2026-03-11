@@ -18,6 +18,21 @@ interface OpenAiResponsesConfig {
   reasoningEffort: "low" | "medium" | "high";
 }
 
+function reasoningEffortForRole(modelRole: ProviderSendInput["modelRole"]): OpenAiResponsesConfig["reasoningEffort"] {
+  switch (modelRole) {
+    case "utility_fast":
+      return "low";
+    case "coder_default":
+      return "low";
+    case "review_deep":
+      return "medium";
+    case "overseer_escalation":
+      return "high";
+    default:
+      return "medium";
+  }
+}
+
 function toStringOrNull(value: unknown) {
   if (typeof value !== "string") {
     return null;
@@ -158,7 +173,7 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
     return {
       baseUrl: normalizeBaseUrl(toStringOrNull(value.baseUrl) || process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1"),
       apiKey: toStringOrNull(value.apiKey) || toStringOrNull(process.env.OPENAI_API_KEY),
-      model: toStringOrNull(value.model) || process.env.OPENAI_RESPONSES_MODEL || "gpt-5-mini",
+      model: toStringOrNull(value.model) || process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
       timeoutMs: Math.max(5000, toNumber(value.timeoutMs, Number(process.env.OPENAI_RESPONSES_TIMEOUT_MS || 120000))),
       reasoningEffort: ((toStringOrNull(value.reasoningEffort) || process.env.OPENAI_RESPONSES_REASONING_EFFORT || "medium") as OpenAiResponsesConfig["reasoningEffort"]),
     };
@@ -188,6 +203,10 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
     const conversation = input.messages.filter((message) => message.role !== "system");
     const previousResponseId = toStringOrNull(metadata.previousResponseId);
     const model = toStringOrNull(metadata.model) || config.model;
+    const reasoningEffort =
+      (toStringOrNull(metadata.reasoningEffort) as OpenAiResponsesConfig["reasoningEffort"] | null) ||
+      reasoningEffortForRole(input.modelRole) ||
+      config.reasoningEffort;
 
     return {
       config,
@@ -197,7 +216,7 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
         instructions: systemMessages.length ? systemMessages.join("\n\n") : undefined,
         previous_response_id: previousResponseId || undefined,
         reasoning: {
-          effort: config.reasoningEffort,
+          effort: reasoningEffort,
         },
         stream,
       },

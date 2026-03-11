@@ -667,6 +667,7 @@ export async function getSettings() {
           enableRemoteMcp: boolean;
         };
       };
+      runtimeMode: "local_qwen" | "openai_api";
       modelRoles: Record<string, unknown>;
       parallelRuntime: {
         maxLocalLanes: number;
@@ -775,6 +776,28 @@ export async function updateSettings(input: {
     method: "PATCH",
     body: JSON.stringify(input),
   });
+}
+
+export async function setRuntimeMode(input: {
+  mode: "local_qwen" | "openai_api";
+  openAiApiKey?: string;
+  openAiModel?: string;
+}) {
+  return apiRequest<{ ok: true; mode: "local_qwen" | "openai_api" }>("/api/v1/settings/runtime-mode", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listOpenAiModels() {
+  return apiRequest<{
+    items: Array<{
+      id: string;
+      created: number | null;
+      ownedBy: string | null;
+    }>;
+    error?: string;
+  }>("/api/v1/openai/models");
 }
 
 export async function planRouteV3(input: {

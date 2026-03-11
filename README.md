@@ -415,16 +415,21 @@ The drawer and outcome panels also expose threaded authored notes and activity h
 
 ## Optional Providers
 
-### OpenAI Responses (escalation)
+### OpenAI API (optional unified runtime or escalation)
 
 Add to `.env`:
 
 ```bash
 OPENAI_API_KEY=your_key_here
-OPENAI_RESPONSES_MODEL=gpt-5-mini
+OPENAI_RESPONSES_MODEL=gpt-5-nano
 ```
 
-This enables the **Escalate** mode for complex failures. It is not part of the baseline happy path.
+Then in **Settings** you can:
+
+1. keep OpenAI as **Escalate-only**
+2. or switch **Runtime mode** to **OpenAI API** and run all roles from one OpenAI model
+
+The app now fetches the live model list from your account’s `GET /v1/models` response, so the model picker is not hardcoded. `gpt-5-nano` is the default quick preset.
 
 ### Qwen CLI (multi-account failover)
 

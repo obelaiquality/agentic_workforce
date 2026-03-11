@@ -9,6 +9,7 @@ import {
   getOpenAiBudgetV3,
   getSettings,
   listInferenceBackendsV2,
+  listOpenAiModels,
   listModelPluginsV2,
   listProviders,
   listQwenAccountAuthSessions,
@@ -22,6 +23,7 @@ import {
   switchInferenceBackendV2,
   updateQwenAccount,
   updateSettings,
+  setRuntimeMode,
 } from "../../lib/apiClient";
 import { useUiStore } from "../../store/uiStore";
 import { Chip, Panel, PanelHeader } from "../UI";
@@ -74,6 +76,11 @@ export function SettingsControlView() {
     refetchInterval: 2000,
   });
   const settingsQuery = useQuery({ queryKey: ["app-settings"], queryFn: getSettings });
+  const openAiModelsQuery = useQuery({
+    queryKey: ["openai-models"],
+    queryFn: listOpenAiModels,
+    refetchInterval: 300000,
+  });
   const onPremPluginsQuery = useQuery({ queryKey: ["onprem-qwen-plugins"], queryFn: listModelPluginsV2 });
   const onPremBackendsQuery = useQuery({ queryKey: ["onprem-qwen-backends"], queryFn: listInferenceBackendsV2 });
   const latestBenchmarksQuery = useQuery({
@@ -137,6 +144,16 @@ export function SettingsControlView() {
   const updateSettingsMutation = useMutation({
     mutationFn: updateSettings,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["app-settings"] }),
+  });
+
+  const runtimeModeMutation = useMutation({
+    mutationFn: setRuntimeMode,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["app-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["providers"] });
+      queryClient.invalidateQueries({ queryKey: ["openai-models"] });
+      queryClient.invalidateQueries({ queryKey: ["openai-responses-budget-v3"] });
+    },
   });
 
   const autotuneMutation = useMutation({
@@ -211,13 +228,30 @@ export function SettingsControlView() {
   const openAiResponsesSettings = settingsQuery.data?.items.openAiResponses ?? {
     baseUrl: "https://api.openai.com/v1",
     apiKey: "",
-    model: "gpt-5-mini",
+    model: "gpt-5-nano",
     timeoutMs: 120000,
     reasoningEffort: "medium",
     dailyBudgetUsd: 25,
     perRunBudgetUsd: 5,
     toolPolicy: { enableFileSearch: false, enableRemoteMcp: false },
   };
+  const runtimeMode = settingsQuery.data?.items.runtimeMode ?? "local_qwen";
+  const openAiModels = useMemo(() => {
+    const liveItems = openAiModelsQuery.data?.items ?? [];
+    const current = openAiResponsesSettings.model?.trim();
+    const merged = current && !liveItems.some((item) => item.id === current)
+      ? [{ id: current, created: null, ownedBy: null }, ...liveItems]
+      : liveItems;
+
+    return merged
+      .slice()
+      .sort((left, right) => {
+        const leftCreated = left.created ?? 0;
+        const rightCreated = right.created ?? 0;
+        if (leftCreated !== rightCreated) return rightCreated - leftCreated;
+        return left.id.localeCompare(right.id);
+      });
+  }, [openAiModelsQuery.data?.items, openAiResponsesSettings.model]);
   const parallelRuntime = settingsQuery.data?.items.parallelRuntime ?? {
     maxLocalLanes: 4,
     maxExpandedLanes: 6,
@@ -319,6 +353,87 @@ export function SettingsControlView() {
               </div>
 
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-white font-medium">Runtime mode</div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      Run the whole app on local Qwen or switch every role to OpenAI with one setting.
+                    </div>
+                  </div>
+                  <Chip variant={runtimeMode === "openai_api" ? "ok" : "subtle"}>
+                    {runtimeMode === "openai_api" ? "OpenAI API active" : "Local Qwen active"}
+                  </Chip>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-3">
+                  <LabeledInput
+                    label="OpenAI API key"
+                    type="password"
+                    value={openAiResponsesSettings.apiKey}
+                    onChange={(value) =>
+                      updateSettingsMutation.mutate({
+                        openAiResponses: {
+                          ...openAiResponsesSettings,
+                          apiKey: value,
+                        },
+                      })
+                    }
+                  />
+                  <label className="space-y-1 block">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">OpenAI model</div>
+                    <select
+                      value={openAiResponsesSettings.model}
+                      onChange={(event) =>
+                        updateSettingsMutation.mutate({
+                          openAiResponses: {
+                            ...openAiResponsesSettings,
+                            model: event.target.value,
+                          },
+                        })
+                      }
+                      className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                    >
+                      {openAiModels.length === 0 ? <option value={openAiResponsesSettings.model}>{openAiResponsesSettings.model}</option> : null}
+                      {openAiModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() =>
+                      runtimeModeMutation.mutate({
+                        mode: "openai_api",
+                        openAiApiKey: openAiResponsesSettings.apiKey,
+                        openAiModel: openAiResponsesSettings.model,
+                      })
+                    }
+                    className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    Use OpenAI For All Roles
+                  </button>
+                  <button
+                    onClick={() => runtimeModeMutation.mutate({ mode: "local_qwen" })}
+                    className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
+                  >
+                    Restore Local Qwen
+                  </button>
+                  <button
+                    onClick={() => queryClient.invalidateQueries({ queryKey: ["openai-models"] })}
+                    className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
+                  >
+                    Refresh OpenAI Models
+                  </button>
+                </div>
+                <div className="text-xs text-zinc-500">
+                  Models are fetched live from your account’s OpenAI `/v1/models` list. Default quick preset is <code>gpt-5-nano</code>.
+                  {openAiModelsQuery.data?.error ? ` ${openAiModelsQuery.data.error}` : ""}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
                 <div className="text-sm text-white font-medium">Default local model</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <LabeledInput label="Base URL" value={onPremSettings.baseUrl} onChange={(value) => updateSettingsMutation.mutate({ onPremQwen: { ...onPremSettings, baseUrl: value } })} />
@@ -381,10 +496,34 @@ export function SettingsControlView() {
             </Panel>
 
             <Panel>
-              <PanelHeader title="OpenAI escalation" />
+              <PanelHeader title="OpenAI API" />
               <div className="p-4 space-y-3">
-                <div className="text-xs text-zinc-500">Used only for high-risk or ambiguous tasks. Daily remaining budget: ${(openAiBudgetQuery.data?.item.remainingUsd ?? openAiResponsesSettings.dailyBudgetUsd).toFixed(2)}</div>
-                <LabeledInput label="Model" value={openAiResponsesSettings.model} onChange={(value) => updateSettingsMutation.mutate({ openAiResponses: { ...openAiResponsesSettings, model: value } })} />
+                <div className="text-xs text-zinc-500">
+                  Used for escalation by default, or as the full runtime when you switch `Runtime mode` above. Daily remaining budget: $
+                  {(openAiBudgetQuery.data?.item.remainingUsd ?? openAiResponsesSettings.dailyBudgetUsd).toFixed(2)}
+                </div>
+                <label className="space-y-1 block">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Model</div>
+                  <select
+                    value={openAiResponsesSettings.model}
+                    onChange={(event) =>
+                      updateSettingsMutation.mutate({
+                        openAiResponses: {
+                          ...openAiResponsesSettings,
+                          model: event.target.value,
+                        },
+                      })
+                    }
+                    className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                  >
+                    {openAiModels.length === 0 ? <option value={openAiResponsesSettings.model}>{openAiResponsesSettings.model}</option> : null}
+                    {openAiModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <LabeledInput label="API key" type="password" value={openAiResponsesSettings.apiKey} onChange={(value) => updateSettingsMutation.mutate({ openAiResponses: { ...openAiResponsesSettings, apiKey: value } })} />
                 <div className="grid grid-cols-2 gap-3">
                   <LabeledInput label="Daily budget" value={String(openAiResponsesSettings.dailyBudgetUsd)} onChange={(value) => updateSettingsMutation.mutate({ openAiResponses: { ...openAiResponsesSettings, dailyBudgetUsd: Number(value) || 0 } })} />

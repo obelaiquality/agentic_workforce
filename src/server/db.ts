@@ -186,7 +186,7 @@ export async function initDatabase() {
       value: {
         baseUrl: process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1",
         apiKey: process.env.OPENAI_API_KEY || "",
-        model: process.env.OPENAI_RESPONSES_MODEL || "gpt-5-mini",
+        model: process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
         timeoutMs: Number(process.env.OPENAI_RESPONSES_TIMEOUT_MS || 120000),
         reasoningEffort: process.env.OPENAI_RESPONSES_REASONING_EFFORT || "medium",
         dailyBudgetUsd: Number(process.env.OPENAI_RESPONSES_DAILY_BUDGET_USD || 25),
@@ -236,7 +236,7 @@ export async function initDatabase() {
           role: "overseer_escalation",
           providerId: "openai-responses",
           pluginId: null,
-          model: process.env.OPENAI_RESPONSES_MODEL || "gpt-5-mini",
+          model: process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
           temperature: 0.1,
           maxTokens: 2200,
         },
