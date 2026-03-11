@@ -8,8 +8,6 @@ import {
   ArrowRight,
   Bot,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   CircleDot,
   FileCode2,
   FileSearch,
@@ -268,8 +266,8 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
   }, [groupedWorkflows]);
 
   return (
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_388px]">
-      <div className="min-w-0 space-y-5">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_352px]">
+      <div className="min-w-0 space-y-4">
         <OverseerCommandCard
           mission={mission}
           attentionCount={attentionCount}
@@ -320,10 +318,10 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                 </div>
               </PanelHeader>
 
-              <div className="p-4">
+              <div className="p-3.5">
                 {workflowViewMode === "board" ? (
                   <DndProvider backend={HTML5Backend}>
-                    <div className="grid gap-3 xl:grid-cols-4">
+                    <div className="grid gap-2.5 xl:grid-cols-4">
                       {laneActivity.map((lane) => (
                         <WorkflowLane
                           key={lane.key}
@@ -441,8 +439,8 @@ function OverseerCommandCard({
   return (
     <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
-      <div className="grid grid-cols-1 gap-4 p-5 lg:grid-cols-[minmax(0,1.35fr)_348px] lg:p-5">
-        <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 px-5 py-4 lg:grid-cols-[minmax(0,1.45fr)_328px]">
+        <div className="space-y-3.5">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
@@ -458,7 +456,7 @@ function OverseerCommandCard({
                   : "Choose a local Git repo or connect GitHub. The app works in a linked copy and keeps your original repository untouched."}
               </p>
             </div>
-            <div className="flex max-w-[360px] flex-wrap items-center justify-end gap-2">
+          <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-2">
               {mission.selectedRepo ? (
                 <>
                   <Chip variant="subtle" className="max-w-[220px] truncate text-[10px]" title={mission.selectedRepo.displayName}>
@@ -565,7 +563,7 @@ function OverseerCommandCard({
         </div>
 
         <div className="flex flex-col gap-3">
-          <div className="rounded-[22px] border border-white/10 bg-[#111113] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+          <div className="rounded-[22px] border border-white/10 bg-[#111113] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
             <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.22em] text-zinc-500">
               <span>Execution Route</span>
               <button
@@ -599,7 +597,7 @@ function OverseerCommandCard({
             </div>
           </div>
 
-          <div className="space-y-3 rounded-[22px] border border-white/10 bg-[#111113] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+          <div className="space-y-3 rounded-[22px] border border-white/10 bg-[#111113] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
             <div className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">Mode</div>
             <select
               value={mission.selectedModelRole}
@@ -660,7 +658,7 @@ function WorkflowSummaryRow({
   onSelect: (lane: WorkflowLaneKey) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
       {lanes.map((lane) => {
         const meta = laneMetaFor(lane.key);
         const active = selectedLane === lane.key;
@@ -669,7 +667,7 @@ function WorkflowSummaryRow({
             key={lane.key}
             onClick={() => onSelect(lane.key)}
             className={cn(
-              "rounded-[22px] border px-5 py-4 text-left transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+              "rounded-[22px] border px-4 py-3.5 text-left transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
               meta.columnClass,
               active ? "ring-1 ring-white/12 shadow-[0_0_18px_rgba(255,255,255,0.04)]" : "hover:border-white/16 hover:bg-white/[0.015]"
             )}
@@ -685,9 +683,9 @@ function WorkflowSummaryRow({
                 {lane.summary.count}
               </div>
             </div>
-            <div className="mt-3 max-w-[18rem] text-sm leading-6 text-zinc-400">{lane.description}</div>
+            <div className="mt-2.5 max-w-[16rem] text-[13px] leading-5 text-zinc-400">{lane.description}</div>
             {lane.summary.blockedCount ? (
-              <div className="mt-3 text-[11px] text-amber-300">
+              <div className="mt-2.5 text-[11px] text-amber-300">
                 {lane.summary.blockedCount} blocked in this lane
               </div>
             ) : null}
@@ -752,20 +750,20 @@ function WorkflowLane({
         isOver && canDrop ? "ring-1 ring-cyan-300/30 border-cyan-300/30 shadow-[0_0_20px_rgba(34,211,238,0.07)]" : ""
       )}
     >
-      <div className="flex items-start justify-between gap-2 border-b border-white/6 bg-white/[0.02] px-5 py-4">
+      <div className="flex items-start justify-between gap-2 border-b border-white/6 bg-white/[0.02] px-4 py-3.5">
         <div>
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-zinc-400">
             <span className={cn("h-2.5 w-2.5 rounded-full", meta.dotClass, lane.key === "in_progress" ? "animate-pulse" : "")} />
             {lane.label}
           </div>
-          <div className="mt-2 max-w-[18rem] text-sm leading-6 text-zinc-400">{lane.description}</div>
+          <div className="mt-2 max-w-[15rem] text-[13px] leading-5 text-zinc-400">{lane.description}</div>
         </div>
         <Chip variant="subtle" className={cn("h-8 min-w-8 justify-center px-2.5 text-[10px]", meta.chipClass)}>
           {lane.items.length}
         </Chip>
       </div>
 
-      <div className="min-h-[360px] space-y-4 p-5">
+      <div className="min-h-[332px] space-y-3 p-4">
         {lane.items.length === 0 ? (
           <div className="rounded-[22px] border border-dashed border-white/8 bg-black/10 px-4 py-12 text-center text-sm text-zinc-600">
             Nothing active in this lane.
@@ -850,7 +848,6 @@ function WorkflowCard({
   );
 
   const events = timeline.filter((event) => event.task_id === item.workflowId).slice(-3);
-  const confidencePercent = typeof item.confidence === "number" ? Math.round(item.confidence * 100) : null;
   const allowedTransitions = allowedMoves(item.status);
   const hasImpactSummary = item.impactedFiles.length > 0 || item.impactedTests.length > 0 || item.impactedDocs.length > 0;
   const summaryToggleProps = {
@@ -882,21 +879,21 @@ function WorkflowCard({
         isCardOver && canDropOnCard ? "ring-1 ring-cyan-300/35 border-cyan-300/30 shadow-[0_0_20px_rgba(34,211,238,0.08)]" : ""
       )}
     >
-      <div className="px-4 py-4">
+      <div className="px-4 py-3.5">
         <div className="min-w-0 flex-1">
           <div
             {...summaryToggleProps}
             className="min-w-0 cursor-pointer rounded-[18px] outline-none transition focus-visible:ring-1 focus-visible:ring-cyan-300/30"
             aria-label={expanded ? "Collapse workflow" : "Expand workflow"}
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start justify-between gap-2.5">
               <div className="min-w-0 flex-1">
-                <div className="flex items-start gap-2">
-                  <span className={cn("mt-2 h-2 w-2 shrink-0 rounded-full", meta.dotClass, lane === "in_progress" ? "animate-pulse" : "")} />
+                <div className="flex items-start gap-2.5">
+                  <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", meta.dotClass, lane === "in_progress" ? "animate-pulse" : "")} />
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="line-clamp-2 pr-2 text-[15px] font-semibold leading-6 text-white">{item.title}</h3>
-                      <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                    <h3 className="line-clamp-2 text-[14px] font-semibold leading-5 text-white">{item.title}</h3>
+                    {item.isBlocked || item.verificationState ? (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {item.isBlocked ? (
                           <Chip variant="warn" className="text-[9px]">
                             Blocked
@@ -907,42 +904,39 @@ function WorkflowCard({
                             {item.verificationState}
                           </Chip>
                         ) : null}
-                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/8 bg-white/[0.03] text-zinc-500">
-                          {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                        </span>
                       </div>
-                    </div>
-                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-zinc-400">{item.subtitle}</p>
+                    ) : null}
+                    <p className="mt-1.5 line-clamp-3 text-[13px] leading-6 text-zinc-400">{item.subtitle}</p>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Chip variant="subtle" className="text-[9px] uppercase">
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <Chip variant="subtle" className="px-2 py-1 text-[9px] uppercase">
                 {item.priority}
               </Chip>
-              <Chip variant="subtle" className="text-[9px]">
+              <Chip variant="subtle" className="px-2 py-1 text-[9px]">
                 {item.risk}
               </Chip>
               {item.ownerLabel ? (
-                <Chip variant="subtle" className="text-[9px]">
+                <Chip variant="subtle" className="px-2 py-1 text-[9px]">
                   {item.ownerLabel}
                 </Chip>
               ) : null}
               {lane === "needs_review" ? (
-                <Chip variant="subtle" className="border-violet-500/20 bg-violet-500/10 text-[9px] text-violet-200">
+                <Chip variant="subtle" className="px-2 py-1 border-violet-500/20 bg-violet-500/10 text-[9px] text-violet-200">
                   Review Ready
                 </Chip>
               ) : null}
               {lane === "completed" ? (
-                <Chip variant="subtle" className="border-emerald-500/20 bg-emerald-500/10 text-[9px] text-emerald-200">
+                <Chip variant="subtle" className="px-2 py-1 border-emerald-500/20 bg-emerald-500/10 text-[9px] text-emerald-200">
                   Verified
                 </Chip>
               ) : null}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-zinc-500">
+            <div className="mt-2.5 flex flex-wrap items-center gap-3 text-[10px] text-zinc-500">
               {hasImpactSummary ? (
                 <>
                   <span className="inline-flex items-center gap-1.5">
@@ -967,29 +961,26 @@ function WorkflowCard({
             </div>
 
             {lane === "in_progress" ? (
-              <div className="mt-4 space-y-2.5">
-                {confidencePercent !== null ? (
-                  <MicroBar label="Confidence" value={`${confidencePercent}%`} progress={confidencePercent} tone="from-cyan-500 to-cyan-300" />
-                ) : null}
+              <div className="mt-3">
                 <MicroBar label="Progress" value={`${progressForCard(item)}%`} progress={progressForCard(item)} tone="from-fuchsia-500 to-fuchsia-300" />
               </div>
             ) : null}
 
             {lane === "completed" ? (
-              <div className="mt-4 inline-flex items-center gap-2 text-xs text-emerald-300">
+              <div className="mt-3 inline-flex items-center gap-2 text-xs text-emerald-300">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Verified output ready
               </div>
             ) : null}
 
             {lane === "needs_review" ? (
-              <div className="mt-4 inline-flex items-center gap-2 text-xs text-violet-300">
+              <div className="mt-3 inline-flex items-center gap-2 text-xs text-violet-300">
                 <CircleDot className="h-3.5 w-3.5" />
                 Awaiting review follow-up
               </div>
             ) : null}
 
-            <div className="mt-4 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+            <div className="mt-3 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
               <div
                 className={cn(
                   "h-full rounded-full",

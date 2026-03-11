@@ -172,7 +172,7 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
 
 ### Fastest confidence path
 
-1. Launch the desktop app with `npm run dev:desktop`
+1. Launch the desktop app with `npm run start:desktop`
 2. Click **New Project** or **Connect Local Repo**
 3. Pick an **empty folder** (for new projects) or an existing repo
 4. For new projects, click **Initialize New Project** when prompted
@@ -189,7 +189,7 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
 
 ### What the app looks like
 
-**Live State** — the command center with Overseer command card, workflow summary row, and four-lane kanban board:
+**Live State** — the command center with the Overseer command card, workflow summary row, and four-lane kanban board:
 
 ![Live State - Execution](docs/screenshots/01-shell.png)
 
@@ -197,7 +197,7 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
 
 ![Projects View](docs/screenshots/01b-projects.png)
 
-**Scaffold Complete** — after scaffolding, see the run narrative timeline and execution outcome:
+**Scaffold Complete** — after scaffolding, see the command-center outcome state with verification and execution evidence:
 
 ![Scaffold Complete](docs/screenshots/02-scaffold-complete.png)
 
@@ -208,6 +208,10 @@ This starts the Vite dev server, the Fastify API server (port 8787), the Rust si
 **Agent Console** — real event stream with execution, verification, provider, approval, and indexing events:
 
 ![Agent Console](docs/screenshots/04-console.png)
+
+**Follow-up Change** — after a real feature task, the new component and test changes are visible immediately in the managed-worktree Codebase view:
+
+![Follow-up Codebase](docs/screenshots/05-followup-codebase.png)
 
 ---
 
