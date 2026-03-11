@@ -108,6 +108,7 @@ model Ticket {
   title              String
   description        String       @default("")
   status             TicketStatus @default(backlog)
+  laneOrder          Int          @default(0) @map("lane_order")
   priority           TicketPriority @default(p2)
   acceptanceCriteria String[]     @default([])
   dependencies       String[]     @default([])
@@ -115,8 +116,9 @@ model Ticket {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   events             TicketEvent[]
+  comments           TicketComment[]
 
-  @@index([repoId, status, priority, updatedAt])
+  @@index([repoId, status, laneOrder, updatedAt])
 }
 
 model TicketEvent {
@@ -128,6 +130,21 @@ model TicketEvent {
   ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId, createdAt])
+}
+
+model TicketComment {
+  id              String        @id @default(cuid())
+  ticketId        String        @map("ticket_id")
+  parentCommentId String?       @map("parent_comment_id")
+  author          String
+  body            String
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  ticket          Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  parent          TicketComment? @relation("TicketCommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies         TicketComment[] @relation("TicketCommentReplies")
+
+  @@index([ticketId, parentCommentId, createdAt])
 }
 
 model ChatSession {

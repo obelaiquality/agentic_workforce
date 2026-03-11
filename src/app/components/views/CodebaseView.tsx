@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, FileCode2, FolderTree } from "lucide-react";
+import { ChevronRight, FileCode2, FolderTree, Sparkles } from "lucide-react";
 import type { CodebaseTreeNode } from "../../../shared/contracts";
 import { getMissionCodeFileV8, getMissionCodebaseTreeV8 } from "../../lib/apiClient";
 
@@ -54,9 +54,18 @@ function firstFilePath(nodes: CodebaseTreeNode[]): string | null {
   return null;
 }
 
-export function CodebaseView({ repoId }: { repoId: string | null }) {
+export function CodebaseView({
+  repoId,
+  preferredPaths = [],
+  workflowTitle,
+}: {
+  repoId: string | null;
+  preferredPaths?: string[];
+  workflowTitle?: string | null;
+}) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "modified" | "added" | "unchanged" | "deleted">("all");
+  const [scope, setScope] = useState<"workflow" | "all">("all");
 
   const treeQuery = useQuery({
     queryKey: ["mission-codebase-tree-v8", repoId],
@@ -68,27 +77,49 @@ export function CodebaseView({ repoId }: { repoId: string | null }) {
   const tree = treeQuery.data?.items ?? [];
   const flattened = useMemo(() => flattenFiles(tree), [tree]);
   const fileNodes = useMemo(() => flattened.filter((node) => node.kind === "file"), [flattened]);
+  const normalizedPreferredPaths = useMemo(() => Array.from(new Set(preferredPaths.filter(Boolean))), [preferredPaths]);
+  const preferredPathSet = useMemo(() => new Set(normalizedPreferredPaths), [normalizedPreferredPaths]);
+
+  useEffect(() => {
+    if (normalizedPreferredPaths.length > 0) {
+      setScope("workflow");
+    } else {
+      setScope("all");
+    }
+  }, [normalizedPreferredPaths]);
 
   useEffect(() => {
     if (!selectedPath && tree.length > 0) {
-      setSelectedPath(firstFilePath(tree));
+      setSelectedPath(normalizedPreferredPaths[0] || firstFilePath(tree));
     }
-  }, [selectedPath, tree]);
+  }, [normalizedPreferredPaths, selectedPath, tree]);
 
   useEffect(() => {
     if (selectedPath && !fileNodes.some((node) => node.path === selectedPath)) {
-      setSelectedPath(firstFilePath(tree));
+      setSelectedPath(normalizedPreferredPaths[0] || firstFilePath(tree));
     }
-  }, [fileNodes, selectedPath, tree]);
+  }, [fileNodes, normalizedPreferredPaths, selectedPath, tree]);
 
   const filtered = useMemo(
     () =>
       fileNodes.filter((node) => {
+        if (scope === "workflow" && preferredPathSet.size > 0 && !preferredPathSet.has(node.path)) {
+          return false;
+        }
         if (filter === "all") return true;
         return (node.status || "unchanged") === filter;
       }),
-    [fileNodes, filter]
+    [fileNodes, filter, preferredPathSet, scope]
   );
+
+  useEffect(() => {
+    if (scope !== "workflow" || normalizedPreferredPaths.length === 0) {
+      return;
+    }
+    if (!selectedPath || !preferredPathSet.has(selectedPath)) {
+      setSelectedPath(normalizedPreferredPaths[0] || null);
+    }
+  }, [normalizedPreferredPaths, preferredPathSet, scope, selectedPath]);
 
   const fileQuery = useQuery({
     queryKey: ["mission-codebase-file-v8", repoId, selectedPath],
@@ -110,35 +141,77 @@ export function CodebaseView({ repoId }: { repoId: string | null }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-          <span className="text-amber-400 font-mono">{modCount} modified</span>
-          <span className="text-zinc-700">·</span>
-          <span className="text-emerald-400 font-mono">{addCount} added</span>
-          <span className="text-zinc-700">·</span>
-          <span className="text-zinc-500 font-mono">{fileNodes.length} total</span>
-        </div>
-        <div className="flex gap-1 ml-auto">
-          {(["all", "modified", "added", "unchanged", "deleted"] as const).map((status) => (
-            <button
-              key={status}
-              onClick={() => setFilter(status)}
-              className={`text-[10px] px-2 py-1 rounded border capitalize transition-colors ${
-                filter === status
-                  ? "bg-zinc-800 text-zinc-200 border-zinc-600"
-                  : "text-zinc-500 border-transparent hover:text-zinc-300"
-              }`}
-            >
-              {status}
-            </button>
-          ))}
+    <div className="flex flex-col gap-5">
+      <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+              <span className="text-amber-400 font-mono">{modCount} modified</span>
+              <span className="text-zinc-700">·</span>
+              <span className="text-emerald-400 font-mono">{addCount} added</span>
+              <span className="text-zinc-700">·</span>
+              <span className="text-zinc-500 font-mono">{fileNodes.length} total</span>
+            </div>
+
+            {normalizedPreferredPaths.length > 0 ? (
+              <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                <button
+                  onClick={() => setScope("workflow")}
+                  className={`rounded-lg px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                    scope === "workflow"
+                      ? "border border-cyan-400/20 bg-cyan-500/[0.12] text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  Impacted
+                </button>
+                <button
+                  onClick={() => setScope("all")}
+                  className={`rounded-lg px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                    scope === "all"
+                      ? "border border-white/12 bg-white/[0.07] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  All Files
+                </button>
+              </div>
+            ) : null}
+
+            <div className="ml-auto inline-flex flex-wrap items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+              {(["all", "modified", "added", "unchanged", "deleted"] as const).map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setFilter(status)}
+                  className={`rounded-lg px-2.5 py-1.5 text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                    filter === status
+                      ? "border border-white/12 bg-white/[0.08] text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {scope === "workflow" && normalizedPreferredPaths.length > 0 ? (
+            <div className="rounded-[18px] border border-cyan-500/16 bg-cyan-500/[0.06] px-4 py-3 text-xs text-cyan-100">
+              <div className="flex items-center gap-2 font-medium">
+                <Sparkles className="h-3.5 w-3.5 text-cyan-300" />
+                {workflowTitle ? `${workflowTitle} scope` : "Workflow scope"}
+              </div>
+              <div className="mt-1 text-cyan-100/80">
+                Prioritizing impacted files from the selected workflow and current context pack.
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
       <div className="flex gap-4" style={{ minHeight: 500 }}>
-        <div className="w-72 shrink-0 bg-[#121214] border border-white/8 rounded-xl overflow-hidden flex flex-col">
-          <div className="px-3 py-2.5 border-b border-white/5 text-[10px] text-zinc-500 uppercase tracking-wide font-medium flex items-center gap-2">
+        <div className="w-80 shrink-0 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)] flex flex-col">
+          <div className="px-3 py-3 border-b border-white/6 text-[10px] text-zinc-500 uppercase tracking-[0.18em] font-medium flex items-center gap-2">
             <FolderTree className="w-3.5 h-3.5 text-cyan-400" />
             Files
           </div>
@@ -146,7 +219,9 @@ export function CodebaseView({ repoId }: { repoId: string | null }) {
             {treeQuery.isLoading ? (
               <div className="p-3 text-xs text-zinc-500">Loading codebase…</div>
             ) : filtered.length === 0 ? (
-              <div className="p-3 text-xs text-zinc-500">No files match the current filter.</div>
+              <div className="p-3 text-xs text-zinc-500">
+                {scope === "workflow" ? "No impacted files are available for the selected workflow yet." : "No files match the current filter."}
+              </div>
             ) : (
               filtered.map((node) => {
                 const isSelected = selectedPath === node.path;
@@ -156,8 +231,10 @@ export function CodebaseView({ repoId }: { repoId: string | null }) {
                   <button
                     key={node.path}
                     onClick={() => setSelectedPath(node.path)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors group ${
-                      isSelected ? "bg-purple-500/10 border border-purple-500/20" : "hover:bg-white/[0.04]"
+                    className={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors group ${
+                      isSelected
+                        ? "border border-cyan-400/18 bg-cyan-500/[0.10] shadow-[0_0_0_1px_rgba(34,211,238,0.06)]"
+                        : "hover:bg-white/[0.04]"
                     }`}
                     style={{ paddingLeft: `${12 + node.depth * 12}px` }}
                   >
@@ -173,10 +250,10 @@ export function CodebaseView({ repoId }: { repoId: string | null }) {
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 bg-[#121214] border border-white/8 rounded-xl overflow-hidden flex flex-col">
+        <div className="flex-1 min-w-0 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)] flex flex-col">
           {selectedPath && file ? (
             <>
-              <div className="px-4 py-2.5 border-b border-white/5 bg-zinc-900/30 flex items-center justify-between shrink-0">
+              <div className="px-4 py-3 border-b border-white/6 bg-zinc-900/30 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <FileCode2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                   <span className="text-xs font-mono text-zinc-300 truncate">{file.path}</span>
@@ -193,10 +270,10 @@ export function CodebaseView({ repoId }: { repoId: string | null }) {
                   {file.truncated ? <span className="text-amber-400">truncated</span> : null}
                 </div>
               </div>
-              <div className="flex-1 overflow-auto custom-scrollbar">
+              <div className="flex-1 overflow-auto custom-scrollbar bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.03),transparent_42%)]">
                 <pre className="text-[11px] font-mono leading-relaxed">
                   {file.content.split("\n").map((line, index) => (
-                    <div key={`${file.path}-${index}`} className="flex gap-3 px-2 py-px hover:bg-white/[0.02] text-zinc-300">
+                    <div key={`${file.path}-${index}`} className="flex gap-3 px-3 py-px hover:bg-white/[0.02] text-zinc-300">
                       <span className="select-none text-zinc-700 text-right w-8 shrink-0 tabular-nums">{index + 1}</span>
                       <span>{line || " "}</span>
                     </div>

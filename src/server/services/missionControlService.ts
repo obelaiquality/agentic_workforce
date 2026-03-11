@@ -2,6 +2,7 @@ import { prisma } from "../db";
 import type {
   ChatMessageDto,
   ChatSessionDto,
+  ConsoleEvent,
   ExecutionRunSummary,
   MissionControlSnapshot,
   MissionUiApprovalCard,
@@ -14,6 +15,9 @@ import type {
   VerificationBundle,
   V2CommandLogItem,
   V2PolicyPendingItem,
+  WorkflowCardSummary,
+  WorkflowStatusPillar,
+  WorkflowTaskDetail,
 } from "../../shared/contracts";
 import { ChatService } from "./chatService";
 import { CodeGraphService } from "./codeGraphService";
@@ -310,6 +314,137 @@ function buildActionCapabilities(runSummary: ExecutionRunSummary | null, ticket:
   };
 }
 
+function workflowStatusForTicket(status: Ticket["status"]): WorkflowCardSummary["status"] {
+  if (status === "backlog" || status === "ready") return "backlog";
+  if (status === "review") return "needs_review";
+  if (status === "done") return "completed";
+  return "in_progress";
+}
+
+function progressForTicketStatus(status: Ticket["status"]) {
+  switch (status) {
+    case "done":
+      return 100;
+    case "review":
+      return 82;
+    case "blocked":
+      return 58;
+    case "in_progress":
+      return 64;
+    case "ready":
+      return 30;
+    default:
+      return 18;
+  }
+}
+
+function summarizeTicketEvent(type: string, payload: Record<string, unknown>) {
+  if (type === "ticket.created") {
+    const status = typeof payload.status === "string" ? payload.status.replace(/_/g, " ") : "backlog";
+    return `Ticket created in ${status}.`;
+  }
+  if (type === "ticket.updated") {
+    const keys = Object.keys(payload).filter(Boolean);
+    if (!keys.length) {
+      return "Ticket details updated.";
+    }
+    return `Updated ${keys.join(", ")}.`;
+  }
+  if (type === "ticket.moved") {
+    const status = typeof payload.status === "string" ? payload.status.replace(/_/g, " ") : "updated";
+    return `Moved to ${status}.`;
+  }
+  if (type === "ticket.workflow_moved") {
+    const lane = typeof payload.lane === "string" ? payload.lane.replace(/_/g, " ") : "the selected lane";
+    return `Moved on the command board to ${lane}.`;
+  }
+  return type.replace(/^ticket\./, "").replace(/[._]/g, " ");
+}
+
+function buildWorkflowCards(
+  tickets: Ticket[],
+  runSummary: ExecutionRunSummary | null,
+  contextPack: MissionControlSnapshot["contextPack"],
+  laneCounts: Map<string, number>
+): WorkflowCardSummary[] {
+  const activeTicketId = runSummary?.ticketId ?? null;
+  return tickets
+    .map((ticket) => {
+      const impactedFiles = ticket.id === activeTicketId ? contextPack?.files ?? [] : [];
+      const impactedTests = ticket.id === activeTicketId ? contextPack?.tests ?? [] : [];
+      const impactedDocs = ticket.id === activeTicketId ? contextPack?.docs ?? [] : [];
+      const isBlocked = ticket.status === "blocked";
+      const workflowStatus = workflowStatusForTicket(ticket.status);
+      return {
+        workflowId: ticket.id,
+        title: ticket.title,
+        subtitle: summarize(ticket.description || "Objective queued for refinement."),
+        status: workflowStatus,
+        laneOrder: ticket.laneOrder,
+        rawStatus: ticket.status,
+        priority: ticket.priority,
+        risk: ticket.risk,
+        taskCount: 1,
+        isBlocked,
+        blockedReason: isBlocked ? summarize(ticket.description || "Blocked pending follow-up.", 96) : null,
+        impactedFiles,
+        impactedTests,
+        impactedDocs,
+        lastUpdatedAt: ticket.updatedAt,
+        verificationState: ticket.id === activeTicketId ? runSummary?.status ?? null : null,
+        confidence: ticket.id === activeTicketId ? contextPack?.confidence ?? null : null,
+        progress: progressForTicketStatus(ticket.status),
+        ownerLabel: laneCounts.get(ticket.id) ? `${laneCounts.get(ticket.id)} active lane${laneCounts.get(ticket.id) === 1 ? "" : "s"}` : null,
+        laneCount: laneCounts.get(ticket.id) ?? 0,
+      };
+    })
+    .sort((left, right) => {
+      if (left.status !== right.status) {
+        return 0;
+      }
+      if (left.isBlocked !== right.isBlocked) {
+        return left.isBlocked ? -1 : 1;
+      }
+      if ((left.laneOrder ?? 0) !== (right.laneOrder ?? 0)) {
+        return (left.laneOrder ?? 0) - (right.laneOrder ?? 0);
+      }
+      return new Date(right.lastUpdatedAt).getTime() - new Date(left.lastUpdatedAt).getTime();
+    });
+}
+
+function buildWorkflowPillars(cards: WorkflowCardSummary[]): WorkflowStatusPillar[] {
+  const order: Array<{ key: WorkflowStatusPillar["key"]; label: string }> = [
+    { key: "backlog", label: "Backlog" },
+    { key: "in_progress", label: "In Progress" },
+    { key: "needs_review", label: "Needs Review" },
+    { key: "completed", label: "Completed" },
+  ];
+  return order.map((pillar) => {
+    const matching = cards.filter((card) => card.status === pillar.key);
+    return {
+      key: pillar.key,
+      label: pillar.label,
+      count: matching.length,
+      blockedCount: matching.filter((card) => card.isBlocked).length || undefined,
+      workflowIds: matching.map((card) => card.workflowId),
+    };
+  });
+}
+
+function mapConsoleLogLevel(level: "info" | "warn" | "error" | "debug" | "success"): ConsoleEvent["level"] {
+  if (level === "warn") return "warn";
+  if (level === "error") return "error";
+  return "info";
+}
+
+function mapConsoleLogCategory(source: string): ConsoleEvent["category"] {
+  if (source === "approval") return "approval";
+  if (source.includes("verify") || source.includes("test") || source.includes("lint") || source.includes("build")) return "verification";
+  if (source.includes("index")) return "indexing";
+  if (source.includes("provider") || source.includes("qwen") || source.includes("openai")) return "provider";
+  return "execution";
+}
+
 function mapRunSummary(row: {
   runId: string;
   ticketId: string | null;
@@ -361,7 +496,8 @@ export class MissionControlService {
     const activeRepo = input.projectId ? await this.repoService.getRepo(input.projectId) : await this.repoService.getActiveRepo();
     const project = activeRepo || repos[0] || null;
 
-    const [blueprint, guidelines, projectState, sessions, tickets, approvals, commands, contextPack, codeGraphStatus, latestAttempt] = await Promise.all([
+    const [blueprint, guidelines, projectState, sessions, tickets, approvals, commands, contextPack, codeGraphStatus, latestAttempt, laneRows] =
+      await Promise.all([
       project ? this.projectBlueprintService.get(project.id) : Promise.resolve(null),
       project ? this.repoService.getGuidelines(project.id) : Promise.resolve(null),
       project ? this.repoService.getState(project.id) : Promise.resolve(null),
@@ -377,6 +513,12 @@ export class MissionControlService {
             orderBy: [{ startedAt: "desc" }, { updatedAt: "desc" }],
           })
         : Promise.resolve(null),
+      project
+        ? prisma.agentLane.findMany({
+            where: { repoId: project.id },
+            select: { ticketId: true, state: true },
+          })
+        : Promise.resolve([] as Array<{ ticketId: string; state: string }>),
     ]);
 
     const selectedTicket =
@@ -450,6 +592,12 @@ export class MissionControlService {
     const packFiles = contextPack?.files ?? [];
     const changedFiles = asStringArray(runSummary?.metadata?.changed_files);
     const timeline = buildTimeline(commands, relevantApprovals);
+    const laneCounts = laneRows.reduce((map, lane) => {
+      map.set(lane.ticketId, (map.get(lane.ticketId) ?? 0) + 1);
+      return map;
+    }, new Map<string, number>());
+    const workflowCards = buildWorkflowCards(tickets, runSummary, contextPack, laneCounts);
+    const workflowPillars = buildWorkflowPillars(workflowCards);
 
     return {
       project,
@@ -464,6 +612,8 @@ export class MissionControlService {
       verification,
       selectedTicket,
       tickets,
+      workflowPillars,
+      workflowCards,
       changeBriefs: buildChangeBriefs(tickets, runSummary, packFiles),
       streams: buildStreams(tickets, relevantApprovals, runSummary),
       timeline,
@@ -495,6 +645,79 @@ export class MissionControlService {
         selectedSessionId: selectedSession?.id || null,
         messages,
       },
+    };
+  }
+
+  async getTaskDetail(input: { projectId?: string | null; taskId: string }): Promise<WorkflowTaskDetail | null> {
+    const snapshot = await this.getSnapshot({
+      projectId: input.projectId || null,
+      ticketId: input.taskId,
+    });
+    const ticket = snapshot.tickets.find((item) => item.id === input.taskId) ?? null;
+    if (!ticket) {
+      return null;
+    }
+    const workflowState = await this.contextService.getWorkflowState(ticket.id);
+    const ticketEvents = await prisma.ticketEvent.findMany({
+      where: { ticketId: ticket.id },
+      orderBy: [{ createdAt: "desc" }],
+      take: 20,
+    });
+
+    const logs: ConsoleEvent[] = snapshot.consoleLogs
+      .filter((log) => log.taskId === input.taskId)
+      .slice(-20)
+      .map((log) => ({
+        id: log.id,
+        projectId: snapshot.project?.id ?? "",
+        category: mapConsoleLogCategory(log.source),
+        level: mapConsoleLogLevel(log.level),
+        message: log.message,
+        createdAt: log.timestamp,
+        taskId: log.taskId,
+      }));
+
+    const verification = [
+      ...(snapshot.verification?.changedFileChecks ?? []),
+      ...(snapshot.verification?.impactedTests ?? []),
+      ...(snapshot.verification?.docsChecked ?? []),
+    ];
+
+    const comments = await this.ticketService.listTicketComments(ticket.id, 50);
+
+    const activityNotes = ticketEvents
+      .slice()
+      .reverse()
+      .map((event) => ({
+        id: event.id,
+        author: "system",
+        body: summarizeTicketEvent(event.type, toRecord(event.payload)),
+        createdAt: event.createdAt.toISOString(),
+      }));
+
+    return {
+      taskId: ticket.id,
+      title: ticket.title,
+      status: ticket.status,
+      comments,
+      activityNotes,
+      metadata: {
+        priority: ticket.priority,
+        risk: ticket.risk,
+        acceptanceCriteria: ticket.acceptanceCriteria,
+        dependencies: ticket.dependencies,
+        lastUpdatedAt: ticket.updatedAt,
+      },
+      logs,
+      approvals: snapshot.approvals.filter((approval) => approval.relevantToCurrentTask),
+      verification,
+      impactedFiles: snapshot.selectedTicket?.id === ticket.id ? snapshot.contextPack?.files ?? [] : [],
+      impactedTests: snapshot.selectedTicket?.id === ticket.id ? snapshot.contextPack?.tests ?? [] : [],
+      impactedDocs: snapshot.selectedTicket?.id === ticket.id ? snapshot.contextPack?.docs ?? [] : [],
+      workflowSummary: workflowState?.summary || null,
+      blockers: workflowState?.blockers || [],
+      nextSteps: workflowState?.nextSteps || [],
+      route: snapshot.selectedTicket?.id === ticket.id ? snapshot.routeSummary : null,
     };
   }
 }

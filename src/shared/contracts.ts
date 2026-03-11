@@ -99,6 +99,7 @@ export interface Ticket {
   title: string;
   description: string;
   status: TicketStatus;
+  laneOrder?: number;
   priority: TicketPriority;
   acceptanceCriteria: string[];
   dependencies: string[];
@@ -633,6 +634,7 @@ export interface ConsoleEvent {
   level: "info" | "warn" | "error" | "success" | "debug";
   message: string;
   createdAt: string;
+  taskId?: string;
 }
 
 export interface ProjectBootstrapRequest {
@@ -660,6 +662,72 @@ export interface ScaffoldExecutionResult {
   status: "completed" | "failed" | "needs_review";
 }
 
+export interface WorkflowStatusPillar {
+  key: "backlog" | "in_progress" | "needs_review" | "completed";
+  label: string;
+  count: number;
+  blockedCount?: number;
+  workflowIds: string[];
+}
+
+export interface WorkflowCardSummary {
+  workflowId: string;
+  title: string;
+  subtitle: string;
+  status: "backlog" | "in_progress" | "needs_review" | "completed";
+  laneOrder?: number;
+  rawStatus: string;
+  priority: string;
+  risk: string;
+  taskCount: number;
+  isBlocked: boolean;
+  blockedReason?: string | null;
+  impactedFiles: string[];
+  impactedTests: string[];
+  impactedDocs: string[];
+  lastUpdatedAt: string;
+  verificationState?: string | null;
+  confidence?: number | null;
+  progress?: number | null;
+  ownerLabel?: string | null;
+  laneCount: number;
+}
+
+export interface WorkflowMoveRequest {
+  workflowId: string;
+  fromStatus: "backlog" | "in_progress" | "needs_review" | "completed";
+  toStatus: "backlog" | "in_progress" | "needs_review" | "completed";
+  beforeWorkflowId?: string | null;
+}
+
+export interface TicketCommentThread {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  parentCommentId: string | null;
+  replies: TicketCommentThread[];
+}
+
+export interface WorkflowTaskDetail {
+  taskId: string;
+  title: string;
+  status: string;
+  comments: TicketCommentThread[];
+  activityNotes: Array<{ id: string; author: string; body: string; createdAt: string }>;
+  metadata: Record<string, unknown>;
+  logs: ConsoleEvent[];
+  approvals: MissionUiApprovalCard[];
+  verification: string[];
+  impactedFiles: string[];
+  impactedTests: string[];
+  impactedDocs: string[];
+  workflowSummary: string | null;
+  blockers: string[];
+  nextSteps: string[];
+  route: MissionUiRouteSummary | null;
+}
+
 export interface MissionControlSnapshot {
   project: RepoRegistration | null;
   recentProjects: RepoRegistration[];
@@ -673,6 +741,8 @@ export interface MissionControlSnapshot {
   verification: VerificationBundle | null;
   selectedTicket: Ticket | null;
   tickets: Ticket[];
+  workflowPillars: WorkflowStatusPillar[];
+  workflowCards: WorkflowCardSummary[];
   changeBriefs: Array<{
     task_id: string;
     title: string;

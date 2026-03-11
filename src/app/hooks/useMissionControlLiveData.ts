@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   activateProjectV5,
+  addTicketComment,
   bootstrapEmptyProjectV8,
   connectGithubProjectV8,
   connectLocalProjectV8,
@@ -16,6 +17,7 @@ import {
   syncProjectV5,
   updateProjectBlueprintV8,
   executeOverseerRouteV8,
+  moveMissionWorkflowV8,
 } from "../lib/apiClient";
 import { getRecentRepos, getVisibleRepos } from "../lib/projectVisibility";
 import { hasDesktopRepoPicker, listRecentRepoPaths, pickRepoDirectory, rememberRepoPath } from "../lib/desktopBridge";
@@ -449,6 +451,31 @@ export function useMissionControlLiveData() {
     },
   });
 
+  const moveWorkflowMutation = useMutation({
+    mutationFn: moveMissionWorkflowV8,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      setActionMessage("Workflow updated.");
+    },
+  });
+
+  const addTaskCommentMutation = useMutation({
+    mutationFn: ({
+      taskId,
+      body,
+      parentCommentId,
+    }: {
+      taskId: string;
+      body: string;
+      parentCommentId?: string | null;
+    }) => addTicketComment(taskId, { body, parentCommentId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      queryClient.invalidateQueries({ queryKey: ["command-workflow-task-detail"] });
+      setActionMessage("Comment added.");
+    },
+  });
+
   const updateBlueprintMutation = useMutation({
     mutationFn: (patch: Partial<ProjectBlueprint>) => {
       if (!selectedRepo?.id) {
@@ -553,6 +580,8 @@ export function useMissionControlLiveData() {
     route: effectiveRoute,
     contextPack: effectiveContextPack,
     blueprint: blueprintPreview,
+    workflowPillars: snapshot?.workflowPillars ?? [],
+    workflowCards: snapshot?.workflowCards ?? [],
     changeBriefs: (snapshot?.changeBriefs ?? []) as MissionChangeBrief[],
     streams: (snapshot?.streams ?? []) as MissionStream[],
     timeline: (snapshot?.timeline ?? []) as MissionTimelineEvent[],
@@ -616,7 +645,9 @@ export function useMissionControlLiveData() {
       activateRepoMutation.isPending ||
       syncProjectMutation.isPending ||
       updateBlueprintMutation.isPending ||
-      regenerateBlueprintMutation.isPending,
+      regenerateBlueprintMutation.isPending ||
+      moveWorkflowMutation.isPending ||
+      addTaskCommentMutation.isPending,
     chooseLocalRepo,
     startNewProject,
     pendingBootstrap,
@@ -666,6 +697,10 @@ export function useMissionControlLiveData() {
       sendMutation.mutate(input.trim());
     },
     decideApproval: (id: string, decision: "approved" | "rejected") => approvalMutation.mutate({ id, decision }),
+    moveWorkflow: (input: import("../../shared/contracts").WorkflowMoveRequest) => moveWorkflowMutation.mutate(input),
+    addTaskComment: (taskId: string, body: string, parentCommentId?: string | null) =>
+      addTaskCommentMutation.mutate({ taskId, body, parentCommentId }),
+    isCommenting: addTaskCommentMutation.isPending,
     updateBlueprint: (patch: Partial<ProjectBlueprint>) => updateBlueprintMutation.mutate(patch),
     regenerateBlueprint: () => regenerateBlueprintMutation.mutate(),
     openProjects: () => setActiveSection("projects"),

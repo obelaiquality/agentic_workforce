@@ -150,8 +150,32 @@ impl SidecarService {
 
                 self.db
                     .execute(
-                        "INSERT INTO task_projection (ticket_id, title, description, status, priority, risk, acceptance_criteria, dependencies, created_at, updated_at, last_transition_at)
-                         VALUES ($1, $2, $3, 'inactive', $4, $5, $6::jsonb, $7::jsonb, NOW(), NOW(), NOW())
+                        "INSERT INTO task_projection (
+                           ticket_id,
+                           title,
+                           description,
+                           status,
+                           priority,
+                           risk,
+                           acceptance_criteria,
+                           dependencies,
+                           created_at,
+                           updated_at,
+                           last_transition_at
+                         )
+                         VALUES (
+                           $1,
+                           $2,
+                           $3,
+                           'inactive',
+                           ($4::text)::\"TicketPriority\",
+                           ($5::text)::\"TicketRisk\",
+                           $6::jsonb,
+                           $7::jsonb,
+                           NOW(),
+                           NOW(),
+                           NOW()
+                         )
                          ON CONFLICT (ticket_id) DO UPDATE SET
                            title = EXCLUDED.title,
                            description = EXCLUDED.description,

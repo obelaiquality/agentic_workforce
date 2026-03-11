@@ -71,6 +71,12 @@ const moveTicketSchema = z.object({
   status: z.enum(["backlog", "ready", "in_progress", "review", "blocked", "done"]),
 });
 
+const createTicketCommentSchema = z.object({
+  author: z.string().trim().min(1).max(80).optional(),
+  body: z.string().trim().min(1),
+  parentCommentId: z.string().trim().min(1).optional(),
+});
+
 const createChatSessionSchema = z.object({
   title: z.string().min(1).optional(),
   repoId: z.string().optional(),
@@ -470,6 +476,11 @@ const missionSnapshotQuerySchema = z.object({
 const missionCodebaseFileQuerySchema = z.object({
   projectId: z.string().min(1),
   path: z.string().min(1),
+});
+
+const missionTaskDetailQuerySchema = z.object({
+  projectId: z.string().optional(),
+  taskId: z.string().min(1),
 });
 
 const scaffoldBootstrapSchema = z.object({
@@ -1990,6 +2001,36 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     return "info";
   }
 
+  function extractConsoleProjectId(payload: unknown): string | null {
+    if (!payload || typeof payload !== "object") return null;
+    const record = payload as Record<string, unknown>;
+    const candidate =
+      (typeof record.repoId === "string" && record.repoId) ||
+      (typeof record.repo_id === "string" && record.repo_id) ||
+      (typeof record.projectId === "string" && record.projectId) ||
+      (typeof record.project_id === "string" && record.project_id);
+    return candidate || null;
+  }
+
+  function extractConsoleTaskId(payload: unknown, aggregateId: string | null | undefined, projectId: string | null): string | null {
+    if (payload && typeof payload === "object") {
+      const record = payload as Record<string, unknown>;
+      const explicit =
+        (typeof record.ticketId === "string" && record.ticketId) ||
+        (typeof record.ticket_id === "string" && record.ticket_id) ||
+        (typeof record.aggregate_id === "string" && record.aggregate_id);
+      if (explicit && explicit !== projectId) {
+        return explicit;
+      }
+    }
+
+    if (aggregateId && aggregateId !== projectId && !aggregateId.startsWith("repo:") && !aggregateId.startsWith("run:")) {
+      return aggregateId;
+    }
+
+    return null;
+  }
+
   async function buildConsoleEvents(projectId?: string | null): Promise<ConsoleEvent[]> {
     if (!projectId) {
       return [];
@@ -2036,6 +2077,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       level: mapConsoleLevel(row.eventType),
       message: `${row.eventType.replace(/\./g, " ")} ${JSON.stringify(row.payload).slice(0, 180)}`,
       createdAt: row.createdAt.toISOString(),
+      taskId: extractConsoleTaskId(row.payload, row.aggregateId, projectId) || undefined,
     }));
 
     const approvalItems: ConsoleEvent[] = approvalRows.map((row) => ({
@@ -2045,6 +2087,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       level: row.status === "rejected" ? "error" : row.status === "pending" ? "warn" : "info",
       message: `${row.actionType.replace(/_/g, " ")} ${row.status}${row.reason ? ` · ${row.reason}` : ""}`,
       createdAt: row.requestedAt.toISOString(),
+      taskId:
+        (typeof (row.payload as Record<string, unknown> | null)?.aggregate_id === "string" &&
+        (row.payload as Record<string, unknown>).aggregate_id !== projectId
+          ? (row.payload as Record<string, unknown>).aggregate_id
+          : null) || undefined,
     }));
 
     const repoItems: ConsoleEvent[] = repoLogRows.map((row) => ({
@@ -2124,6 +2171,76 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     return { items: snapshot.timeline };
   });
 
+  app.get("/api/v8/mission/backlog", async (request) => {
+    const query = missionSnapshotQuerySchema.parse(request.query);
+    const snapshot = await missionControlService.getSnapshot({
+      projectId: query.projectId || null,
+      ticketId: query.ticketId || null,
+      runId: query.runId || null,
+      sessionId: query.sessionId || null,
+    });
+    return {
+      pillars: snapshot.workflowPillars,
+      items: snapshot.workflowCards,
+    };
+  });
+
+  app.get("/api/v8/mission/task-detail", async (request) => {
+    const query = missionTaskDetailQuerySchema.parse(request.query);
+    return {
+      item: await missionControlService.getTaskDetail({
+        projectId: query.projectId || null,
+        taskId: query.taskId,
+      }),
+    };
+  });
+
+  app.post("/api/v8/mission/workflow.move", async (request) => {
+    const body = z
+      .object({
+        workflowId: z.string().min(1),
+        fromStatus: z.enum(["backlog", "in_progress", "needs_review", "completed"]),
+        toStatus: z.enum(["backlog", "in_progress", "needs_review", "completed"]),
+        beforeWorkflowId: z.string().min(1).nullable().optional(),
+      })
+      .parse(request.body);
+
+    const allowedTransitions: Record<string, string[]> = {
+      backlog: ["in_progress"],
+      in_progress: ["backlog", "needs_review"],
+      needs_review: ["in_progress", "completed"],
+      completed: ["needs_review"],
+    };
+
+    const isReorderOnly = body.fromStatus === body.toStatus;
+
+    if (!isReorderOnly && !allowedTransitions[body.fromStatus]?.includes(body.toStatus)) {
+      throw new Error(`Invalid workflow transition: ${body.fromStatus} -> ${body.toStatus}`);
+    }
+
+    const ticket = await ticketService.moveWorkflow(body.workflowId, body.toStatus, body.beforeWorkflowId ?? null);
+
+    await prisma.auditEvent.create({
+      data: {
+        actor: "user",
+        eventType: "workflow.moved",
+        payload: {
+          workflowId: body.workflowId,
+          fromStatus: body.fromStatus,
+          toStatus: body.toStatus,
+          beforeWorkflowId: body.beforeWorkflowId ?? null,
+        },
+      },
+    });
+
+    return {
+      item: {
+        moved: true,
+        ticket,
+      },
+    };
+  });
+
   app.get("/api/v8/mission/codebase", async (request) => {
     const query = missionSnapshotQuerySchema.parse(request.query);
     const snapshot = await missionControlService.getSnapshot({
@@ -2157,7 +2274,8 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     return { items: await buildConsoleEvents(query.projectId || null) };
   });
 
-  app.get("/api/v8/mission/console/stream", async (_request, reply) => {
+  app.get("/api/v8/mission/console/stream", async (request, reply) => {
+    const query = missionSnapshotQuerySchema.parse(request.query);
     reply.hijack();
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -2174,13 +2292,21 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     send("connected", { stream: "mission-console", now: new Date().toISOString() });
 
     const stopGlobal = eventBus.subscribe("global", (event) => {
+      const projectId = extractConsoleProjectId(event.payload);
+      if (query.projectId && projectId && projectId !== query.projectId) {
+        return;
+      }
+      if (query.projectId && !projectId) {
+        return;
+      }
       send("console.event", {
         id: randomUUID(),
-        projectId: typeof event.payload.repoId === "string" ? event.payload.repoId : null,
+        projectId: projectId || query.projectId || null,
         category: mapConsoleCategory(event.type),
         level: mapConsoleLevel(event.type),
         message: `${event.type.replace(/\./g, " ")} ${JSON.stringify(event.payload).slice(0, 180)}`,
         createdAt: event.createdAt,
+        taskId: extractConsoleTaskId(event.payload, null, query.projectId || null) || undefined,
       });
     });
 
@@ -2863,6 +2989,34 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     return {
       ok: true,
       item: ticket,
+    };
+  });
+
+  app.get("/api/v1/tickets/:id/comments", async (request) => {
+    const id = (request.params as { id: string }).id;
+    return {
+      items: await ticketService.listTicketComments(id),
+    };
+  });
+
+  app.post("/api/v1/tickets/:id/comments", async (request) => {
+    const id = (request.params as { id: string }).id;
+    const input = createTicketCommentSchema.parse(request.body);
+    const comment = await ticketService.addTicketComment({
+      ticketId: id,
+      author: input.author,
+      body: input.body,
+      parentCommentId: input.parentCommentId,
+    });
+
+    publishEvent("global", "ticket.comment_added", {
+      ticketId: id,
+      commentId: comment.id,
+    });
+
+    return {
+      ok: true,
+      item: comment,
     };
   });
 

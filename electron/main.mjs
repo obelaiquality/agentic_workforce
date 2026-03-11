@@ -138,12 +138,23 @@ function gatherPreflightChecks() {
   ];
   const modelCachePath = modelCacheCandidates.find((candidate) => fs.existsSync(candidate));
 
+  // Postgres connectivity is what actually matters — Docker is just one way to run it
+  const pgCheck = runCheck("node", ["-e", `require("net").createConnection({host:"127.0.0.1",port:5433},()=>{process.exit(0)}).on("error",()=>{process.exit(1)})`]);
+  checks.push({
+    key: "postgres",
+    ok: pgCheck.ok,
+    message: pgCheck.ok
+      ? "PostgreSQL reachable on 127.0.0.1:5433"
+      : "PostgreSQL not reachable on 127.0.0.1:5433. Start it with 'npm run db:up' (Docker) or ensure your Postgres is running on port 5433.",
+    severity: "error",
+  });
+
   const docker = runCheck("docker", ["info"]);
   checks.push({
     key: "docker",
     ok: docker.ok,
-    message: docker.ok ? "Docker daemon is running" : `Docker unavailable: ${docker.output}`,
-    severity: "error",
+    message: docker.ok ? "Docker daemon is running" : `Docker unavailable: ${docker.output}. Not required if you run Postgres yourself.`,
+    severity: "warning",
   });
 
   const qwen = runCheck(qwenCommand, ["--version"]);

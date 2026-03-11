@@ -321,7 +321,14 @@ async function main() {
 
   await page.getByRole("button", { name: "Live State" }).click();
   const objective = "Add a status badge component to the app and test it. Update any docs if needed.";
-  await page.getByPlaceholder("Describe what should change in this repo. Example: add CSV export to the client list and verify the tests.").fill(objective);
+  const commandComposer = page.locator("textarea").first();
+  try {
+    await page
+      .getByPlaceholder(/Describe the next change\. Example: .*verify the tests\./)
+      .fill(objective, { timeout: 10000 });
+  } catch {
+    await commandComposer.fill(objective);
+  }
   await page.getByRole("button", { name: "Execute" }).click();
 
   let followupReport = await waitFor(
