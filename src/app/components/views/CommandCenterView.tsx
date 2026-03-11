@@ -848,7 +848,6 @@ function WorkflowCard({
   );
 
   const events = timeline.filter((event) => event.task_id === item.workflowId).slice(-3);
-  const confidencePercent = typeof item.confidence === "number" ? Math.round(item.confidence * 100) : null;
   const allowedTransitions = allowedMoves(item.status);
   const hasImpactSummary = item.impactedFiles.length > 0 || item.impactedTests.length > 0 || item.impactedDocs.length > 0;
   const summaryToggleProps = {
@@ -962,10 +961,7 @@ function WorkflowCard({
             </div>
 
             {lane === "in_progress" ? (
-              <div className="mt-3 space-y-2">
-                {confidencePercent !== null ? (
-                  <MicroBar label="Confidence" value={`${confidencePercent}%`} progress={confidencePercent} tone="from-cyan-500 to-cyan-300" />
-                ) : null}
+              <div className="mt-3">
                 <MicroBar label="Progress" value={`${progressForCard(item)}%`} progress={progressForCard(item)} tone="from-fuchsia-500 to-fuchsia-300" />
               </div>
             ) : null}
