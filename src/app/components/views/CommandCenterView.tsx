@@ -454,7 +454,7 @@ function OverseerCommandCard({
               </h2>
               <p className="max-w-xl text-sm leading-5 text-zinc-400">
                 {mission.selectedRepo
-                  ? "Keep the top layer compact: objective, route, policy, and live workflows. Open details only where they matter."
+                  ? "Start in chat. We scope your objective into a backlog ticket, then execution drives lifecycle transitions automatically."
                   : "Choose a local Git repo or connect GitHub. The app works in a linked copy and keeps your original repository untouched."}
               </p>
             </div>
@@ -530,7 +530,7 @@ function OverseerCommandCard({
               </div>
 
               {mission.selectedRepo ? (
-                <span className="text-[11px] leading-5 text-zinc-500">Use the board to inspect status, then open drawer detail only when required.</span>
+                <span className="text-[11px] leading-5 text-zinc-500">Scope Ticket creates/updates backlog. Start Work moves to In Progress and auto-sends successful runs to Needs Review.</span>
               ) : (
                 <span className="text-[11px] leading-5 text-zinc-500">Desktop app enables the native repo picker. Browser preview keeps the same shell but limits native actions.</span>
               )}
@@ -639,7 +639,7 @@ function OverseerCommandCard({
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
               >
                 {mission.isReviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-                {mission.isReviewing ? "Reviewing..." : "Review Route"}
+                {mission.isReviewing ? "Scoping..." : "Scope Ticket"}
               </button>
               <button
                 onClick={mission.executeRoute}
@@ -647,7 +647,7 @@ function OverseerCommandCard({
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
               >
                 {mission.isExecuting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                {mission.isExecuting ? "Executing..." : "Execute"}
+                {mission.isExecuting ? "Starting..." : "Start Work"}
               </button>
             </div>
           </div>

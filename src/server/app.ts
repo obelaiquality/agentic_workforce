@@ -2106,7 +2106,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       repoId,
       title,
       description: prompt,
-      status: "ready",
+      status: "backlog",
       priority: "p2",
       risk: "medium",
       acceptanceCriteria: [
@@ -2710,14 +2710,16 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       projectBlueprintService.get(repo.id),
       repoService.getGuidelines(repo.id),
     ]);
+    const workingTicket =
+      ticket.status === "in_progress" ? ticket : await ticketService.moveTicket(ticket.id, "in_progress");
     // Always compute a fresh route for execute so provider/model-role changes
     // (for example switching from local to OpenAI) are respected immediately.
     const route = await routerService.planRoute({
       actor: input.actor,
       repo_id: repo.id,
-      ticket_id: ticket.id,
+      ticket_id: workingTicket.id,
       prompt: input.prompt,
-      risk_level: ticket.risk,
+      risk_level: workingTicket.risk,
       workspace_path: worktreePath,
       retrieval_context_ids: [],
       active_files: [],
@@ -2737,7 +2739,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       runId,
       repoId: repo.id,
       projectId: repo.id,
-      ticketId: ticket.id,
+      ticketId: workingTicket.id,
       objective: input.prompt,
       worktreePath,
       queryMode: route.risk === "high" ? "architecture" : "impact",
@@ -2785,9 +2787,14 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         })
       : null;
 
+    const finalTicket =
+      verification && verification.pass
+        ? await ticketService.moveTicket(workingTicket.id, "review")
+        : workingTicket;
+
     return {
       runId,
-      ticket,
+      ticket: finalTicket,
       blueprint,
       route: {
         ...route,

@@ -380,7 +380,7 @@ export function useMissionControlLiveData() {
       });
     },
     onMutate: () => {
-      setActionMessage("Reviewing route...");
+      setActionMessage("Scoping objective into a backlog ticket...");
     },
     onSuccess: (result) => {
       setSelectedTicketId(result.ticket.id);
@@ -389,7 +389,7 @@ export function useMissionControlLiveData() {
       if (result.blueprint) {
         setBlueprintPreview(result.blueprint);
       }
-      setActionMessage("Route reviewed. Ready to execute.");
+      setActionMessage("Ticket scoped and queued in backlog.");
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
     },
     onError: (error) => {
@@ -419,7 +419,7 @@ export function useMissionControlLiveData() {
       });
     },
     onMutate: () => {
-      setActionMessage("Executing route...");
+      setActionMessage("Starting work: moving ticket to In Progress...");
     },
     onSuccess: (result) => {
       setSelectedTicketId(result.ticket.id);
@@ -428,7 +428,13 @@ export function useMissionControlLiveData() {
       if (result.blueprint) {
         setBlueprintPreview(result.blueprint);
       }
-      setActionMessage(result.verification ? (result.verification.pass ? "Execution verified." : "Execution finished with verification follow-up.") : "Execution started.");
+      setActionMessage(
+        result.verification
+          ? result.verification.pass
+            ? "Execution verified. Ticket moved to Needs Review."
+            : "Execution finished. Ticket remains in progress for follow-up."
+          : "Execution started."
+      );
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
     },
     onError: (error) => {
