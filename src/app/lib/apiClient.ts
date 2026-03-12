@@ -1685,6 +1685,18 @@ export async function executeOverseerRouteV8(input: {
     route: RoutingDecision;
     attempt: ExecutionAttempt;
     verification: VerificationBundle | null;
+    lifecycle?: {
+      autoReviewEnabled: boolean;
+      maxRounds: number;
+      roundsRun: number;
+      completed: boolean;
+      transitions: Array<{
+        from: Ticket["status"];
+        to: Ticket["status"];
+        reason: string;
+        at: string;
+      }>;
+    };
     shareReport: ShareableRunReport | null;
   }>("/api/v8/mission/overseer/execute", {
     method: "POST",

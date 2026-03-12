@@ -2786,23 +2786,117 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
           },
         })
       : null;
+    const AUTO_REVIEW_MAX_ROUNDS = 2;
+    const transitions: Array<{
+      from: TicketStatus;
+      to: TicketStatus;
+      reason: string;
+      at: string;
+    }> = [];
 
-    const finalTicket =
-      verification && verification.pass
-        ? await ticketService.moveTicket(workingTicket.id, "review")
-        : workingTicket;
+    let latestAttempt = attempt;
+    let latestVerification = verification;
+    let lifecycleTicket = workingTicket;
+    let autoReviewRounds = 0;
+
+    const moveLifecycleTicket = async (to: TicketStatus, reason: string) => {
+      if (lifecycleTicket.status === to) return;
+      const from = lifecycleTicket.status;
+      lifecycleTicket = await ticketService.moveTicket(lifecycleTicket.id, to);
+      transitions.push({
+        from,
+        to,
+        reason,
+        at: new Date().toISOString(),
+      });
+    };
+
+    if (latestVerification?.pass) {
+      await moveLifecycleTicket("review", "verification_passed_initial");
+      await moveLifecycleTicket("done", "auto_review_gate_passed");
+    } else if (latestVerification) {
+      while (!latestVerification.pass && autoReviewRounds < AUTO_REVIEW_MAX_ROUNDS) {
+        autoReviewRounds += 1;
+        await moveLifecycleTicket("review", `auto_review_round_${autoReviewRounds}_started`);
+
+        const reviewRole = applyEscalationPolicy(
+          "review_deep",
+          blueprint?.providerPolicy.escalationPolicy,
+          route.risk as "low" | "medium" | "high" | undefined,
+        );
+        const reviewRoleBinding = roleBindings[reviewRole];
+        const reviewProvider = input.provider_id || reviewRoleBinding?.providerId || resolvedProvider;
+
+        latestAttempt = await executionService.startExecution({
+          actor: input.actor,
+          runId,
+          repoId: repo.id,
+          projectId: repo.id,
+          worktreePath,
+          objective: [
+            `Auto-review repair round ${autoReviewRounds} for ticket "${lifecycleTicket.title}".`,
+            "Fix failing verification with minimal diffs and preserve intended behavior.",
+            "",
+            "Original objective:",
+            input.prompt,
+          ].join("\n"),
+          modelRole: reviewRole,
+          providerId: reviewProvider,
+          routingDecisionId: route.id,
+          contextPackId: planned.contextPack.id,
+        });
+
+        latestVerification = await executionService.verifyExecution({
+          actor: input.actor,
+          runId,
+          repoId: repo.id,
+          worktreePath,
+          executionAttemptId: latestAttempt.id,
+          commands: verificationPlan.commands,
+          docsRequired: verificationPlan.docsRequired,
+          fullSuiteRun: verificationPlan.fullSuiteRun,
+          metadata: {
+            verification_commands: verificationPlan.commands,
+            verification_reasons: verificationPlan.reasons,
+            enforced_rules: verificationPlan.enforcedRules,
+            blueprint_version: blueprint?.version || null,
+            auto_review_round: autoReviewRounds,
+          },
+        });
+
+        if (latestVerification.pass) {
+          await moveLifecycleTicket("done", `auto_review_round_${autoReviewRounds}_passed`);
+          break;
+        }
+
+        if (autoReviewRounds < AUTO_REVIEW_MAX_ROUNDS) {
+          await moveLifecycleTicket("in_progress", `auto_review_round_${autoReviewRounds}_retry_required`);
+        }
+      }
+
+      if (!latestVerification.pass) {
+        await moveLifecycleTicket("in_progress", "verification_followup_required");
+      }
+    }
 
     return {
       runId,
-      ticket: finalTicket,
+      ticket: lifecycleTicket,
       blueprint,
       route: {
         ...route,
         modelRole: resolvedRole,
         providerId: resolvedProvider,
       },
-      attempt,
-      verification,
+      attempt: latestAttempt,
+      verification: latestVerification,
+      lifecycle: {
+        autoReviewEnabled: true,
+        maxRounds: AUTO_REVIEW_MAX_ROUNDS,
+        roundsRun: autoReviewRounds,
+        completed: Boolean(latestVerification?.pass && lifecycleTicket.status === "done"),
+        transitions,
+      },
       shareReport: await githubService.getShareReport(runId),
     };
   });

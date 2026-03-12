@@ -428,13 +428,19 @@ export function useMissionControlLiveData() {
       if (result.blueprint) {
         setBlueprintPreview(result.blueprint);
       }
-      setActionMessage(
-        result.verification
-          ? result.verification.pass
-            ? "Execution verified. Ticket moved to Needs Review."
-            : "Execution finished. Ticket remains in progress for follow-up."
-          : "Execution started."
-      );
+      if (result.lifecycle?.completed) {
+        setActionMessage(
+          `Execution and auto-review completed (${result.lifecycle.roundsRun}/${result.lifecycle.maxRounds} review rounds). Ticket moved to Completed.`
+        );
+      } else if (result.verification?.pass) {
+        setActionMessage("Execution verified. Ticket moved through review.");
+      } else if (result.lifecycle?.roundsRun) {
+        setActionMessage(
+          `Execution needs follow-up after ${result.lifecycle.roundsRun} auto-review rounds. Ticket moved back to In Progress.`
+        );
+      } else {
+        setActionMessage("Execution finished. Ticket remains in progress for follow-up.");
+      }
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
     },
     onError: (error) => {

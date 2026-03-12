@@ -441,8 +441,7 @@ function OverseerCommandCard({
   return (
     <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
-      <div className="grid grid-cols-1 gap-4 px-5 py-4 lg:grid-cols-[minmax(0,1.45fr)_328px]">
-        <div className="space-y-3.5">
+      <div className="space-y-3.5 px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
@@ -458,7 +457,7 @@ function OverseerCommandCard({
                   : "Choose a local Git repo or connect GitHub. The app works in a linked copy and keeps your original repository untouched."}
               </p>
             </div>
-          <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-2">
+            <div className="flex max-w-[420px] flex-wrap items-center justify-end gap-2">
               {mission.selectedRepo ? (
                 <>
                   <Chip variant="subtle" className="max-w-[220px] truncate text-[10px]" title={mission.selectedRepo.displayName}>
@@ -478,6 +477,24 @@ function OverseerCommandCard({
               )}
             </div>
           </div>
+
+          {mission.selectedRepo ? (
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+              <Chip variant="subtle" className="text-[10px]">
+                {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Route pending"}
+              </Chip>
+              <Chip variant="subtle" className="text-[10px]">
+                {route ? providerLabel(route.providerId) : "Provider pending"}
+              </Chip>
+              <span>
+                {mission.isExecuting
+                  ? "Running execution pipeline..."
+                  : mission.isReviewing
+                  ? "Scoping objective and context..."
+                  : `${routeConfidence}% confidence · ${contextPack ? `${contextPack.tokenBudget} token budget` : "awaiting context pack"}`}
+              </span>
+            </div>
+          ) : null}
 
           <div className="overflow-hidden rounded-[22px] border border-white/10 bg-[#161618] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
             <textarea
@@ -530,128 +547,64 @@ function OverseerCommandCard({
               </div>
 
               {mission.selectedRepo ? (
-                <span className="text-[11px] leading-5 text-zinc-500">Scope Ticket creates/updates backlog. Start Work moves to In Progress and auto-sends successful runs to Needs Review.</span>
-              ) : (
-                <span className="text-[11px] leading-5 text-zinc-500">Desktop app enables the native repo picker. Browser preview keeps the same shell but limits native actions.</span>
-              )}
+                <div className="ml-auto flex min-w-[300px] flex-wrap items-center justify-end gap-2">
+                  <select
+                    value={mission.selectedModelRole}
+                    onChange={(event) => mission.setSelectedModelRole(event.target.value as typeof mission.selectedModelRole)}
+                    disabled={!mission.selectedRepo}
+                    className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed"
+                  >
+                    {Object.entries(mission.roleLabels).map(([role, label]) => (
+                      <option key={role} value={role}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={mission.reviewRoute}
+                    disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
+                  >
+                    {mission.isReviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSearch className="h-3.5 w-3.5" />}
+                    {mission.isReviewing ? "Scoping..." : "Scope Ticket"}
+                  </button>
+                  <button
+                    onClick={mission.executeRoute}
+                    disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
+                  >
+                    {mission.isExecuting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {mission.isExecuting ? "Starting..." : "Start Work"}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
 
-          {mission.selectedRepo && mission.blueprint ? (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <CommandRuleCard
-                icon={<TestTube2 className="h-3.5 w-3.5 text-cyan-300" />}
-                label="Testing"
-                value={mission.blueprint.testingPolicy.requiredForBehaviorChange ? "Behavior changes require tests" : "Tests are optional by default"}
-              />
-              <CommandRuleCard
-                icon={<ScrollText className="h-3.5 w-3.5 text-violet-300" />}
-                label="Documentation"
-                value={mission.blueprint.documentationPolicy.updateUserFacingDocs ? "User-facing docs should be updated" : "Docs updates are optional"}
-              />
-              <CommandRuleCard
-                icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-300" />}
-                label="Execution"
-                value={`${mission.blueprint.providerPolicy.escalationPolicy.replace(/_/g, " ")} escalation · ${mission.blueprint.executionPolicy.maxChangedFilesBeforeReview} files before review`}
-              />
+          {mission.actionMessage ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-xs text-zinc-300">
+              {mission.actionMessage}
             </div>
           ) : null}
+
+          {mission.selectedRepo && mission.blueprint ? (
+            <div className="text-[11px] leading-5 text-zinc-500">
+              Blueprint v{mission.blueprint.version} ·{" "}
+              {mission.blueprint.testingPolicy.requiredForBehaviorChange ? "tests required" : "tests optional"} ·{" "}
+              {mission.blueprint.documentationPolicy.updateUserFacingDocs ? "docs expected" : "docs optional"} ·{" "}
+              escalation {mission.blueprint.providerPolicy.escalationPolicy.replace(/_/g, " ")}
+            </div>
+          ) : (
+            <div className="text-[11px] leading-5 text-zinc-500">
+              Desktop app enables native repo picker. Browser preview keeps the shell but limits native actions.
+            </div>
+          )}
 
           {mission.repoPickerMessage ? (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
               {mission.repoPickerMessage}
             </div>
           ) : null}
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <div className="rounded-[22px] border border-white/10 bg-[#111113] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.22em] text-zinc-500">
-              <span>Execution Route</span>
-              <button
-                onClick={mission.refreshSnapshot}
-                disabled={mission.isActing}
-                className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] text-zinc-300 hover:bg-white/[0.08] disabled:opacity-50"
-              >
-                <Activity className="h-3 w-3" />
-                Refresh
-              </button>
-            </div>
-            <div className="mt-3 rounded-[18px] border border-white/8 bg-[#161618] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-white">
-                  {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Review the route"}
-                </div>
-                <Chip variant="subtle" className="text-[9px]">
-                  {mission.isExecuting ? "Executing" : mission.isReviewing ? "Reviewing" : route ? "Ready" : "Pending"}
-                </Chip>
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {mission.isExecuting
-                  ? "Running execution pipeline..."
-                  : mission.isReviewing
-                  ? "Computing route and context pack..."
-                  : route
-                  ? `${providerLabel(route.providerId)} · ${route.verificationDepth} verification · max ${route.maxLanes} lane${route.maxLanes === 1 ? "" : "s"}`
-                  : "No route locked yet"}
-              </div>
-              <div className="mt-3 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
-                <div
-                  className={cn(
-                    "h-full rounded-full bg-gradient-to-r from-cyan-500 via-violet-500 to-cyan-300",
-                    mission.isExecuting || mission.isReviewing ? "animate-pulse" : ""
-                  )}
-                  style={{ width: `${Math.max(18, routeConfidence)}%` }}
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
-                <span>{route ? `${routeConfidence}% route confidence` : `${Math.round((contextPack?.confidence || 0.3) * 100)}% context confidence`}</span>
-                <span>{contextPack ? `${contextPack.tokenBudget} token budget` : "Awaiting context pack"}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-[22px] border border-white/10 bg-[#111113] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">Mode</div>
-            <select
-              value={mission.selectedModelRole}
-              onChange={(event) => mission.setSelectedModelRole(event.target.value as typeof mission.selectedModelRole)}
-              disabled={!mission.selectedRepo}
-              className="w-full rounded-[16px] border border-white/10 bg-[#161618] px-3 py-3 text-sm text-zinc-100 outline-none disabled:cursor-not-allowed"
-            >
-              {Object.entries(mission.roleLabels).map(([role, label]) => (
-                <option key={role} value={role}>
-                  {label}
-                </option>
-              ))}
-            </select>
-
-            {mission.actionMessage ? (
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 text-xs text-zinc-300">
-                {mission.actionMessage}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                onClick={mission.reviewRoute}
-                disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
-                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
-              >
-                {mission.isReviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-                {mission.isReviewing ? "Scoping..." : "Scope Ticket"}
-              </button>
-              <button
-                onClick={mission.executeRoute}
-                disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
-                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
-              >
-                {mission.isExecuting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                {mission.isExecuting ? "Starting..." : "Start Work"}
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
     </Panel>
   );
@@ -1679,18 +1632,6 @@ function SmallMetric({ icon, label }: { icon: React.ReactNode; label: string }) 
     <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#161618] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-zinc-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <span className="text-zinc-500">{icon}</span>
       <span>{label}</span>
-    </div>
-  );
-}
-
-function CommandRuleCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="rounded-[18px] border border-white/8 bg-[#111113] px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-        {icon}
-        {label}
-      </div>
-      <div className="mt-2 text-sm text-zinc-200">{value}</div>
     </div>
   );
 }
