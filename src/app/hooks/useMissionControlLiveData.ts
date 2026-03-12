@@ -379,6 +379,9 @@ export function useMissionControlLiveData() {
         risk_level: snapshot?.selectedTicket?.risk || "medium",
       });
     },
+    onMutate: () => {
+      setActionMessage("Reviewing route...");
+    },
     onSuccess: (result) => {
       setSelectedTicketId(result.ticket.id);
       setRoutePreview(result.route);
@@ -388,6 +391,13 @@ export function useMissionControlLiveData() {
       }
       setActionMessage("Route reviewed. Ready to execute.");
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+    },
+    onError: (error) => {
+      if (error instanceof Error) {
+        setActionMessage(`Route review failed: ${error.message}`);
+        return;
+      }
+      setActionMessage("Route review failed.");
     },
   });
 
@@ -711,6 +721,7 @@ export function useMissionControlLiveData() {
     addTaskComment: (taskId: string, body: string, parentCommentId?: string | null) =>
       addTaskCommentMutation.mutate({ taskId, body, parentCommentId }),
     isCommenting: addTaskCommentMutation.isPending,
+    isReviewing: reviewRouteMutation.isPending,
     isExecuting: executeMutation.isPending,
     updateBlueprint: (patch: Partial<ProjectBlueprint>) => updateBlueprintMutation.mutate(patch),
     regenerateBlueprint: () => regenerateBlueprintMutation.mutate(),

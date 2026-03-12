@@ -14,6 +14,7 @@ import {
   FolderClock,
   FolderGit2,
   Github,
+  Loader2,
   MessageSquareText,
   PanelLeftOpen,
   Play,
@@ -581,14 +582,26 @@ function OverseerCommandCard({
                   {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Review the route"}
                 </div>
                 <Chip variant="subtle" className="text-[9px]">
-                  {route ? "Ready" : "Pending"}
+                  {mission.isExecuting ? "Executing" : mission.isReviewing ? "Reviewing" : route ? "Ready" : "Pending"}
                 </Chip>
               </div>
               <div className="mt-1 text-xs text-zinc-500">
-                {route ? `${providerLabel(route.providerId)} · ${route.verificationDepth} verification · max ${route.maxLanes} lane${route.maxLanes === 1 ? "" : "s"}` : "No route locked yet"}
+                {mission.isExecuting
+                  ? "Running execution pipeline..."
+                  : mission.isReviewing
+                  ? "Computing route and context pack..."
+                  : route
+                  ? `${providerLabel(route.providerId)} · ${route.verificationDepth} verification · max ${route.maxLanes} lane${route.maxLanes === 1 ? "" : "s"}`
+                  : "No route locked yet"}
               </div>
               <div className="mt-3 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
-                <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-violet-500 to-cyan-300" style={{ width: `${Math.max(18, routeConfidence)}%` }} />
+                <div
+                  className={cn(
+                    "h-full rounded-full bg-gradient-to-r from-cyan-500 via-violet-500 to-cyan-300",
+                    mission.isExecuting || mission.isReviewing ? "animate-pulse" : ""
+                  )}
+                  style={{ width: `${Math.max(18, routeConfidence)}%` }}
+                />
               </div>
               <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
                 <span>{route ? `${routeConfidence}% route confidence` : `${Math.round((contextPack?.confidence || 0.3) * 100)}% context confidence`}</span>
@@ -624,15 +637,15 @@ function OverseerCommandCard({
                 disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
               >
-                <FileSearch className="h-4 w-4" />
-                Review Route
+                {mission.isReviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                {mission.isReviewing ? "Reviewing..." : "Review Route"}
               </button>
               <button
                 onClick={mission.executeRoute}
                 disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
               >
-                <Play className={cn("h-4 w-4", mission.isExecuting ? "animate-pulse" : "")} />
+                {mission.isExecuting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 {mission.isExecuting ? "Executing..." : "Execute"}
               </button>
             </div>
