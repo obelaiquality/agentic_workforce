@@ -679,7 +679,7 @@ export function SettingsControlView() {
         maxTokens: 900,
       },
       coder_default: {
-        enabled: true,
+        enabled: false,
         baseUrl: onPremSettings.baseUrl,
         apiKey: onPremSettings.apiKey,
         inferenceBackendId: onPremSettings.inferenceBackendId,
@@ -691,7 +691,7 @@ export function SettingsControlView() {
         maxTokens: 1800,
       },
       review_deep: {
-        enabled: true,
+        enabled: false,
         baseUrl: onPremSettings.baseUrl,
         apiKey: onPremSettings.apiKey,
         inferenceBackendId: onPremSettings.inferenceBackendId,

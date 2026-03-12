@@ -49,8 +49,23 @@ In the app:
    - open `Settings > Providers > Local role runtimes`
    - click `Apply recommended local split`
    - click `Start enabled runtimes`
-   - use `Test` on `Fast`, `Build`, and `Review`
+   - use `Test` on `Fast`
+   - `Build` and `Review` continue to use the default local `4B` runtime on `http://127.0.0.1:8000/v1`
 5. Return to `Live State`
+
+Alternative fully cloud-driven path:
+1. Add `OPENAI_API_KEY` to your local `.env`
+2. Open `Settings`
+3. Switch runtime mode to `OpenAI API`
+4. Either:
+   - use `Apply Recommended OpenAI Roles`
+   - or set per-role models manually
+
+Current tested OpenAI role setup:
+- `Fast` -> `gpt-5-nano`
+- `Build` -> `gpt-5.3-codex`
+- `Review` -> `gpt-5.4`
+- `Escalate` -> `gpt-5.4`
 
 ## 10-15 min: Create or Connect a Project
 

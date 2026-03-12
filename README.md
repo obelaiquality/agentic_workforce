@@ -437,14 +437,21 @@ Then in **Settings** you can:
 The app now fetches the live model list from your account’s `GET /v1/models` response, so the model picker is not hardcoded. The OpenAI selectors are grouped by family (`GPT-5 Codex`, `GPT-5`, `GPT-4.1`, `GPT-4o`, `O-Series`) instead of one long flat list. `gpt-5-nano` is the default quick preset, and the recommended OpenAI role setup prefers:
 
 - `Fast` -> `gpt-5-nano`
-- `Build` -> latest available Codex-family model
-- `Review` -> stronger GPT-5 general model
+- `Build` -> `gpt-5.3-codex`
+- `Review` -> `gpt-5.4`
 - `Escalate` -> `gpt-5.4`
 
 There is also a **Hybrid Recommended** preset:
 
 - `Fast` -> current local Qwen runtime
-- `Build` -> latest available Codex-family model
+- `Build` -> `gpt-5.3-codex`
+- `Review` -> `gpt-5.4`
+- `Escalate` -> `gpt-5.4`
+
+The full **OpenAI-all** preset has been verified end to end through the desktop acceptance flow with:
+
+- `Fast` -> `gpt-5-nano`
+- `Build` -> `gpt-5.3-codex`
 - `Review` -> `gpt-5.4`
 - `Escalate` -> `gpt-5.4`
 
@@ -465,7 +472,8 @@ Fastest path:
 1. Click **Apply recommended local split**
 2. Review the generated role endpoints
 3. Click **Start enabled runtimes**
-4. Use **Test** on each role before routing work to it
+4. Use **Test** on `Fast`
+5. Use the default local runtime on `http://127.0.0.1:8000/v1` for `Build` and `Review`
 
 Each local role-runtime card now exposes:
 - endpoint
@@ -473,6 +481,13 @@ Each local role-runtime card now exposes:
 - model
 - status
 - diagnostics message
+
+The recommended local split is intentionally:
+- `Fast` -> dedicated `0.8B` runtime on `8001`
+- `Build` -> shared default `4B` runtime on `8000`
+- `Review` -> shared default `4B` runtime on `8000`
+
+This split has also been verified end to end through the desktop acceptance flow.
 
 Important:
 
@@ -540,6 +555,20 @@ npm run test:e2e:desktop-acceptance
 ```
 
 Full Electron lifecycle: bootstrap, scaffold, verification, codebase/console inspection, follow-up edit, report generation. Uses dynamic free ports and API-backed assertions.
+
+Validated preset runs:
+
+```bash
+# All roles on OpenAI
+E2E_RUNTIME_PRESET=openai_all node scripts/playwright/run_electron_desktop_acceptance.mjs
+
+# True local split: Fast=0.8B on :8001, Build/Review=4B on :8000
+E2E_RUNTIME_PRESET=local_split node scripts/playwright/run_electron_desktop_acceptance.mjs
+```
+
+Both flows are currently green:
+- `openai_all`: `gpt-5-nano` / `gpt-5.3-codex` / `gpt-5.4`
+- `local_split`: local `0.8B` + local `4B`
 
 ### Follow-up scenario tests
 

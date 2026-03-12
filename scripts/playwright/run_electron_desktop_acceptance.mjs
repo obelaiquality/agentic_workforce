@@ -152,6 +152,13 @@ async function apiPatch(resource, body) {
   return response.json();
 }
 
+const startedRoleRuntimes = new Set();
+const startedBackends = new Set();
+
+async function waitForRoleRuntime(url, timeoutMs) {
+  return waitForHttp(`${url.replace(/\/$/, "")}/health`, timeoutMs);
+}
+
 async function applyRuntimePreset() {
   if (runtimePreset === "openai_all") {
     await apiPost("/api/v1/settings/runtime-mode", {
@@ -198,6 +205,105 @@ async function applyRuntimePreset() {
         },
       },
     });
+    return;
+  }
+  if (runtimePreset === "local_split") {
+    await apiPost("/api/v1/settings/runtime-mode", { mode: "local_qwen" });
+    const utilityBaseUrl = "http://127.0.0.1:8001/v1";
+    await apiPatch("/api/v1/settings", {
+      onPremQwen: {
+        baseUrl: "http://127.0.0.1:8000/v1",
+        inferenceBackendId: "mlx-lm",
+        pluginId: "qwen3.5-4b",
+        model: "mlx-community/Qwen3.5-4B-4bit",
+        reasoningMode: "off",
+        timeoutMs: 120000,
+        temperature: 0.15,
+        maxTokens: 1600,
+      },
+      modelRoles: {
+        utility_fast: {
+          role: "utility_fast",
+          providerId: "onprem-qwen",
+          pluginId: "qwen3.5-0.8b",
+          model: "Qwen/Qwen3.5-0.8B",
+          temperature: 0.1,
+          maxTokens: 900,
+          reasoningMode: "off",
+        },
+        coder_default: {
+          role: "coder_default",
+          providerId: "onprem-qwen",
+          pluginId: "qwen3.5-4b",
+          model: "mlx-community/Qwen3.5-4B-4bit",
+          temperature: 0.12,
+          maxTokens: 1800,
+          reasoningMode: "off",
+        },
+        review_deep: {
+          role: "review_deep",
+          providerId: "onprem-qwen",
+          pluginId: "qwen3.5-4b",
+          model: "mlx-community/Qwen3.5-4B-4bit",
+          temperature: 0.08,
+          maxTokens: 2200,
+          reasoningMode: "on",
+        },
+        overseer_escalation: {
+          role: "overseer_escalation",
+          providerId: "onprem-qwen",
+          pluginId: "qwen3.5-4b",
+          model: "mlx-community/Qwen3.5-4B-4bit",
+          temperature: 0.08,
+          maxTokens: 2400,
+          reasoningMode: "on",
+        },
+      },
+      onPremQwenRoleRuntimes: {
+        utility_fast: {
+          enabled: true,
+          baseUrl: utilityBaseUrl,
+          apiKey: "",
+          inferenceBackendId: "mlx-lm",
+          pluginId: "qwen3.5-0.8b",
+          model: "Qwen/Qwen3.5-0.8B",
+          reasoningMode: "off",
+          timeoutMs: 120000,
+          temperature: 0.1,
+          maxTokens: 900,
+        },
+        coder_default: {
+          enabled: false,
+          baseUrl: "http://127.0.0.1:8000/v1",
+          apiKey: "",
+          inferenceBackendId: "mlx-lm",
+          pluginId: "qwen3.5-4b",
+          model: "mlx-community/Qwen3.5-4B-4bit",
+          reasoningMode: "off",
+          timeoutMs: 120000,
+          temperature: 0.12,
+          maxTokens: 1800,
+        },
+        review_deep: {
+          enabled: false,
+          baseUrl: "http://127.0.0.1:8000/v1",
+          apiKey: "",
+          inferenceBackendId: "mlx-lm",
+          pluginId: "qwen3.5-4b",
+          model: "mlx-community/Qwen3.5-4B-4bit",
+          reasoningMode: "on",
+          timeoutMs: 120000,
+          temperature: 0.08,
+          maxTokens: 2200,
+        },
+      },
+    });
+    await apiPost("/api/v2/commands/inference.backend.start", { actor: "desktop-acceptance", backend_id: "mlx-lm" });
+    startedBackends.add("mlx-lm");
+    await waitForRoleRuntime("http://127.0.0.1:8000", 120000);
+    await apiPost("/api/v1/providers/onprem/role-runtimes/start-enabled", { actor: "desktop-acceptance" });
+    startedRoleRuntimes.add("utility_fast");
+    await waitForRoleRuntime("http://127.0.0.1:8001", 120000);
   }
 }
 
@@ -225,7 +331,7 @@ function normalizePathForMatch(value) {
 }
 
 async function main() {
-  if (runtimePreset !== "openai_all") {
+  if (runtimePreset !== "openai_all" && runtimePreset !== "local_split") {
     const modelHealth = await fetch("http://127.0.0.1:8000/health").then((response) => response.ok).catch(() => false);
     assert(modelHealth, "Local model runtime is not healthy on 127.0.0.1:8000");
   }
@@ -508,6 +614,17 @@ async function main() {
       build: build.status,
     },
   };
+
+  for (const role of startedRoleRuntimes) {
+    try {
+      await apiPost("/api/v1/providers/onprem/role-runtimes/stop", { actor: "desktop-acceptance", role });
+    } catch {}
+  }
+  for (const backendId of startedBackends) {
+    try {
+      await apiPost("/api/v2/commands/inference.backend.stop", { actor: "desktop-acceptance", backend_id: backendId });
+    } catch {}
+  }
 
   await fsp.writeFile(path.join(outputDir, "summary.json"), JSON.stringify(summary, null, 2));
   log(JSON.stringify(summary, null, 2));
