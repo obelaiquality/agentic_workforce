@@ -333,9 +333,10 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                           timeline={mission.timeline}
                           contextPack={mission.contextPack}
                           onSelectWorkflow={(workflowId, openDrawer) => {
-                            setSelectedWorkflowId(workflowId);
-                            mission.setSelectedTicketId(workflowId);
-                            setCommandDrawerMode(openDrawer ? "task" : "overseer");
+                            const nextWorkflowId = workflowId === selectedWorkflowId ? null : workflowId;
+                            setSelectedWorkflowId(nextWorkflowId);
+                            mission.setSelectedTicketId(nextWorkflowId);
+                            setCommandDrawerMode(openDrawer && nextWorkflowId ? "task" : "overseer");
                           }}
                           onMoveWorkflow={(item, nextLane, beforeWorkflowId) => {
                             if (item.status === nextLane && !beforeWorkflowId) return;
