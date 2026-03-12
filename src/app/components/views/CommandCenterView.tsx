@@ -632,8 +632,8 @@ function OverseerCommandCard({
                 disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
               >
-                <Play className="h-4 w-4" />
-                Execute
+                <Play className={cn("h-4 w-4", mission.isExecuting ? "animate-pulse" : "")} />
+                {mission.isExecuting ? "Executing..." : "Execute"}
               </button>
             </div>
           </div>

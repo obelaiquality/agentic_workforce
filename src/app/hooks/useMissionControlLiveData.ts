@@ -408,6 +408,9 @@ export function useMissionControlLiveData() {
         model_role: selectedModelRole,
       });
     },
+    onMutate: () => {
+      setActionMessage("Executing route...");
+    },
     onSuccess: (result) => {
       setSelectedTicketId(result.ticket.id);
       setSelectedRunId(result.runId);
@@ -417,6 +420,13 @@ export function useMissionControlLiveData() {
       }
       setActionMessage(result.verification ? (result.verification.pass ? "Execution verified." : "Execution finished with verification follow-up.") : "Execution started.");
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+    },
+    onError: (error) => {
+      if (error instanceof Error) {
+        setActionMessage(`Execution failed: ${error.message}`);
+        return;
+      }
+      setActionMessage("Execution failed.");
     },
   });
 
@@ -701,6 +711,7 @@ export function useMissionControlLiveData() {
     addTaskComment: (taskId: string, body: string, parentCommentId?: string | null) =>
       addTaskCommentMutation.mutate({ taskId, body, parentCommentId }),
     isCommenting: addTaskCommentMutation.isPending,
+    isExecuting: executeMutation.isPending,
     updateBlueprint: (patch: Partial<ProjectBlueprint>) => updateBlueprintMutation.mutate(patch),
     regenerateBlueprint: () => regenerateBlueprintMutation.mutate(),
     openProjects: () => setActiveSection("projects"),

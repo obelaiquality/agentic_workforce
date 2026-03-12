@@ -2659,6 +2659,12 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         aggregateId: ticket.id,
       }),
     ]);
+    const roleBindings = await providerOrchestrator.getModelRoleBindings();
+    const routeRoleBinding = roleBindings[route.modelRole as import("../shared/contracts").ModelRole];
+    const responseRoute = {
+      ...route,
+      providerId: routeRoleBinding?.providerId || route.providerId,
+    };
 
     const context = await contextService.materializeContext({
       actor: input.actor,
@@ -2682,7 +2688,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     return {
       ticket,
       blueprint,
-      route,
+      route: responseRoute,
       contextPack: contextPack.pack,
       contextManifest: context.context,
       retrievalTrace: contextPack.retrievalTrace,
@@ -2704,21 +2710,18 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       projectBlueprintService.get(repo.id),
       repoService.getGuidelines(repo.id),
     ]);
-    const existingRoute = (await routerService.listRecentForAggregate(ticket.id))[0] || null;
-    const route =
-      existingRoute ||
-      (
-        await routerService.planRoute({
-          actor: input.actor,
-          repo_id: repo.id,
-          ticket_id: ticket.id,
-          prompt: input.prompt,
-          risk_level: ticket.risk,
-          workspace_path: worktreePath,
-          retrieval_context_ids: [],
-          active_files: [],
-        })
-      );
+    // Always compute a fresh route for execute so provider/model-role changes
+    // (for example switching from local to OpenAI) are respected immediately.
+    const route = await routerService.planRoute({
+      actor: input.actor,
+      repo_id: repo.id,
+      ticket_id: ticket.id,
+      prompt: input.prompt,
+      risk_level: ticket.risk,
+      workspace_path: worktreePath,
+      retrieval_context_ids: [],
+      active_files: [],
+    });
 
     const runId = randomUUID();
     const resolvedRole = applyEscalationPolicy(
@@ -2726,6 +2729,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       blueprint?.providerPolicy.escalationPolicy,
       route.risk as "low" | "medium" | "high" | undefined,
     );
+    const roleBindings = await providerOrchestrator.getModelRoleBindings();
+    const roleBinding = roleBindings[resolvedRole];
+    const resolvedProvider = input.provider_id || roleBinding?.providerId || route.providerId;
     const planned = await executionService.planExecution({
       actor: input.actor,
       runId,
@@ -2736,7 +2742,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       worktreePath,
       queryMode: route.risk === "high" ? "architecture" : "impact",
       modelRole: resolvedRole,
-      providerId: input.provider_id || route.providerId,
+      providerId: resolvedProvider,
       routingDecisionId: route.id,
       verificationPlan: blueprint?.charter.successCriteria || [],
       docsRequired: [],
@@ -2754,7 +2760,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       worktreePath,
       objective: input.prompt,
       modelRole: resolvedRole,
-      providerId: input.provider_id || route.providerId,
+      providerId: resolvedProvider,
       routingDecisionId: route.id,
       contextPackId: planned.contextPack.id,
     });
@@ -2783,7 +2789,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       runId,
       ticket,
       blueprint,
-      route,
+      route: {
+        ...route,
+        modelRole: resolvedRole,
+        providerId: resolvedProvider,
+      },
       attempt,
       verification,
       shareReport: await githubService.getShareReport(runId),
