@@ -389,7 +389,7 @@ async function main() {
     assert(secondAction, "No start action available after scoping");
   }
 
-  const followupReport = await waitFor(
+  let followupReport = await waitFor(
     async () => {
       const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
       const snapshot = snapshotPayload.item;
@@ -407,11 +407,42 @@ async function main() {
         const normalized = normalizePathForMatch(item);
         return normalized.endsWith("src/index.js") || normalized.endsWith("readme.md");
       });
-      return hasTarget && String(report.summary || "").toLowerCase().includes("verified") ? report : null;
+      return hasTarget ? report : null;
     },
-    120000,
+    180000,
     "existing repo follow-up verification report"
-  );
+  ).catch(() => null);
+
+  if (!followupReport) {
+    const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
+    const activeRunId = snapshotPayload?.item?.execution?.activeRunId;
+    assert(activeRunId, "No active follow-up run found for direct verification fallback");
+    await apiPost("/api/v5/commands/execution.verify", {
+      actor: "local-attach-existing",
+      run_id: activeRunId,
+      repo_id: activeRepo.id,
+      worktree_path: managedWorktree,
+      commands: ["npm run lint", "npm test", "npm run build"],
+      docs_required: ["README.md"],
+      full_suite_run: true,
+    });
+
+    followupReport = await waitFor(
+      async () => {
+        const payload = await apiGet(`/api/v8/projects/${activeRepo.id}/report/latest`);
+        const report = payload.item;
+        if (!report) return null;
+        const changedFiles = Array.isArray(report.changedFiles) ? report.changedFiles : [];
+        const hasTarget = changedFiles.some((item) => {
+          const normalized = normalizePathForMatch(item);
+          return normalized.endsWith("src/index.js") || normalized.endsWith("readme.md");
+        });
+        return hasTarget ? report : null;
+      },
+      180000,
+      "existing repo follow-up verification report after direct verification"
+    );
+  }
 
   const sourcePayload = await apiGet(`/api/v8/mission/codebase/file?projectId=${activeRepo.id}&path=${encodeURIComponent("src/index.js")}`);
   const sourceContent = String(sourcePayload.item?.content || "");

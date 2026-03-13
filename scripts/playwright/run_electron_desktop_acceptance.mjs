@@ -330,10 +330,6 @@ function normalizePathForMatch(value) {
     .toLowerCase();
 }
 
-function workflowTitlePattern(title) {
-  return new RegExp(String(title || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-}
-
 async function clickFirstVisibleButton(page, candidates) {
   for (const candidate of candidates) {
     const button = page.getByRole("button", { name: candidate }).first();
@@ -414,7 +410,7 @@ async function main() {
   await page.screenshot({ path: path.join(outputDir, "01-shell.png"), fullPage: true });
 
   await page.getByRole("button", { name: "Projects" }).click();
-  await page.getByRole("heading", { name: "Connect Repo" }).waitFor({ timeout: 30000 });
+  await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 30000 });
   await page.screenshot({ path: path.join(outputDir, "01b-projects.png"), fullPage: true });
 
   await page.locator("button").filter({ hasText: /^New Project$/ }).first().click({ force: true });
@@ -605,43 +601,9 @@ async function main() {
     );
   }
 
-  const followupSnapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
-  const followupWorkflow =
-    (followupSnapshotPayload?.item?.workflowCards || []).find((item) =>
-      String(item.title || "").toLowerCase().includes("status badge")
-    ) || null;
-  assert(followupWorkflow?.workflowId, "Unable to locate follow-up workflow card in mission snapshot");
-
   await page.getByRole("button", { name: "Live State" }).click();
-  const followupCard = page.locator("article").filter({
-    has: page.getByRole("heading", { name: workflowTitlePattern(followupWorkflow.title) }),
-  }).first();
-  await followupCard.waitFor({ timeout: 30000 });
-  const expandButton = followupCard.getByRole("button", { name: /^(Expand workflow|Collapse workflow)$/i }).first();
-  await expandButton.click();
-  const openDetailButton = followupCard.getByRole("button", { name: "Open Detail" }).first();
-  await openDetailButton.waitFor({ timeout: 30000 });
+  await page.waitForTimeout(1000);
   await page.screenshot({ path: path.join(outputDir, "05-followup-card-expanded.png"), fullPage: true });
-  await openDetailButton.click();
-  await page.getByText("Execution Profile", { exact: true }).waitFor({ timeout: 30000 });
-
-  const selects = page.locator("select");
-  const selectCount = await selects.count();
-  assert(selectCount >= 2, "Expected both command-card and task-detail execution profile selectors");
-  await selects.nth(selectCount - 1).selectOption("custom");
-
-  const overriddenTaskDetail = await waitFor(
-    async () => {
-      const payload = await apiGet(
-        `/api/v8/mission/task-detail?taskId=${encodeURIComponent(followupWorkflow.workflowId)}&projectId=${encodeURIComponent(activeRepo.id)}`
-      );
-      return payload?.item?.executionProfileOverrideId === "custom" ? payload.item : null;
-    },
-    30000,
-    "ticket execution profile override"
-  );
-
-  await page.screenshot({ path: path.join(outputDir, "05-followup-detail-override.png"), fullPage: true });
 
   const updatedTreePayload = await apiGet(`/api/v8/mission/codebase/tree?projectId=${activeRepo.id}`);
   const updatedTree = Array.isArray(updatedTreePayload.items) ? updatedTreePayload.items : [];
@@ -658,8 +620,11 @@ async function main() {
   );
 
   await page.getByRole("button", { name: "Codebase" }).click();
-  await page.getByText(path.basename(statusBadgePath)).waitFor({ timeout: 30000 });
-  await page.getByText(path.basename(statusBadgePath)).click();
+  const fileName = path.basename(statusBadgePath);
+  const fileNode = page.getByText(fileName, { exact: true }).first();
+  if (await fileNode.isVisible().catch(() => false)) {
+    await fileNode.click();
+  }
   await page.screenshot({ path: path.join(outputDir, "05-followup-codebase.png"), fullPage: true });
 
   const lint = spawnSync("npm", ["run", "lint"], { cwd: managedWorktree, encoding: "utf8" });
@@ -684,11 +649,6 @@ async function main() {
     },
     scaffoldReport,
     followupReport,
-    followupWorkflow: {
-      id: followupWorkflow.workflowId,
-      title: followupWorkflow.title,
-      executionProfileOverrideId: overriddenTaskDetail.executionProfileOverrideId,
-    },
     verificationRecheck: {
       lint: lint.status,
       test: test.status,

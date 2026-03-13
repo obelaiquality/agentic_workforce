@@ -228,7 +228,7 @@ async function main() {
 
   // --- Bootstrap ---
   await page.getByRole("button", { name: "Projects" }).click();
-  await page.getByRole("heading", { name: "Connect Repo" }).waitFor({ timeout: 30000 });
+  await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 30000 });
   await page.locator("button").filter({ hasText: /^New Project$/ }).first().click({ force: true });
 
   const activeRepo = await waitFor(async () => {
