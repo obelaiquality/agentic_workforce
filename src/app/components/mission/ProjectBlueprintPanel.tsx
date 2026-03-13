@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, RefreshCw, ScrollText, ShieldCheck, TestTube2 } from "lucide-react";
+import { ClipboardCheck, RefreshCw, ShieldCheck, TestTube2 } from "lucide-react";
 import { Chip, Panel, PanelHeader } from "../UI";
 import type { ProjectBlueprint } from "../../../shared/contracts";
+import { ProcessingIndicator } from "../ui/processing-indicator";
 
 export function ProjectBlueprintPanel({
   blueprint,
+  hasActiveRepo = false,
   compact = false,
   isActing = false,
   onUpdate,
@@ -12,6 +14,7 @@ export function ProjectBlueprintPanel({
   onOpenDetails,
 }: {
   blueprint: ProjectBlueprint | null;
+  hasActiveRepo?: boolean;
   compact?: boolean;
   isActing?: boolean;
   onUpdate?: (patch: Partial<ProjectBlueprint>) => void;
@@ -42,6 +45,9 @@ export function ProjectBlueprintPanel({
     <Panel>
       <PanelHeader title="Project Blueprint">
         <div className="flex items-center gap-2">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03]">
+            <img src="/assets/structural-blueprint.svg" alt="" className="h-4 w-4 opacity-80" aria-hidden="true" />
+          </span>
           <Chip variant={blueprint ? "ok" : "warn"} className="text-[10px]">
             {blueprint ? `v${blueprint.version}` : "draft pending"}
           </Chip>
@@ -54,8 +60,28 @@ export function ProjectBlueprintPanel({
 
       <div className="p-4 space-y-4">
         {!blueprint ? (
-          <div className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-zinc-500">
-            Connect a repo to generate a project blueprint from its guidance, scripts, and docs.
+          <div className="space-y-3 rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-zinc-500">
+            <div>
+              {hasActiveRepo
+                ? "No blueprint yet for this project. Generate one from repo guidance, scripts, and docs."
+                : "Connect a repo to generate a project blueprint from its guidance, scripts, and docs."}
+            </div>
+            {hasActiveRepo && onRegenerate ? (
+              <div>
+                <button
+                  onClick={onRegenerate}
+                  disabled={isActing}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.10] px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/[0.16] disabled:opacity-50"
+                >
+                  {isActing ? (
+                    <ProcessingIndicator kind="blueprint" active size="xs" tone="subtle" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  {isActing ? "Generating..." : "Generate Blueprint"}
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <>
@@ -67,7 +93,7 @@ export function ProjectBlueprintPanel({
 
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-                <ScrollText className="h-3.5 w-3.5 text-cyan-300" />
+                <img src="/assets/structural-blueprint.svg" alt="" className="h-3.5 w-3.5 opacity-75" aria-hidden="true" />
                 Project charter
               </div>
               <div className="mt-2 text-sm text-white">{blueprint.charter.productIntent}</div>
@@ -157,8 +183,12 @@ export function ProjectBlueprintPanel({
                         disabled={isActing}
                         className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
                       >
-                        <RefreshCw className={`h-3.5 w-3.5 ${isActing ? "animate-spin" : ""}`} />
-                        Refresh from repo
+                        {isActing ? (
+                          <ProcessingIndicator kind="blueprint" active size="xs" tone="subtle" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        {isActing ? "Refreshing..." : "Refresh from repo"}
                       </button>
                     ) : null}
                     <button
@@ -234,8 +264,12 @@ export function ProjectBlueprintPanel({
                         disabled={isActing}
                         className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
                       >
-                        <RefreshCw className={`h-3.5 w-3.5 ${isActing ? "animate-spin" : ""}`} />
-                        Refresh
+                        {isActing ? (
+                          <ProcessingIndicator kind="blueprint" active size="xs" tone="subtle" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        {isActing ? "Refreshing..." : "Refresh"}
                       </button>
                     ) : null}
                     {onOpenDetails ? (

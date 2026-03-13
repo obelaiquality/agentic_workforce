@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="reactorGlow">
+      <feGaussianBlur stdDeviation="2.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <style>
+      .reactor-shell { fill: none; stroke: #3D2D68; stroke-width: 6; }
+      .turbine { fill: #A48ED1; }
+      .energy-ring { fill: none; stroke: #00FFFF; stroke-width: 3; stroke-dasharray: 60 180; stroke-linecap: round; filter: url(#reactorGlow); }
+      .reactor-core { fill: #FFFFFF; filter: url(#reactorGlow); }
+
+      .spin-fast { animation: spin 1s linear infinite; transform-origin: center; }
+      .spin-energy { animation: spin 2s cubic-bezier(0.4, 0, 0.2, 1) infinite; transform-origin: center; }
+      .overload { animation: colorShift 2s infinite alternate; }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes colorShift {
+        0% { fill: #00FFFF; transform: scale(0.9); }
+        100% { fill: #FF007F; transform: scale(1.2); }
+      }
+    </style>
+  </defs>
+
+  <circle cx="60" cy="60" r="45" class="reactor-shell" />
+
+  <g class="spin-fast">
+    <path d="M60,20 L65,45 L55,45 Z" class="turbine" />
+    <path d="M60,100 L65,75 L55,75 Z" class="turbine" />
+    <path d="M20,60 L45,55 L45,65 Z" class="turbine" />
+    <path d="M100,60 L75,55 L75,65 Z" class="turbine" />
+  </g>
+
+  <circle cx="60" cy="60" r="35" class="energy-ring spin-energy" />
+  <circle cx="60" cy="60" r="35" class="energy-ring spin-energy" style="animation-delay: -1s;" />
+
+  <circle cx="60" cy="60" r="10" class="reactor-core overload" />
+</svg>

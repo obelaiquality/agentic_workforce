@@ -9,18 +9,19 @@ import {
   Bot,
   CheckCircle2,
   CircleDot,
+  ChevronDown,
+  ChevronUp,
   FileCode2,
   FileSearch,
   FolderClock,
   FolderGit2,
   Github,
-  Loader2,
   MessageSquareText,
+  PanelRightClose,
   PanelLeftOpen,
   Play,
   ScrollText,
   SendHorizontal,
-  ShieldAlert,
   Sparkles,
   TestTube2,
   Workflow,
@@ -32,6 +33,7 @@ import { getMissionTaskDetailV8 } from "../../lib/apiClient";
 import { executionModeLabel, modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { Chip, Panel, PanelHeader } from "../UI";
 import { OutcomeDebriefDrawer } from "../mission/OutcomeDebriefDrawer";
+import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
 
 type MissionData = ReturnType<typeof useMissionControlLiveData>;
@@ -168,17 +170,69 @@ function laneSurfaceClass(lane: WorkflowLaneKey) {
   }
 }
 
+function readExecutionProfileSnapshot(metadata: Record<string, unknown> | null | undefined) {
+  const record = (metadata?.execution_profile_snapshot ?? null) as
+    | {
+        profileId?: unknown;
+        profileName?: unknown;
+        stages?: Array<{
+          stage?: unknown;
+          role?: unknown;
+          providerId?: unknown;
+          model?: unknown;
+        }>;
+      }
+    | null;
+
+  if (!record || typeof record.profileId !== "string" || typeof record.profileName !== "string" || !Array.isArray(record.stages)) {
+    return null;
+  }
+
+  const stages = record.stages
+    .map((stage) =>
+      typeof stage?.stage === "string" &&
+      typeof stage?.role === "string" &&
+      typeof stage?.providerId === "string" &&
+      typeof stage?.model === "string"
+        ? {
+            stage: stage.stage,
+            role: stage.role,
+            providerId: stage.providerId,
+            model: stage.model,
+          }
+        : null
+    )
+    .filter(Boolean) as Array<{
+    stage: string;
+    role: string;
+    providerId: string;
+    model: string;
+  }>;
+
+  if (!stages.length) {
+    return null;
+  }
+
+  return {
+    profileId: record.profileId,
+    profileName: record.profileName,
+    stages,
+  };
+}
+
 export function CommandCenterView({ mission }: { mission: MissionData }) {
   const selectedWorkflowId = useUiStore((state) => state.selectedWorkflowId);
   const selectedWorkflowStatus = useUiStore((state) => state.selectedWorkflowStatus);
   const workflowViewMode = useUiStore((state) => state.workflowViewMode);
   const commandDrawerMode = useUiStore((state) => state.commandDrawerMode);
+  const setActiveSection = useUiStore((state) => state.setActiveSection);
+  const setCodebaseScope = useUiStore((state) => state.setCodebaseScope);
   const setSelectedWorkflowId = useUiStore((state) => state.setSelectedWorkflowId);
-  const setSelectedWorkflowStatus = useUiStore((state) => state.setSelectedWorkflowStatus);
   const setWorkflowViewMode = useUiStore((state) => state.setWorkflowViewMode);
   const setCommandDrawerMode = useUiStore((state) => state.setCommandDrawerMode);
   const [commentDraft, setCommentDraft] = useState("");
   const [replyTargetId, setReplyTargetId] = useState<string | null>(null);
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
 
   const taskDetailQuery = useQuery({
     queryKey: ["command-workflow-task-detail", mission.selectedRepo?.id, selectedWorkflowId],
@@ -266,32 +320,92 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
     }));
   }, [groupedWorkflows]);
 
+  const showOutcomeDebrief = Boolean(
+    mission.verification ||
+      mission.shareReport?.summary ||
+      (mission.runSummary?.status && !["idle", "planned"].includes(mission.runSummary.status.toLowerCase()))
+  );
+
+  const detailPinned = contextPanelOpen && commandDrawerMode !== "overseer";
+
+  function selectWorkflow(workflowId: string, options?: { openDrawer?: boolean }) {
+    const openDrawer = options?.openDrawer ?? false;
+    if (openDrawer) {
+      setSelectedWorkflowId(workflowId);
+      mission.setSelectedTicketId(workflowId);
+      setCommandDrawerMode("task");
+      setContextPanelOpen(true);
+      return;
+    }
+
+    if (detailPinned && selectedWorkflowId === workflowId) {
+      return;
+    }
+
+    const nextWorkflowId = workflowId === selectedWorkflowId ? null : workflowId;
+    setSelectedWorkflowId(nextWorkflowId);
+    mission.setSelectedTicketId(nextWorkflowId);
+    if (!nextWorkflowId) {
+      setCommandDrawerMode("overseer");
+    }
+  }
+
+  function openApprovalContext(workflowId?: string | null) {
+    const targetWorkflowId = workflowId || selectedWorkflowId || mission.selectedTicket?.id || null;
+    if (targetWorkflowId) {
+      setSelectedWorkflowId(targetWorkflowId);
+      mission.setSelectedTicketId(targetWorkflowId);
+    }
+    setCommandDrawerMode("approval");
+    setContextPanelOpen(true);
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_352px]">
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-4",
+        contextPanelOpen ? "xl:grid-cols-[minmax(0,1fr)_352px]" : "xl:grid-cols-1"
+      )}
+    >
       <div className="min-w-0 space-y-4">
+        {mission.selectedRepo ? (
+          <div className="flex items-center justify-end">
+            {contextPanelOpen ? (
+              <button
+                onClick={() => setContextPanelOpen(false)}
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+                Hide Context
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <OverseerCommandCard
           mission={mission}
           attentionCount={attentionCount}
           onOpenProjects={mission.openProjects}
+          onOpenSettings={() => setActiveSection("settings")}
+          onOpenConsole={() => setActiveSection("console")}
+          onOpenCodebaseScope={(scope) => {
+            setCodebaseScope(scope);
+            setActiveSection("codebase");
+          }}
+          onOpenApprovals={openApprovalContext}
         />
 
         {mission.selectedRepo ? (
           <>
-            <WorkflowSummaryRow
-              lanes={laneActivity}
-              selectedLane={selectedLane}
-              onSelect={(lane) => {
-                const next = selectedWorkflowStatus === lane ? "all" : lane;
-                setSelectedWorkflowStatus(next);
-                if (next !== "all" && selectedWorkflow?.status !== next) {
-                  setSelectedWorkflowId(null);
-                  setCommandDrawerMode("overseer");
-                }
-              }}
-            />
-
             <Panel className="border-white/8">
-              <PanelHeader title="Agent Workflows">
+              <PanelHeader
+                title={
+                  <span className="inline-flex items-center gap-2">
+                    <img src="/assets/autonomous-kanban.svg" alt="" className="h-4 w-4 opacity-80" aria-hidden="true" />
+                    <span>Agent Workflows</span>
+                  </span>
+                }
+              >
                 <div className="flex items-center gap-2">
                   <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/[0.03] p-1">
                     <button
@@ -329,19 +443,18 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                           lane={lane}
                           emphasized={!selectedLane || selectedLane === lane.key}
                           selectedWorkflowId={selectedWorkflowId}
+                          detailPinned={detailPinned}
                           taskDetail={taskDetail}
                           timeline={mission.timeline}
                           contextPack={mission.contextPack}
-                          onSelectWorkflow={(workflowId, openDrawer) => {
-                            const nextWorkflowId = workflowId === selectedWorkflowId ? null : workflowId;
-                            setSelectedWorkflowId(nextWorkflowId);
-                            mission.setSelectedTicketId(nextWorkflowId);
-                            setCommandDrawerMode(openDrawer && nextWorkflowId ? "task" : "overseer");
-                          }}
+                          onSelectWorkflow={(workflowId, openDrawer) => selectWorkflow(workflowId, { openDrawer })}
+                          onOpenApprovals={openApprovalContext}
                           onMoveWorkflow={(item, nextLane, beforeWorkflowId) => {
                             if (item.status === nextLane && !beforeWorkflowId) return;
                             mission.moveWorkflow(toMoveRequest(item, nextLane, beforeWorkflowId ?? null));
                           }}
+                          onAddTaskComment={mission.addTaskComment}
+                          isCommenting={mission.isCommenting}
                         />
                       ))}
                     </div>
@@ -358,24 +471,18 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                             lane={lane.key}
                             active={item.workflowId === selectedWorkflowId}
                             expanded={item.workflowId === selectedWorkflowId}
+                            detailPinned={detailPinned}
                             contextPack={item.workflowId === selectedWorkflowId ? mission.contextPack : null}
                             taskDetail={item.workflowId === selectedWorkflowId ? taskDetail : null}
                             timeline={item.workflowId === selectedWorkflowId ? mission.timeline : []}
-                            onToggleExpand={() => {
-                              const next = item.workflowId === selectedWorkflowId ? null : item.workflowId;
-                              setSelectedWorkflowId(next);
-                              mission.setSelectedTicketId(next);
-                              if (!next) setCommandDrawerMode("overseer");
-                            }}
-                            onOpenDetail={() => {
-                              setSelectedWorkflowId(item.workflowId);
-                              mission.setSelectedTicketId(item.workflowId);
-                              setCommandDrawerMode("task");
-                            }}
+                            onToggleExpand={() => selectWorkflow(item.workflowId)}
+                            onOpenDetail={() => selectWorkflow(item.workflowId, { openDrawer: true })}
+                            onOpenApprovals={openApprovalContext}
                             onMove={(nextLane, beforeWorkflowId) =>
                               mission.moveWorkflow(toMoveRequest(item, nextLane, beforeWorkflowId ?? null))
                             }
-                            dragging={false}
+                            onAddTaskComment={mission.addTaskComment}
+                            isCommenting={mission.isCommenting}
                             subtle={false}
                           />
                         ))
@@ -385,12 +492,14 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
               </div>
             </Panel>
 
-            <OutcomeDebriefDrawer
-              runSummary={mission.runSummary}
-              verification={mission.verification}
-              shareReport={mission.shareReport}
-              blueprint={mission.blueprint}
-            />
+            {showOutcomeDebrief ? (
+              <OutcomeDebriefDrawer
+                runSummary={mission.runSummary}
+                verification={mission.verification}
+                shareReport={mission.shareReport}
+                blueprint={mission.blueprint}
+              />
+            ) : null}
           </>
         ) : (
           <ConnectSurface
@@ -406,19 +515,21 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
         )}
       </div>
 
-      <CommandContextDrawer
-        mission={mission}
-        mode={commandDrawerMode}
-        setMode={setCommandDrawerMode}
-        selectedWorkflow={selectedWorkflow}
-        selectedWorkflowId={selectedWorkflowId}
-        taskDetail={taskDetail}
-        approvals={workflowApprovals}
-        commentDraft={commentDraft}
-        setCommentDraft={setCommentDraft}
-        replyTargetId={replyTargetId}
-        setReplyTargetId={setReplyTargetId}
-      />
+      {contextPanelOpen ? (
+        <CommandContextDrawer
+          mission={mission}
+          mode={commandDrawerMode}
+          setMode={setCommandDrawerMode}
+          selectedWorkflow={selectedWorkflow}
+          selectedWorkflowId={selectedWorkflowId}
+          taskDetail={taskDetail}
+          approvals={workflowApprovals}
+          commentDraft={commentDraft}
+          setCommentDraft={setCommentDraft}
+          replyTargetId={replyTargetId}
+          setReplyTargetId={setReplyTargetId}
+        />
+      ) : null}
     </div>
   );
 }
@@ -427,16 +538,79 @@ function OverseerCommandCard({
   mission,
   attentionCount,
   onOpenProjects,
+  onOpenSettings,
+  onOpenConsole,
+  onOpenCodebaseScope,
+  onOpenApprovals,
 }: {
   mission: MissionData;
   attentionCount: number;
   onOpenProjects: () => void;
+  onOpenSettings: () => void;
+  onOpenConsole: () => void;
+  onOpenCodebaseScope: (scope: "context" | "tests" | "docs") => void;
+  onOpenApprovals: () => void;
 }) {
+  const [showDetails, setShowDetails] = useState(false);
   const route = mission.route;
   const contextPack = mission.contextPack;
+  const hasInput = Boolean(mission.input.trim());
+  const hasRouteContext = Boolean(route && contextPack);
+  const selectedTicketStatus = mission.selectedTicket?.status ?? null;
+  const currentStage = mission.isExecuting
+    ? "build"
+    : mission.isReviewing
+    ? "scope"
+    : selectedTicketStatus === "done"
+    ? "complete"
+    : selectedTicketStatus === "review"
+    ? "review"
+    : hasRouteContext
+    ? "build"
+    : "scope";
   const routeConfidence = route
     ? Math.round(((mission.route?.metadata?.confidence as number | undefined) || contextPack?.confidence || 0.68) * 100)
     : Math.round((contextPack?.confidence || 0.38) * 100);
+  const routeStatus = mission.isExecuting
+    ? "Running execution pipeline..."
+    : mission.isReviewing
+    ? "Scoping objective and context..."
+    : route && contextPack
+    ? "Route ready for execution."
+    : contextPack
+    ? "Context pack ready for route review"
+    : "Awaiting context pack";
+  const primaryAction =
+    !mission.selectedRepo || !hasInput || mission.isExecuting || mission.isReviewing || !hasRouteContext
+      ? mission.reviewRoute
+      : mission.executeRoute;
+  const primaryLabel = mission.isExecuting
+    ? "Starting..."
+    : mission.isReviewing
+    ? "Scoping..."
+    : !hasRouteContext
+    ? "Scope Ticket"
+    : selectedTicketStatus === "review"
+    ? "Resume Review"
+    : selectedTicketStatus === "in_progress"
+    ? "Continue Work"
+    : "Start Work";
+  const stageHint =
+    currentStage === "scope"
+      ? "We’ll create a backlog ticket from this objective using the project blueprint."
+      : currentStage === "build"
+      ? "Route scoped. Start work to move the ticket into active execution."
+      : currentStage === "review"
+      ? "Execution needs review follow-up before the workflow can close."
+      : "Verification passed and the workflow is ready to close out.";
+  const lifecycleSummary = mission.selectedExecutionProfile
+    ? (["scope", "build", "review", "escalate"] as const)
+        .map((stage) => `${stage}: ${mission.roleLabels[mission.selectedExecutionProfileStages[stage]]}`)
+        .join(" · ")
+    : "Lifecycle profile pending";
+  const isPatchTimeout =
+    (mission.actionMessage || "").toLowerCase().includes("timed out while generating patch") ||
+    (mission.actionMessage || "").toLowerCase().includes("generic patch generation timed out");
 
   return (
     <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
@@ -445,7 +619,7 @@ function OverseerCommandCard({
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
-                <Workflow className="h-3.5 w-3.5 text-cyan-300" />
+                <img src="/assets/hypercube.svg" alt="" className="h-3.5 w-3.5 opacity-80" aria-hidden="true" />
                 Overseer Command
               </div>
               <h2 className="text-[1.22rem] font-semibold tracking-tight text-white lg:text-[1.28rem]">
@@ -479,20 +653,56 @@ function OverseerCommandCard({
           </div>
 
           {mission.selectedRepo ? (
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
-              <Chip variant="subtle" className="text-[10px]">
-                {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Route pending"}
-              </Chip>
-              <Chip variant="subtle" className="text-[10px]">
-                {route ? providerLabel(route.providerId) : "Provider pending"}
-              </Chip>
-              <span>
-                {mission.isExecuting
-                  ? "Running execution pipeline..."
-                  : mission.isReviewing
-                  ? "Scoping objective and context..."
-                  : `${routeConfidence}% confidence · ${contextPack ? `${contextPack.tokenBudget} token budget` : "awaiting context pack"}`}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400">
+              <span className="inline-flex items-center gap-2">
+                {mission.isExecuting || mission.isReviewing ? (
+                  <ProcessingIndicator
+                    kind={mission.isExecuting ? "processing" : "thinking"}
+                    active
+                    size="xs"
+                    tone="subtle"
+                  />
+                ) : null}
+                {routeStatus}
               </span>
+              <button
+                type="button"
+                onClick={() => setShowDetails((value) => !value)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+              >
+                Details
+                {showDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </button>
+            </div>
+          ) : null}
+
+          {mission.selectedRepo && showDetails ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[11px] text-zinc-300">
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip variant="subtle" className="text-[10px]">
+                  {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Route pending"}
+                </Chip>
+                <Chip variant="subtle" className="text-[10px]">
+                  {mission.selectedExecutionProfile ? `Profile · ${mission.selectedExecutionProfile.name}` : "Profile pending"}
+                </Chip>
+                <Chip variant="subtle" className="text-[10px]">
+                  {routeConfidence}% confidence
+                </Chip>
+                <Chip variant="subtle" className="text-[10px]">
+                  Stage · {currentStage}
+                </Chip>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-zinc-400">
+                <span>{stageHint}</span>
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+                >
+                  Lifecycle Models
+                </button>
+              </div>
+              <div className="mt-1.5 text-zinc-500">{lifecycleSummary}</div>
             </div>
           ) : null}
 
@@ -513,10 +723,30 @@ function OverseerCommandCard({
               <div className="flex flex-wrap items-center gap-2">
                 {mission.selectedRepo ? (
                   <>
-                    <SmallMetric icon={<FileCode2 className="h-3 w-3" />} label={`Context ${contextPack?.files.length || 0} files`} />
-                    <SmallMetric icon={<TestTube2 className="h-3 w-3" />} label={`${contextPack?.tests.length || 0} tests`} />
-                    <SmallMetric icon={<ScrollText className="h-3 w-3" />} label={`${contextPack?.docs.length || 0} docs`} />
-                    <SmallMetric icon={<ShieldAlert className="h-3 w-3" />} label={`${mission.pendingApprovals.length} approvals`} />
+                    <SmallMetric
+                      icon={<img src="/assets/hypercube.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
+                      label={`Context ${contextPack?.files.length || 0} files`}
+                      onClick={() => onOpenCodebaseScope("context")}
+                      disabled={!contextPack?.files.length}
+                    />
+                    <SmallMetric
+                      icon={<img src="/assets/benchmark-reactor.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
+                      label={`${contextPack?.tests.length || 0} tests`}
+                      onClick={() => onOpenCodebaseScope("tests")}
+                      disabled={!contextPack?.tests.length}
+                    />
+                    <SmallMetric
+                      icon={<img src="/assets/structural-blueprint.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
+                      label={`${contextPack?.docs.length || 0} docs`}
+                      onClick={() => onOpenCodebaseScope("docs")}
+                      disabled={!contextPack?.docs.length}
+                    />
+                    <SmallMetric
+                      icon={<img src="/assets/aegis-eye.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
+                      label={`${mission.pendingApprovals.length} approvals`}
+                      onClick={onOpenApprovals}
+                      disabled={!mission.pendingApprovals.length}
+                    />
                   </>
                 ) : (
                   <>
@@ -549,33 +779,45 @@ function OverseerCommandCard({
               {mission.selectedRepo ? (
                 <div className="ml-auto flex min-w-[300px] flex-wrap items-center justify-end gap-2">
                   <select
-                    value={mission.selectedModelRole}
-                    onChange={(event) => mission.setSelectedModelRole(event.target.value as typeof mission.selectedModelRole)}
-                    disabled={!mission.selectedRepo}
+                    value={mission.selectedExecutionProfileId}
+                    onChange={(event) => mission.setExecutionProfile(event.target.value)}
+                    disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
                     className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed"
                   >
-                    {Object.entries(mission.roleLabels).map(([role, label]) => (
-                      <option key={role} value={role}>
-                        {label}
+                    {mission.executionProfiles.profiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
                       </option>
                     ))}
                   </select>
+                  {mission.isUpdatingExecutionProfile ? (
+                    <div className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-2 text-[10px] uppercase tracking-[0.16em] text-cyan-200">
+                      <ProcessingIndicator kind="processing" active size="xs" tone="accent" />
+                      Updating profile
+                    </div>
+                  ) : null}
                   <button
-                    onClick={mission.reviewRoute}
-                    disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
-                  >
-                    {mission.isReviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSearch className="h-3.5 w-3.5" />}
-                    {mission.isReviewing ? "Scoping..." : "Scope Ticket"}
-                  </button>
-                  <button
-                    onClick={mission.executeRoute}
-                    disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
+                    onClick={primaryAction}
+                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
                   >
-                    {mission.isExecuting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                    {mission.isExecuting ? "Starting..." : "Start Work"}
+                    {mission.isExecuting || mission.isReviewing ? (
+                      <ProcessingIndicator kind={mission.isExecuting ? "processing" : "thinking"} active size="xs" tone="accent" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    {primaryLabel}
                   </button>
+                  {hasRouteContext ? (
+                    <button
+                      onClick={mission.reviewRoute}
+                      disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
+                    >
+                      <FileSearch className="h-3.5 w-3.5" />
+                      Re-scope
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -583,22 +825,36 @@ function OverseerCommandCard({
 
           {mission.actionMessage ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-xs text-zinc-300">
-              {mission.actionMessage}
+              <div>{mission.actionMessage}</div>
+              {isPatchTimeout ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={mission.executeRoute}
+                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                    className="rounded-lg border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-200 transition hover:bg-cyan-500/14 disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={mission.reviewRoute}
+                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                    className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-50"
+                  >
+                    Retry Smaller Scope
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onOpenConsole}
+                    className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+                  >
+                    Open Console
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
-
-          {mission.selectedRepo && mission.blueprint ? (
-            <div className="text-[11px] leading-5 text-zinc-500">
-              Blueprint v{mission.blueprint.version} ·{" "}
-              {mission.blueprint.testingPolicy.requiredForBehaviorChange ? "tests required" : "tests optional"} ·{" "}
-              {mission.blueprint.documentationPolicy.updateUserFacingDocs ? "docs expected" : "docs optional"} ·{" "}
-              escalation {mission.blueprint.providerPolicy.escalationPolicy.replace(/_/g, " ")}
-            </div>
-          ) : (
-            <div className="text-[11px] leading-5 text-zinc-500">
-              Desktop app enables native repo picker. Browser preview keeps the shell but limits native actions.
-            </div>
-          )}
 
           {mission.repoPickerMessage ? (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
@@ -610,68 +866,19 @@ function OverseerCommandCard({
   );
 }
 
-function WorkflowSummaryRow({
-  lanes,
-  selectedLane,
-  onSelect,
-}: {
-  lanes: Array<{
-    key: WorkflowLaneKey;
-    label: string;
-    description: string;
-    summary: MissionData["workflowPillars"][number];
-  }>;
-  selectedLane: WorkflowLaneKey | null;
-  onSelect: (lane: WorkflowLaneKey) => void;
-}) {
-  return (
-    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
-      {lanes.map((lane) => {
-        const meta = laneMetaFor(lane.key);
-        const active = selectedLane === lane.key;
-        return (
-          <button
-            key={lane.key}
-            onClick={() => onSelect(lane.key)}
-            className={cn(
-              "rounded-[22px] border px-4 py-3.5 text-left transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
-              meta.columnClass,
-              active ? "ring-1 ring-white/12 shadow-[0_0_18px_rgba(255,255,255,0.04)]" : "hover:border-white/16 hover:bg-white/[0.015]"
-            )}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-zinc-400">
-                  <span className={cn("h-2.5 w-2.5 rounded-full", meta.dotClass, active ? "animate-pulse" : "")} />
-                  {lane.label}
-                </div>
-              </div>
-              <div className={cn("inline-flex h-8 min-w-8 items-center justify-center rounded-lg border px-2.5 py-1 text-xs font-medium", meta.chipClass)}>
-                {lane.summary.count}
-              </div>
-            </div>
-            <div className="mt-2.5 max-w-[16rem] text-[13px] leading-5 text-zinc-400">{lane.description}</div>
-            {lane.summary.blockedCount ? (
-              <div className="mt-2.5 text-[11px] text-amber-300">
-                {lane.summary.blockedCount} blocked in this lane
-              </div>
-            ) : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function WorkflowLane({
   lane,
   emphasized,
   selectedWorkflowId,
+  detailPinned,
   taskDetail,
   timeline,
   contextPack,
   onSelectWorkflow,
+  onOpenApprovals,
   onMoveWorkflow,
+  onAddTaskComment,
+  isCommenting,
 }: {
   lane: {
     key: WorkflowLaneKey;
@@ -682,11 +889,15 @@ function WorkflowLane({
   };
   emphasized: boolean;
   selectedWorkflowId: string | null;
+  detailPinned: boolean;
   taskDetail: TaskDetail;
   timeline: MissionData["timeline"];
   contextPack: MissionData["contextPack"] | null;
   onSelectWorkflow: (workflowId: string, openDrawer: boolean) => void;
+  onOpenApprovals: (workflowId?: string | null) => void;
   onMoveWorkflow: (item: WorkflowCardItem, nextLane: WorkflowLaneKey, beforeWorkflowId?: string | null) => void;
+  onAddTaskComment: (taskId: string, body: string, parentCommentId?: string | null) => void;
+  isCommenting: boolean;
 }) {
   const meta = laneMetaFor(lane.key);
   const [{ isOver, canDrop }, dropRef] = useDrop(
@@ -720,7 +931,7 @@ function WorkflowLane({
       <div className="flex items-start justify-between gap-2 border-b border-white/6 bg-white/[0.02] px-4 py-3.5">
         <div>
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-zinc-400">
-            <span className={cn("h-2.5 w-2.5 rounded-full", meta.dotClass, lane.key === "in_progress" ? "animate-pulse" : "")} />
+            <span className={cn("h-2.5 w-2.5 rounded-full", meta.dotClass)} />
             {lane.label}
           </div>
           <div className="mt-2 max-w-[15rem] text-[13px] leading-5 text-zinc-400">{lane.description}</div>
@@ -743,12 +954,16 @@ function WorkflowLane({
               lane={lane.key}
               active={item.workflowId === selectedWorkflowId}
               expanded={item.workflowId === selectedWorkflowId}
+              detailPinned={detailPinned}
               contextPack={item.workflowId === selectedWorkflowId ? contextPack : null}
               taskDetail={item.workflowId === selectedWorkflowId ? taskDetail : null}
               timeline={item.workflowId === selectedWorkflowId ? timeline : []}
               onToggleExpand={() => onSelectWorkflow(item.workflowId, false)}
               onOpenDetail={() => onSelectWorkflow(item.workflowId, true)}
+              onOpenApprovals={() => onOpenApprovals(item.workflowId)}
               onMove={(nextLane, beforeWorkflowId) => onMoveWorkflow(item, nextLane, beforeWorkflowId)}
+              onAddTaskComment={onAddTaskComment}
+              isCommenting={isCommenting}
               subtle={!emphasized}
             />
           ))
@@ -763,36 +978,47 @@ function WorkflowCard({
   lane,
   active,
   expanded,
+  detailPinned,
   contextPack,
   taskDetail,
   timeline,
   onToggleExpand,
   onOpenDetail,
+  onOpenApprovals,
   onMove,
+  onAddTaskComment,
+  isCommenting,
   subtle,
 }: {
   item: WorkflowCardItem;
   lane: WorkflowLaneKey;
   active: boolean;
   expanded: boolean;
+  detailPinned: boolean;
   contextPack: MissionData["contextPack"] | null;
   taskDetail: TaskDetail;
   timeline: MissionData["timeline"];
   onToggleExpand: () => void;
   onOpenDetail: () => void;
+  onOpenApprovals: () => void;
   onMove: (nextLane: WorkflowLaneKey, beforeWorkflowId?: string | null) => void;
+  onAddTaskComment: (taskId: string, body: string, parentCommentId?: string | null) => void;
+  isCommenting: boolean;
   subtle: boolean;
 }) {
+  const setActiveSection = useUiStore((state) => state.setActiveSection);
+  const setCodebaseScope = useUiStore((state) => state.setCodebaseScope);
   const meta = laneMetaFor(lane);
   const [{ isDragging }, dragRef] = useDrag(
     () => ({
       type: DND_TYPE,
       item,
+      canDrag: () => !expanded,
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
       }),
     }),
-    [item]
+    [expanded, item]
   );
   const [{ isOver: isCardOver, canDrop: canDropOnCard }, dropRef] = useDrop(
     () => ({
@@ -813,22 +1039,48 @@ function WorkflowCard({
     }),
     [item.workflowId, lane, onMove]
   );
+  const [noteDraft, setNoteDraft] = useState("");
 
   const events = timeline.filter((event) => event.task_id === item.workflowId).slice(-3);
   const allowedTransitions = allowedMoves(item.status);
   const hasImpactSummary = item.impactedFiles.length > 0 || item.impactedTests.length > 0 || item.impactedDocs.length > 0;
-  const summaryToggleProps = {
-    role: "button" as const,
-    tabIndex: 0,
-    onClick: onToggleExpand,
-    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        onToggleExpand();
-      }
-    },
+  const linkedFiles = taskDetail?.impactedFiles.length ? taskDetail.impactedFiles : contextPack?.files.length ? contextPack.files : item.impactedFiles;
+  const linkedTests = taskDetail?.impactedTests.length ? taskDetail.impactedTests : contextPack?.tests.length ? contextPack.tests : item.impactedTests;
+  const linkedDocs = taskDetail?.impactedDocs.length ? taskDetail.impactedDocs : contextPack?.docs.length ? contextPack.docs : item.impactedDocs;
+  const latestEvent = events.length ? events[events.length - 1] : null;
+  const verificationSignalCount = taskDetail?.verification.length ?? 0;
+  const commentCount = countCommentThread(taskDetail?.comments ?? []);
+  const recentComments = taskDetail?.comments.slice(-2) ?? [];
+  const verificationLabel =
+    lane === "completed"
+      ? "verified"
+      : item.verificationFailure
+      ? "failed"
+      : lane === "needs_review"
+      ? "review pending"
+      : item.verificationState
+      ? item.verificationState.replace(/_/g, " ")
+      : "pending";
+  const executionSnapshotSummary = taskDetail?.route
+    ? `${executionModeLabel(taskDetail.route.executionMode)} · ${modelRoleLabel(taskDetail.route.modelRole)}`
+    : lane === "completed"
+    ? "Execution and verification completed."
+    : lane === "needs_review"
+    ? item.verificationFailure || "Awaiting review follow-up."
+    : lane === "in_progress"
+    ? "Execution in progress."
+    : item.blockedReason || "Ready to execute.";
+  const atAGlanceSummary = lane === "completed"
+    ? `Verified with ${verificationSignalCount} signal${verificationSignalCount === 1 ? "" : "s"}.`
+    : lane === "needs_review"
+    ? item.verificationFailure || taskDetail?.verificationCommand || "Needs review follow-up."
+    : lane === "in_progress"
+    ? `Working set: ${linkedFiles.length} files · ${linkedTests.length} tests · ${linkedDocs.length} docs.`
+    : "Ticket scoped and ready for execution.";
+  const openCodebaseScope = (scope: "context" | "tests" | "docs") => {
+    setCodebaseScope(scope);
+    setActiveSection("codebase");
   };
-
   return (
     <article
       ref={(node) => {
@@ -848,17 +1100,21 @@ function WorkflowCard({
     >
       <div className="px-4 py-3.5">
         <div className="min-w-0 flex-1">
-          <div
-            {...summaryToggleProps}
-            className="min-w-0 cursor-pointer rounded-[18px] outline-none transition focus-visible:ring-1 focus-visible:ring-cyan-300/30"
+          <button
+            type="button"
+            onClick={() => {
+              if (detailPinned && expanded) return;
+              onToggleExpand();
+            }}
+            className="min-w-0 w-full cursor-pointer rounded-[18px] px-1.5 text-left outline-none transition focus-visible:ring-1 focus-visible:ring-cyan-300/30"
             aria-label={expanded ? "Collapse workflow" : "Expand workflow"}
           >
             <div className="flex items-start justify-between gap-2.5">
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-2.5">
-                  <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", meta.dotClass, lane === "in_progress" ? "animate-pulse" : "")} />
+                  <span className={cn("mt-1.5 ml-0.5 h-2 w-2 shrink-0 rounded-full", meta.dotClass)} />
                   <div className="min-w-0 flex-1">
-                    <h3 className="line-clamp-2 text-[14px] font-semibold leading-5 text-white">{item.title}</h3>
+                    <h3 className="line-clamp-2 break-words [overflow-wrap:anywhere] text-[14px] font-semibold leading-5 text-white">{item.title}</h3>
                     {item.isBlocked || item.verificationState ? (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {item.isBlocked ? (
@@ -873,7 +1129,7 @@ function WorkflowCard({
                         ) : null}
                       </div>
                     ) : null}
-                    <p className="mt-1.5 line-clamp-3 text-[13px] leading-6 text-zinc-400">{item.subtitle}</p>
+                    <p className="mt-1.5 line-clamp-3 break-words [overflow-wrap:anywhere] text-[13px] leading-6 text-zinc-400">{item.subtitle}</p>
                   </div>
                 </div>
               </div>
@@ -889,6 +1145,15 @@ function WorkflowCard({
               {item.ownerLabel ? (
                 <Chip variant="subtle" className="px-2 py-1 text-[9px]">
                   {item.ownerLabel}
+                </Chip>
+              ) : null}
+              {item.executionProfileOverrideName ? (
+                <Chip
+                  variant="subtle"
+                  className="px-2 py-1 border-cyan-500/18 bg-cyan-500/8 text-[9px] text-cyan-100"
+                  title={`Ticket override: ${item.executionProfileOverrideName}`}
+                >
+                  Profile · {item.executionProfileOverrideName}
                 </Chip>
               ) : null}
               {lane === "needs_review" ? (
@@ -921,7 +1186,7 @@ function WorkflowCard({
                 </>
               ) : (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                  Impact pending
+                  {lane === "completed" ? "Impact captured" : lane === "needs_review" ? "Review context pending" : "Impact pending"}
                 </span>
               )}
               <span>{formatDistanceToNow(new Date(item.lastUpdatedAt), { addSuffix: true })}</span>
@@ -943,7 +1208,7 @@ function WorkflowCard({
             {lane === "needs_review" ? (
               <div className="mt-3 inline-flex items-center gap-2 text-xs text-violet-300">
                 <CircleDot className="h-3.5 w-3.5" />
-                Awaiting review follow-up
+                {item.verificationFailure || "Awaiting review follow-up"}
               </div>
             ) : null}
 
@@ -962,7 +1227,7 @@ function WorkflowCard({
                 />
               </div>
             ) : null}
-          </div>
+          </button>
         </div>
       </div>
 
@@ -973,18 +1238,14 @@ function WorkflowCard({
               <MetaStat label="Priority" value={item.priority} />
               <MetaStat label="Risk" value={item.risk} />
               <MetaStat label="Status" value={STATUS_LABELS[item.rawStatus] || item.rawStatus} />
-              <MetaStat label="Verification" value={item.verificationState || "pending"} />
+              <MetaStat label="Verification" value={verificationLabel} />
             </div>
 
             <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Execution Snapshot</div>
-                  <div className="mt-1.5 text-[13px] leading-5 text-white">
-                    {taskDetail?.route
-                      ? `${executionModeLabel(taskDetail.route.executionMode)} · ${modelRoleLabel(taskDetail.route.modelRole)}`
-                      : item.blockedReason || "Route review will sharpen the execution plan."}
-                  </div>
+                  <div className="mt-1.5 text-[13px] leading-5 text-white">{executionSnapshotSummary}</div>
                 </div>
                 <Chip variant="subtle" className={cn("text-[9px]", metricTone(lane))}>
                   {progressForCard(item)}%
@@ -1013,66 +1274,156 @@ function WorkflowCard({
               ) : null}
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5 xl:grid-cols-4">
               <MiniCountCard
                 label="Files"
-                value={taskDetail?.impactedFiles.length || contextPack?.files.length || item.impactedFiles.length}
+                value={linkedFiles.length}
+                onClick={() => openCodebaseScope("context")}
+                disabled={!linkedFiles.length}
               />
               <MiniCountCard
                 label="Tests"
-                value={taskDetail?.impactedTests.length || contextPack?.tests.length || item.impactedTests.length}
+                value={linkedTests.length}
+                onClick={() => openCodebaseScope("tests")}
+                disabled={!linkedTests.length}
               />
               <MiniCountCard
                 label="Docs"
-                value={taskDetail?.impactedDocs.length || contextPack?.docs.length || item.impactedDocs.length}
+                value={linkedDocs.length}
+                onClick={() => openCodebaseScope("docs")}
+                disabled={!linkedDocs.length}
+              />
+              <MiniCountCard
+                label="Approvals"
+                value={taskDetail?.approvals.length ?? 0}
+                onClick={onOpenApprovals}
+                disabled={!(taskDetail?.approvals.length ?? 0)}
               />
             </div>
 
             <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">At a Glance</div>
               <div className="mt-1.5 space-y-2">
-                <div className="text-[13px] leading-5 text-white">
-                  {taskDetail?.workflowSummary || "Open detail for files, notes, logs, and full verification context."}
-                </div>
-                {events.length ? (
+                {taskDetail?.route ? (
+                  <div className="text-[13px] leading-5 text-white">
+                    {`${executionModeLabel(taskDetail.route.executionMode)} · ${modelRoleLabel(taskDetail.route.modelRole)} · ${providerLabel(taskDetail.route.providerId)}`}
+                  </div>
+                ) : null}
+                <div className="text-[13px] leading-5 text-white">{atAGlanceSummary}</div>
+                {latestEvent ? (
                   <div className="flex items-start gap-2 text-xs text-zinc-400">
                     <Activity className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" />
                     <div className="min-w-0">
-                      <div className="line-clamp-2">{events[events.length - 1]?.message}</div>
+                      <div className="line-clamp-2">{latestEvent.message}</div>
                       <div className="mt-1 text-[10px] text-zinc-500">
-                        {formatDistanceToNow(new Date(events[events.length - 1]!.timestamp), { addSuffix: true })}
+                        {formatDistanceToNow(new Date(latestEvent.timestamp), { addSuffix: true })}
                       </div>
                     </div>
+                  </div>
+                ) : null}
+                {item.verificationFailure ? (
+                  <div className="rounded-lg border border-violet-500/18 bg-violet-500/8 px-3 py-2 text-xs text-violet-100">
+                    {item.verificationFailure}
                   </div>
                 ) : null}
                 {taskDetail?.verification.length ? (
                   <div className="text-xs text-zinc-400">
                     {taskDetail.verification.length} verification signals captured
                   </div>
-                ) : (
-                  <div className="text-xs text-zinc-500">Verification will appear after execution or review.</div>
-                )}
+                ) : null}
               </div>
+            </div>
+
+            <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Worker Notes</div>
+                <Chip variant="subtle" className="text-[9px]">
+                  {commentCount} notes
+                </Chip>
+              </div>
+              <div className="mt-1.5 text-[11px] leading-5 text-zinc-500">
+                Notes are included in the next scope/build/review cycle for this ticket.
+              </div>
+              <textarea
+                value={noteDraft}
+                onChange={(event) => setNoteDraft(event.target.value)}
+                placeholder="Add note for AI workers…"
+                className="mt-2 min-h-[72px] w-full resize-none rounded-xl border border-white/8 bg-black/30 px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-400/40"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="text-[10px] text-zinc-500">
+                  {recentComments.length ? "Recent notes shown below." : "No notes yet."}
+                </div>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!noteDraft.trim()) return;
+                    onAddTaskComment(item.workflowId, noteDraft.trim(), null);
+                    setNoteDraft("");
+                  }}
+                  disabled={!noteDraft.trim() || isCommenting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <SendHorizontal className="h-3.5 w-3.5" />
+                  Add Note
+                </button>
+              </div>
+              {recentComments.length ? (
+                <div className="mt-2 space-y-1.5">
+                  {recentComments.map((comment) => (
+                    <div key={comment.id} className="rounded-lg border border-white/8 bg-white/[0.02] px-2.5 py-2">
+                      <div className="text-[12px] leading-5 text-zinc-300">{comment.body}</div>
+                      <div className="mt-1 text-[10px] text-zinc-500">
+                        {comment.author} · {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap gap-2 pt-0.5">
               {allowedTransitions.map((nextLane) => (
                 <button
                   key={`${item.workflowId}-${nextLane}`}
-                  onClick={() => onMove(nextLane, null)}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onMove(nextLane, null);
+                  }}
                   className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.08]"
                 >
                   Move to {laneMetaFor(nextLane).label}
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               ))}
-              <button
-                onClick={onOpenDetail}
-                className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/8 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/12"
-              >
-                <PanelLeftOpen className="h-3.5 w-3.5" />
-                Open Detail
-              </button>
+              {detailPinned ? (
+                <button
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenDetail();
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/8 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/12"
+                >
+                  <PanelLeftOpen className="h-3.5 w-3.5" />
+                  Open Detail
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1081,12 +1432,46 @@ function WorkflowCard({
   );
 }
 
-function MiniCountCard({ label, value }: { label: string; value: number }) {
+function MiniCountCard({
+  label,
+  value,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  value: number;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  const className =
+    "rounded-[12px] border px-2.5 py-2 transition";
+
+  if (!onClick) {
+    return (
+      <div className={`${className} border-white/8 bg-black/20`}>
+        <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">{label}</div>
+        <div className="mt-0.5 text-[22px] font-semibold leading-none text-white">{value}</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-[12px] border border-white/8 bg-black/20 px-2.5 py-2">
+    <button
+      type="button"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      className={`${className} border-white/8 bg-black/20 text-left hover:border-cyan-400/18 hover:bg-cyan-500/[0.06] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-white/8 disabled:hover:bg-black/20`}
+    >
       <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">{label}</div>
       <div className="mt-0.5 text-[22px] font-semibold leading-none text-white">{value}</div>
-    </div>
+    </button>
   );
 }
 
@@ -1197,27 +1582,90 @@ function CommandContextDrawer({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Metadata</div>
-                <div className="mt-3 space-y-2 text-xs text-zinc-300">
-                  <div>
-                    Route: {taskDetail?.route ? `${executionModeLabel(taskDetail.route.executionMode)} · ${modelRoleLabel(taskDetail.route.modelRole)}` : "Not reviewed yet"}
-                  </div>
-                  <div>Context files: {taskDetail?.impactedFiles.length || selectedWorkflow.impactedFiles.length}</div>
-                  <div>Tests in scope: {taskDetail?.impactedTests.length || selectedWorkflow.impactedTests.length}</div>
-                  <div>Docs in scope: {taskDetail?.impactedDocs.length || selectedWorkflow.impactedDocs.length}</div>
+            <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Deep Context</div>
+              <div className="mt-2 text-sm leading-6 text-white">{taskDetail?.workflowSummary || "Select review or execute to deepen the workflow context."}</div>
+              {taskDetail?.verificationCommand ? (
+                <div className="mt-3 rounded-lg border border-violet-500/18 bg-violet-500/8 px-3 py-2 text-xs text-violet-100">
+                  First failing check: <span className="font-mono text-violet-50">{taskDetail.verificationCommand}</span>
                 </div>
-              </div>
-
-              <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Workflow Summary</div>
-                <div className="mt-2 text-sm leading-6 text-white">{taskDetail?.workflowSummary || "Select review or execute to deepen the workflow context."}</div>
-                {taskDetail?.blockers?.length ? (
-                  <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{taskDetail.blockers[0]}</div>
-                ) : null}
-              </div>
+              ) : null}
+              {taskDetail?.blockers?.length ? (
+                <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{taskDetail.blockers[0]}</div>
+              ) : null}
+              {taskDetail?.nextSteps.length ? (
+                <div className="mt-3 space-y-1.5 text-xs text-zinc-300">
+                  {taskDetail.nextSteps.slice(0, 3).map((step, index) => (
+                    <div key={`${selectedWorkflow.workflowId}-next-${index}`} className="flex items-start gap-2">
+                      <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300" />
+                      <span>{step}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
+
+            {taskDetail ? (
+              <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Execution Profile</div>
+                    <div className="mt-1 text-xs text-zinc-400">
+                      Ticket override controls the next scope/build/review cycle. Run snapshot shows the last resolved lifecycle.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={taskDetail.executionProfileOverrideId ?? "__project__"}
+                      onChange={(event) =>
+                        selectedWorkflowId
+                          ? mission.setTicketExecutionProfile(
+                              selectedWorkflowId,
+                              event.target.value === "__project__" ? null : event.target.value
+                            )
+                          : undefined
+                      }
+                      disabled={!selectedWorkflowId || mission.isUpdatingTicketExecutionProfile}
+                      className="min-w-[150px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="__project__">
+                        Project default ({mission.selectedExecutionProfile?.name ?? "Default"})
+                      </option>
+                      {mission.executionProfiles.profiles.map((profile) => (
+                        <option key={`${selectedWorkflow?.workflowId}-${profile.id}`} value={profile.id}>
+                          {profile.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Chip variant="subtle" className="text-[10px]">
+                      {taskDetail.executionProfileSnapshot?.profileName || mission.selectedExecutionProfile?.name || "Project default"}
+                    </Chip>
+                  </div>
+                </div>
+                {taskDetail.executionProfileSnapshot ? (
+                  <div className="mt-3 space-y-2">
+                    {taskDetail.executionProfileSnapshot.stages.map((stage) => (
+                      <div
+                        key={`${taskDetail.executionProfileSnapshot?.profileId}-${stage.stage}`}
+                        className="flex items-center justify-between gap-3 rounded-[14px] border border-white/6 bg-white/[0.02] px-3 py-2"
+                      >
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">{stage.stage}</div>
+                        <div className="text-right">
+                          <div className="text-xs text-white">{modelRoleLabel(stage.role)}</div>
+                          <div className="text-[11px] text-zinc-500">
+                            {providerLabel(stage.providerId)} · {stage.model}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-[14px] border border-white/6 bg-white/[0.02] px-3 py-2 text-xs text-zinc-400">
+                    No run snapshot yet. The next scope/build/review cycle will use the selected override or the project default.
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
               <div className="flex items-center justify-between gap-3">
@@ -1300,6 +1748,19 @@ function CommandContextDrawer({
                 <div className="mt-3 text-xs text-zinc-500">No task-scoped logs yet.</div>
               )}
             </div>
+
+            {taskDetail?.verificationFailures.length ? (
+              <div className="rounded-[18px] border border-violet-500/18 bg-violet-500/8 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-violet-200/80">Verification Failures</div>
+                <div className="mt-3 space-y-2">
+                  {taskDetail.verificationFailures.slice(0, 4).map((failure, index) => (
+                    <div key={`${selectedWorkflow.workflowId}-failure-${index}`} className="rounded-[14px] border border-violet-400/10 bg-black/20 px-3 py-2.5 text-xs text-violet-50">
+                      {failure}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : activeMode === "approval" ? (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
@@ -1335,6 +1796,10 @@ function CommandContextDrawer({
           </div>
         ) : activeMode === "run" ? (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+            {(() => {
+              const profileSnapshot = readExecutionProfileSnapshot(mission.runSummary?.metadata);
+              return (
+                <>
             <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Run State</div>
               <div className="mt-2 text-lg font-semibold text-white">{mission.runSummary?.status || "idle"}</div>
@@ -1352,12 +1817,41 @@ function CommandContextDrawer({
                 <div>Docs: {mission.verification?.docsChecked.length || 0}</div>
               </div>
             </div>
+            {profileSnapshot ? (
+              <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Execution Profile</div>
+                  <Chip variant="subtle" className="text-[10px]">
+                    {profileSnapshot.profileName}
+                  </Chip>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {profileSnapshot.stages.map((stage) => (
+                    <div
+                      key={`${profileSnapshot.profileId}-${stage.stage}`}
+                      className="flex items-center justify-between gap-3 rounded-[14px] border border-white/6 bg-white/[0.02] px-3 py-2"
+                    >
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">{stage.stage}</div>
+                      <div className="text-right">
+                        <div className="text-xs text-white">{modelRoleLabel(stage.role as Parameters<typeof modelRoleLabel>[0])}</div>
+                        <div className="text-[11px] text-zinc-500">
+                          {providerLabel(stage.providerId as Parameters<typeof providerLabel>[0])} · {stage.model}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {mission.shareReport?.summary ? (
               <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
                 <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Shareable Summary</div>
                 <div className="mt-2 text-sm text-zinc-200">{mission.shareReport.summary}</div>
               </div>
             ) : null}
+                </>
+              );
+            })()}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -1365,7 +1859,15 @@ function CommandContextDrawer({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Overseer</div>
-                  <div className="mt-1 text-sm font-medium text-white">
+                  <div className="mt-1 inline-flex items-center gap-2 text-sm font-medium text-white">
+                    {mission.isExecuting || mission.isReviewing ? (
+                      <ProcessingIndicator
+                        kind={mission.isExecuting ? "processing" : "thinking"}
+                        active
+                        size="xs"
+                        tone="subtle"
+                      />
+                    ) : null}
                     {mission.route ? `${executionModeLabel(mission.route.executionMode)} · ${modelRoleLabel(mission.route.modelRole)}` : "No route reviewed yet"}
                   </div>
                 </div>
@@ -1627,12 +2129,39 @@ function ConnectSurface({
   );
 }
 
-function SmallMetric({ icon, label }: { icon: React.ReactNode; label: string }) {
+function SmallMetric({
+  icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  const className =
+    "inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#161618] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]";
+
+  if (!onClick) {
+    return (
+      <div className={`${className} text-zinc-300`}>
+        <span className="text-zinc-500">{icon}</span>
+        <span>{label}</span>
+      </div>
+    );
+  }
+
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#161618] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-zinc-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-      <span className="text-zinc-500">{icon}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`${className} text-zinc-300 transition hover:border-cyan-400/18 hover:bg-cyan-500/[0.08] hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-zinc-600 disabled:hover:border-white/10 disabled:hover:bg-[#161618] disabled:hover:text-zinc-600`}
+    >
+      <span className={disabled ? "text-zinc-700" : "text-zinc-500"}>{icon}</span>
       <span>{label}</span>
-    </div>
+    </button>
   );
 }
 

@@ -338,6 +338,21 @@ function progressForTicketStatus(status: Ticket["status"]) {
   }
 }
 
+function readExecutionProfileNames(value: unknown) {
+  const record = toRecord(value);
+  const profiles = Array.isArray(record.profiles) ? record.profiles : [];
+  const map = new Map<string, string>();
+  for (const profile of profiles) {
+    const item = toRecord(profile);
+    const id = typeof item.id === "string" ? item.id : null;
+    const name = typeof item.name === "string" ? item.name : null;
+    if (id && name) {
+      map.set(id, name);
+    }
+  }
+  return map;
+}
+
 function summarizeTicketEvent(type: string, payload: Record<string, unknown>) {
   if (type === "ticket.created") {
     const status = typeof payload.status === "string" ? payload.status.replace(/_/g, " ") : "backlog";
@@ -358,14 +373,62 @@ function summarizeTicketEvent(type: string, payload: Record<string, unknown>) {
     const lane = typeof payload.lane === "string" ? payload.lane.replace(/_/g, " ") : "the selected lane";
     return `Moved on the command board to ${lane}.`;
   }
+  if (type === "ticket.execution_profile_set") {
+    const executionProfileId =
+      typeof payload.executionProfileId === "string" && payload.executionProfileId.trim()
+        ? payload.executionProfileId
+        : "the selected profile";
+    return `Ticket override set to ${executionProfileId}.`;
+  }
+  if (type === "ticket.execution_profile_cleared") {
+    return "Ticket override cleared. Using project default profile.";
+  }
   return type.replace(/^ticket\./, "").replace(/[._]/g, " ");
+}
+
+function firstFailingVerificationCommand(input: {
+  failures?: string[];
+  impactedTests?: string[];
+  changedFileChecks?: string[];
+}) {
+  const explicit = (input.failures ?? []).find((failure) => failure.startsWith("command_failed:"));
+  if (explicit) {
+    return explicit.replace(/^command_failed:/, "").trim() || null;
+  }
+  if ((input.impactedTests ?? []).length > 0) {
+    return input.impactedTests![0] ?? null;
+  }
+  if ((input.changedFileChecks ?? []).length > 0) {
+    return input.changedFileChecks![0] ?? null;
+  }
+  return null;
+}
+
+function summarizeVerificationFailure(input: {
+  failures?: string[];
+  impactedTests?: string[];
+  changedFileChecks?: string[];
+}) {
+  const command = firstFailingVerificationCommand(input);
+  if (command) {
+    return `Failing check: ${command}`;
+  }
+  const firstFailure = (input.failures ?? [])[0];
+  if (!firstFailure) {
+    return null;
+  }
+  return summarize(firstFailure.replace(/^command_failed:/, "").replace(/_/g, " "), 88);
 }
 
 function buildWorkflowCards(
   tickets: Ticket[],
   runSummary: ExecutionRunSummary | null,
   contextPack: MissionControlSnapshot["contextPack"],
-  laneCounts: Map<string, number>
+  laneCounts: Map<string, number>,
+  latestRunByTicket: Map<string, { status: string; runId: string }>,
+  latestVerificationByRun: Map<string, { pass: boolean; failures: string[]; impactedTests: string[]; changedFileChecks: string[] }>,
+  ticketExecutionProfileOverrides: Map<string, string | null>,
+  executionProfileNames: Map<string, string>
 ): WorkflowCardSummary[] {
   const activeTicketId = runSummary?.ticketId ?? null;
   return tickets
@@ -375,6 +438,17 @@ function buildWorkflowCards(
       const impactedDocs = ticket.id === activeTicketId ? contextPack?.docs ?? [] : [];
       const isBlocked = ticket.status === "blocked";
       const workflowStatus = workflowStatusForTicket(ticket.status);
+      const latestRun = latestRunByTicket.get(ticket.id);
+      const latestVerification = latestRun ? latestVerificationByRun.get(latestRun.runId) : undefined;
+      const verificationFailure =
+        latestVerification && !latestVerification.pass
+          ? summarizeVerificationFailure(latestVerification)
+          : latestRun?.status === "failed"
+          ? "Execution failed before verification completed."
+          : null;
+      const verificationCommand =
+        latestVerification && !latestVerification.pass ? firstFailingVerificationCommand(latestVerification) : null;
+      const executionProfileOverrideId = ticketExecutionProfileOverrides.get(ticket.id) ?? null;
       return {
         workflowId: ticket.id,
         title: ticket.title,
@@ -392,9 +466,13 @@ function buildWorkflowCards(
         impactedDocs,
         lastUpdatedAt: ticket.updatedAt,
         verificationState: ticket.id === activeTicketId ? runSummary?.status ?? null : null,
+        verificationFailure,
+        verificationCommand,
         confidence: ticket.id === activeTicketId ? contextPack?.confidence ?? null : null,
         progress: progressForTicketStatus(ticket.status),
         ownerLabel: laneCounts.get(ticket.id) ? `${laneCounts.get(ticket.id)} active lane${laneCounts.get(ticket.id) === 1 ? "" : "s"}` : null,
+        executionProfileOverrideId,
+        executionProfileOverrideName: executionProfileOverrideId ? executionProfileNames.get(executionProfileOverrideId) ?? executionProfileOverrideId : null,
         laneCount: laneCounts.get(ticket.id) ?? 0,
       };
     })
@@ -491,10 +569,73 @@ export class MissionControlService {
     private readonly githubService: GitHubService
   ) {}
 
+  private async autoHealStaleReviewTickets(repoId: string) {
+    const reviewTickets = await prisma.ticket.findMany({
+      where: { repoId, status: "review" },
+      select: { id: true },
+    });
+    if (reviewTickets.length === 0) {
+      return;
+    }
+
+    const latestRuns = await prisma.runProjection.findMany({
+      where: {
+        ticketId: { in: reviewTickets.map((ticket) => ticket.id) },
+      },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        runId: true,
+        ticketId: true,
+        status: true,
+      },
+    });
+
+    const latestRunByTicket = new Map<string, { runId: string; status: string }>();
+    for (const row of latestRuns) {
+      if (!row.ticketId || latestRunByTicket.has(row.ticketId)) continue;
+      latestRunByTicket.set(row.ticketId, {
+        runId: row.runId,
+        status: row.status,
+      });
+    }
+
+    const verificationRows = await prisma.verificationBundle.findMany({
+      where: {
+        runId: {
+          in: Array.from(latestRunByTicket.values()).map((row) => row.runId),
+        },
+      },
+      orderBy: [{ createdAt: "desc" }],
+      select: {
+        runId: true,
+        pass: true,
+      },
+    });
+    const verificationByRun = new Map<string, boolean>();
+    for (const row of verificationRows) {
+      if (!verificationByRun.has(row.runId)) {
+        verificationByRun.set(row.runId, row.pass);
+      }
+    }
+
+    for (const ticket of reviewTickets) {
+      const latest = latestRunByTicket.get(ticket.id);
+      if (!latest) continue;
+      const verificationPass = verificationByRun.get(latest.runId);
+      if (verificationPass === false || (verificationPass == null && latest.status === "failed")) {
+        await this.ticketService.moveTicket(ticket.id, "in_progress");
+      }
+    }
+  }
+
   async getSnapshot(input: GetSnapshotInput = {}): Promise<MissionControlSnapshot & { overseer: { sessions: ChatSessionDto[]; selectedSessionId: string | null; messages: ChatMessageDto[] } }> {
     const repos = await this.repoService.listRepos();
     const activeRepo = input.projectId ? await this.repoService.getRepo(input.projectId) : await this.repoService.getActiveRepo();
     const project = activeRepo || repos[0] || null;
+
+    if (project) {
+      await this.autoHealStaleReviewTickets(project.id);
+    }
 
     const [blueprint, guidelines, projectState, sessions, tickets, approvals, commands, contextPack, codeGraphStatus, latestAttempt, laneRows] =
       await Promise.all([
@@ -596,7 +737,96 @@ export class MissionControlService {
       map.set(lane.ticketId, (map.get(lane.ticketId) ?? 0) + 1);
       return map;
     }, new Map<string, number>());
-    const workflowCards = buildWorkflowCards(tickets, runSummary, contextPack, laneCounts);
+    const ticketIds = tickets.map((ticket) => ticket.id);
+    const latestRuns = project && ticketIds.length > 0
+      ? await prisma.runProjection.findMany({
+          where: {
+            ticketId: { in: ticketIds },
+          },
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+          select: {
+            ticketId: true,
+            runId: true,
+            status: true,
+          },
+        })
+      : [];
+    const latestRunByTicket = new Map<string, { status: string; runId: string }>();
+    for (const row of latestRuns) {
+      if (!row.ticketId || latestRunByTicket.has(row.ticketId)) continue;
+      latestRunByTicket.set(row.ticketId, {
+        status: row.status,
+        runId: row.runId,
+      });
+    }
+    const latestVerificationRows =
+      latestRuns.length > 0
+        ? await prisma.verificationBundle.findMany({
+            where: {
+              runId: {
+                in: Array.from(latestRunByTicket.values()).map((row) => row.runId),
+              },
+            },
+            orderBy: [{ createdAt: "desc" }],
+            select: {
+              runId: true,
+              pass: true,
+              failures: true,
+              impactedTests: true,
+              changedFileChecks: true,
+            },
+          })
+        : [];
+    const latestVerificationByRun = new Map<string, { pass: boolean; failures: string[]; impactedTests: string[]; changedFileChecks: string[] }>();
+    for (const row of latestVerificationRows) {
+      if (latestVerificationByRun.has(row.runId)) continue;
+      latestVerificationByRun.set(row.runId, {
+        pass: row.pass,
+        failures: asStringArray(row.failures),
+        impactedTests: asStringArray(row.impactedTests),
+        changedFileChecks: asStringArray(row.changedFileChecks),
+      });
+    }
+    const executionProfilesSetting = await prisma.appSetting.findUnique({
+      where: { key: "execution_profiles" },
+      select: { value: true },
+    });
+    const executionProfileNames = readExecutionProfileNames(executionProfilesSetting?.value);
+    const ticketExecutionProfileEvents =
+      ticketIds.length > 0
+        ? await prisma.ticketEvent.findMany({
+            where: {
+              ticketId: { in: ticketIds },
+              type: {
+                in: ["ticket.execution_profile_set", "ticket.execution_profile_cleared"],
+              },
+            },
+            orderBy: [{ createdAt: "desc" }],
+            select: {
+              ticketId: true,
+              payload: true,
+            },
+          })
+        : [];
+    const ticketExecutionProfileOverrides = new Map<string, string | null>();
+    for (const event of ticketExecutionProfileEvents) {
+      if (ticketExecutionProfileOverrides.has(event.ticketId)) continue;
+      const payload = toRecord(event.payload);
+      ticketExecutionProfileOverrides.set(
+        event.ticketId,
+        typeof payload.executionProfileId === "string" ? payload.executionProfileId : null
+      );
+    }
+    const workflowCards = buildWorkflowCards(
+      tickets,
+      runSummary,
+      contextPack,
+      laneCounts,
+      latestRunByTicket,
+      latestVerificationByRun,
+      ticketExecutionProfileOverrides,
+      executionProfileNames
+    );
     const workflowPillars = buildWorkflowPillars(workflowCards);
 
     return {
@@ -657,7 +887,10 @@ export class MissionControlService {
     if (!ticket) {
       return null;
     }
-    const workflowState = await this.contextService.getWorkflowState(ticket.id);
+    const [workflowState, executionProfileOverrideId] = await Promise.all([
+      this.contextService.getWorkflowState(ticket.id),
+      this.ticketService.getTicketExecutionProfileOverride(ticket.id),
+    ]);
     const ticketEvents = await prisma.ticketEvent.findMany({
       where: { ticketId: ticket.id },
       orderBy: [{ createdAt: "desc" }],
@@ -682,6 +915,40 @@ export class MissionControlService {
       ...(snapshot.verification?.impactedTests ?? []),
       ...(snapshot.verification?.docsChecked ?? []),
     ];
+    const verificationFailures = snapshot.verification?.failures ?? [];
+    const executionProfileRecord = toRecord(snapshot.runSummary?.metadata?.execution_profile_snapshot);
+    const executionProfileStages = Array.isArray(executionProfileRecord.stages)
+      ? executionProfileRecord.stages
+          .map((item) => {
+            const row = toRecord(item);
+            return {
+              stage:
+                row.stage === "scope" || row.stage === "build" || row.stage === "review" || row.stage === "escalate"
+                  ? row.stage
+                  : null,
+              role:
+                row.role === "utility_fast" || row.role === "coder_default" || row.role === "review_deep" || row.role === "overseer_escalation"
+                  ? row.role
+                  : null,
+              providerId:
+                row.providerId === "qwen-cli" ||
+                row.providerId === "openai-compatible" ||
+                row.providerId === "onprem-qwen" ||
+                row.providerId === "openai-responses"
+                  ? row.providerId
+                  : null,
+              model: typeof row.model === "string" ? row.model : null,
+              reasoningMode:
+                row.reasoningMode === "off" || row.reasoningMode === "on" || row.reasoningMode === "auto"
+                  ? row.reasoningMode
+                  : undefined,
+            };
+          })
+          .filter(
+            (item): item is NonNullable<WorkflowTaskDetail["executionProfileSnapshot"]>["stages"][number] =>
+              Boolean(item.stage && item.role && item.providerId && item.model)
+          )
+      : [];
 
     const comments = await this.ticketService.listTicketComments(ticket.id, 50);
 
@@ -717,7 +984,22 @@ export class MissionControlService {
       workflowSummary: workflowState?.summary || null,
       blockers: workflowState?.blockers || [],
       nextSteps: workflowState?.nextSteps || [],
+      verificationFailures,
+      verificationCommand: firstFailingVerificationCommand({
+        failures: snapshot.verification?.failures ?? [],
+        impactedTests: snapshot.verification?.impactedTests ?? [],
+        changedFileChecks: snapshot.verification?.changedFileChecks ?? [],
+      }),
       route: snapshot.selectedTicket?.id === ticket.id ? snapshot.routeSummary : null,
+      executionProfileOverrideId: executionProfileOverrideId ?? null,
+      executionProfileSnapshot:
+        typeof executionProfileRecord.profileId === "string" && typeof executionProfileRecord.profileName === "string" && executionProfileStages.length
+          ? {
+              profileId: executionProfileRecord.profileId,
+              profileName: executionProfileRecord.profileName,
+              stages: executionProfileStages,
+            }
+          : null,
     };
   }
 }

@@ -4,6 +4,7 @@ import { Chip, Panel, PanelHeader } from "../UI";
 import type { ProjectBlueprint, RepoRegistration } from "../../../shared/contracts";
 import type { RecentRepoPath } from "../../lib/desktopBridge";
 import { ProjectBlueprintPanel } from "../mission/ProjectBlueprintPanel";
+import { ProcessingIndicator } from "../ui/processing-indicator";
 
 export function ProjectsWorkspaceView({
   activeRepo,
@@ -26,9 +27,15 @@ export function ProjectsWorkspaceView({
   setGithubRepo,
   connectGithubProject,
   isActing,
+  actionMessage,
+  syncingRepoId,
+  isConnectingLocal,
+  isBootstrappingProject,
+  isConnectingGithub,
   blueprint,
   updateBlueprint,
   regenerateBlueprint,
+  isRefreshingBlueprint,
   labsMode,
 }: {
   activeRepo: RepoRegistration | null;
@@ -51,12 +58,32 @@ export function ProjectsWorkspaceView({
   setGithubRepo: (value: string) => void;
   connectGithubProject: () => void;
   isActing: boolean;
+  actionMessage: string | null;
+  syncingRepoId: string | null;
+  isConnectingLocal: boolean;
+  isBootstrappingProject: boolean;
+  isConnectingGithub: boolean;
   blueprint: ProjectBlueprint | null;
   updateBlueprint: (patch: Partial<ProjectBlueprint>) => void;
   regenerateBlueprint: () => void;
+  isRefreshingBlueprint: boolean;
   labsMode: boolean;
 }) {
   const [showGithub, setShowGithub] = useState(false);
+  const workspaceActivityKind =
+    isRefreshingBlueprint
+      ? "blueprint"
+      : syncingRepoId
+      ? "routing"
+      : isConnectingGithub
+      ? "provider"
+      : isBootstrappingProject
+      ? "mutation"
+      : isConnectingLocal
+      ? "repo"
+      : actionMessage && /(failed|error|timeout)/i.test(actionMessage)
+      ? "verifying"
+      : "telemetry";
 
   return (
     <div className="space-y-4">
@@ -67,9 +94,16 @@ export function ProjectsWorkspaceView({
           </PanelHeader>
           <div className="p-4 space-y-4">
             <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/8 p-4">
-              <div className="text-sm font-medium text-white">Plug in your own repo</div>
-              <div className="mt-1 text-xs text-zinc-400">
-                Choose a local Git repo. The app works in a safe linked copy and keeps your original repo untouched.
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/15 bg-cyan-500/[0.08]">
+                  <img src="/assets/focus-reticle.svg" alt="" className="h-5 w-5 opacity-85" aria-hidden="true" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-white">Plug in your own repo</div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    Choose a local Git repo. The app works in a safe linked copy and keeps your original repo untouched.
+                  </div>
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
@@ -77,8 +111,8 @@ export function ProjectsWorkspaceView({
                   disabled={isActing}
                   className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
                 >
-                  <FolderGit2 className="h-4 w-4" />
-                  Choose Local Repo
+                  {isConnectingLocal ? <ProcessingIndicator kind="repo" active size="xs" tone="accent" /> : <FolderGit2 className="h-4 w-4" />}
+                  {isConnectingLocal ? "Opening Repo..." : "Choose Local Repo"}
                 </button>
                 <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5">
                   <select
@@ -93,18 +127,38 @@ export function ProjectsWorkspaceView({
                     disabled={isActing}
                     className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
                   >
-                    New Project
+                    {isBootstrappingProject ? "Initializing..." : "New Project"}
                   </button>
                 </div>
                 <button
                   onClick={() => setShowGithub((value) => !value)}
                   className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300 hover:bg-white/[0.08]"
                 >
-                  <Github className="h-4 w-4" />
+                  {isConnectingGithub ? <ProcessingIndicator kind="repo" active size="xs" tone="subtle" /> : <Github className="h-4 w-4" />}
                   {showGithub ? "Hide GitHub" : "Connect GitHub Repo"}
                 </button>
               </div>
             </div>
+
+            {actionMessage ? (
+              <div className="rounded-xl border border-white/10 bg-white/[0.025] px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03]">
+                    <ProcessingIndicator
+                      kind={workspaceActivityKind}
+                      active={Boolean(isConnectingLocal || isConnectingGithub || isBootstrappingProject || isRefreshingBlueprint || syncingRepoId)}
+                      size="xs"
+                      tone="subtle"
+                      className="border-0 bg-transparent p-0"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Workspace activity</div>
+                    <div className="mt-1 text-sm text-zinc-200">{actionMessage}</div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {repoPickerMessage ? (
               <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{repoPickerMessage}</div>
@@ -200,11 +254,29 @@ export function ProjectsWorkspaceView({
                 <div className="flex gap-2">
                   <button
                     onClick={() => syncProject(activeRepo.id)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08]"
+                    disabled={Boolean(syncingRepoId)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-60"
                   >
-                    <RefreshCw className="h-4 w-4" />
-                    Sync
+                    {syncingRepoId === activeRepo.id ? (
+                      <ProcessingIndicator kind="repo" active size="xs" tone="accent" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    {syncingRepoId === activeRepo.id ? "Syncing..." : activeRepo.sourceKind === "github_app_bound" ? "Sync" : "Refresh"}
                   </button>
+                </div>
+                <div className="rounded-xl border border-white/8 bg-white/[0.015] px-4 py-3">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                    <img src="/assets/live-orbit.svg" alt="" className="h-3.5 w-3.5 opacity-70" aria-hidden="true" />
+                    Project state
+                  </div>
+                  <div className="mt-2 text-xs text-zinc-400">
+                    {syncingRepoId === activeRepo.id
+                      ? "Refreshing remote metadata and project timestamps."
+                      : activeRepo.sourceKind === "github_app_bound"
+                      ? "Use Sync to fetch the latest remote state and refresh project metadata."
+                      : "Use Refresh to update project metadata after local changes or reconnects."}
+                  </div>
                 </div>
               </>
             ) : (
@@ -216,9 +288,11 @@ export function ProjectsWorkspaceView({
 
       <ProjectBlueprintPanel
         blueprint={blueprint}
+        hasActiveRepo={Boolean(activeRepo)}
         isActing={isActing}
         onUpdate={updateBlueprint}
         onRegenerate={regenerateBlueprint}
+        compact={false}
       />
 
       <Panel>
@@ -243,7 +317,16 @@ export function ProjectsWorkspaceView({
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => activateRepo(repo.id)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-500">Open</button>
-                  <button onClick={() => syncProject(repo.id)} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.08]">Sync</button>
+                  <button
+                    onClick={() => syncProject(repo.id)}
+                    disabled={Boolean(syncingRepoId)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-60"
+                  >
+                    {syncingRepoId === repo.id ? (
+                      <ProcessingIndicator kind="repo" active size="xs" tone="subtle" />
+                    ) : null}
+                    {syncingRepoId === repo.id ? "Syncing..." : repo.sourceKind === "github_app_bound" ? "Sync" : "Refresh"}
+                  </button>
                 </div>
               </div>
             ))

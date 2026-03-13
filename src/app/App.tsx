@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Activity, Code2, FolderGit2, Orbit, Settings, Terminal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, ChevronDown, Code2, FolderGit2, Settings, Terminal } from "lucide-react";
 import { PreflightGate } from "./components/PreflightGate";
 import { Chip } from "./components/UI";
 import { CodebaseView } from "./components/views/CodebaseView";
@@ -9,6 +9,7 @@ import { ProjectsWorkspaceView } from "./components/views/ProjectsWorkspaceView"
 import { useMissionControlLiveData } from "./hooks/useMissionControlLiveData";
 import { useUiStore } from "./store/uiStore";
 import { CommandCenterView } from "./components/views/CommandCenterView";
+import { ProcessingIndicator } from "./components/ui/processing-indicator";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
 type LiveTab = "Execution" | "Agents" | "Patterns" | "Telemetry";
@@ -30,10 +31,14 @@ function normalizeSection(value: string | null | undefined): SidebarSection {
 export default function App() {
   const activeSection = useUiStore((state) => state.activeSection);
   const setActiveSection = useUiStore((state) => state.setActiveSection);
+  const setSettingsFocusTarget = useUiStore((state) => state.setSettingsFocusTarget);
   const selectedWorkflowId = useUiStore((state) => state.selectedWorkflowId);
+  const codebaseScope = useUiStore((state) => state.codebaseScope);
   const labsMode = useUiStore((state) => state.labsMode);
   const mission = useMissionControlLiveData();
   const [liveTab, setLiveTab] = useState<LiveTab>("Execution");
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
   const sidebarSection = normalizeSection(activeSection);
   const liveTabs: LiveTab[] = labsMode ? ["Execution", "Agents", "Patterns", "Telemetry"] : ["Execution"];
@@ -50,6 +55,30 @@ export default function App() {
     }
   }, [liveTab, liveTabs]);
 
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProfileMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [profileMenuOpen]);
+
+  const openSettingsTarget = (target: "providers" | "execution_profiles" | "accounts") => {
+    setActiveSection("settings");
+    setSettingsFocusTarget(target);
+    setProfileMenuOpen(false);
+  };
+
   const criticalCount = mission.pendingApprovals.length + (mission.runPhase === "error" ? 1 : 0);
   const headerRepos = useMemo(() => mission.headerRepos, [mission.headerRepos]);
   const selectedWorkflowCard = useMemo(
@@ -61,31 +90,36 @@ export default function App() {
     [mission.tickets, selectedWorkflowId]
   );
   const workflowFocusedFiles = useMemo(() => {
-    if (!selectedWorkflowId) return [];
+    if (!selectedWorkflowId) return mission.contextPack?.files || [];
     if (mission.selectedTicket?.id === selectedWorkflowId) {
-      return Array.from(new Set([...(mission.contextPack?.files || []), ...(mission.contextPack?.tests || []), ...(mission.contextPack?.docs || [])]));
+      return Array.from(new Set(mission.contextPack?.files || []));
     }
-    return Array.from(
-      new Set([
-        ...(selectedWorkflowCard?.impactedFiles || []),
-        ...(selectedWorkflowCard?.impactedTests || []),
-        ...(selectedWorkflowCard?.impactedDocs || []),
-      ])
-    );
+    return Array.from(new Set(selectedWorkflowCard?.impactedFiles || []));
   }, [
-    mission.contextPack?.docs,
     mission.contextPack?.files,
-    mission.contextPack?.tests,
     mission.selectedTicket?.id,
-    selectedWorkflowCard?.impactedDocs,
     selectedWorkflowCard?.impactedFiles,
-    selectedWorkflowCard?.impactedTests,
     selectedWorkflowId,
   ]);
+  const workflowFocusedTests = useMemo(() => {
+    if (!selectedWorkflowId) return mission.contextPack?.tests || [];
+    if (mission.selectedTicket?.id === selectedWorkflowId) {
+      return Array.from(new Set(mission.contextPack?.tests || []));
+    }
+    return Array.from(new Set(selectedWorkflowCard?.impactedTests || []));
+  }, [mission.contextPack?.tests, mission.selectedTicket?.id, selectedWorkflowCard?.impactedTests, selectedWorkflowId]);
+  const workflowFocusedDocs = useMemo(() => {
+    if (!selectedWorkflowId) return mission.contextPack?.docs || [];
+    if (mission.selectedTicket?.id === selectedWorkflowId) {
+      return Array.from(new Set(mission.contextPack?.docs || []));
+    }
+    return Array.from(new Set(selectedWorkflowCard?.impactedDocs || []));
+  }, [mission.contextPack?.docs, mission.selectedTicket?.id, selectedWorkflowCard?.impactedDocs, selectedWorkflowId]);
   const workflowConsoleLogs = useMemo(
     () => (selectedWorkflowId ? mission.consoleLogs.filter((log) => log.taskId === selectedWorkflowId) : []),
     [mission.consoleLogs, selectedWorkflowId]
   );
+  const codebaseWorkflowTitle = selectedWorkflowTicket?.title || mission.selectedTicket?.title || null;
   return (
     <PreflightGate>
       <div className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
@@ -101,8 +135,8 @@ export default function App() {
 
           <div className="flex items-center gap-5 min-w-0">
             <div className="flex items-center gap-2 text-white shrink-0 min-w-0">
-              <Orbit className="w-4 h-4 text-purple-500" />
-              <span className="font-bold tracking-tight text-sm truncate">Mission Control</span>
+              <img src="/assets/agentic-workforce-shell.svg" alt="Agentic Workforce" className="h-5 w-5 shrink-0" />
+              <span className="font-bold tracking-tight text-sm truncate">Agentic Workforce</span>
               <Chip variant="subtle" className="text-[9px] border-purple-500/30 text-purple-400 bg-purple-500/10 uppercase tracking-widest px-1.5 py-0 hidden sm:inline-flex">
                 NEXT-GEN
               </Chip>
@@ -166,10 +200,55 @@ export default function App() {
               </div>
             ) : null}
             <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/50 border border-white/5 text-[10px] font-mono">
-              <span className={`w-1.5 h-1.5 rounded-full ${mission.liveState === "live" ? "bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]" : "bg-zinc-600"}`} />
+              <ProcessingIndicator
+                kind="telemetry"
+                active={mission.liveState === "live"}
+                size="xs"
+                tone="subtle"
+                className="border-0 bg-transparent p-0"
+              />
               <span className={mission.liveState === "live" ? "text-emerald-400" : "text-zinc-400"}>{mission.liveState.toUpperCase()}</span>
             </div>
-            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-purple-500 to-cyan-500 shadow-[0_0_12px_rgba(168,85,247,0.35)] border border-white/20 shrink-0" />
+            <div ref={profileMenuRef} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+                className="relative flex items-center gap-1 rounded-full border border-white/12 bg-black/40 px-1 py-1 shadow-[0_0_14px_rgba(34,211,238,0.12)] overflow-hidden transition-all hover:border-cyan-400/30 hover:shadow-[0_0_16px_rgba(34,211,238,0.18)] focus:outline-none focus:ring-2 focus:ring-cyan-400/30"
+                aria-label="Open quick settings"
+                title="Open quick settings"
+                aria-expanded={profileMenuOpen}
+              >
+                <span className="relative block h-5 w-5 overflow-hidden rounded-full">
+                  <span className="absolute inset-[1px] rounded-full bg-[radial-gradient(circle_at_32%_28%,rgba(255,255,255,0.85),rgba(255,255,255,0.12)_18%,rgba(0,0,0,0)_22%),linear-gradient(135deg,rgba(28,211,255,0.95)_0%,rgba(88,28,255,0.92)_55%,rgba(255,0,170,0.82)_100%)]" />
+                  <span className="absolute inset-0 rounded-full ring-1 ring-inset ring-white/8" />
+                  <span className="absolute -inset-x-2 bottom-[-35%] h-[65%] bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.2),rgba(255,255,255,0)_70%)] blur-[6px]" />
+                </span>
+                <ChevronDown className={`h-3 w-3 text-zinc-400 transition-transform ${profileMenuOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {profileMenuOpen ? (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-50 min-w-[220px] rounded-2xl border border-white/10 bg-[#101013]/95 p-2 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur">
+                  <div className="px-2 pb-2 pt-1 text-[10px] uppercase tracking-[0.18em] text-zinc-500">Quick settings</div>
+                  {[
+                    { key: "providers" as const, label: "Providers", note: "Runtime mode and provider routing" },
+                    { key: "execution_profiles" as const, label: "Execution Profiles", note: "Scope, build, review, escalate" },
+                    { key: "accounts" as const, label: "Accounts", note: "OpenAI keys and Qwen accounts" },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => openSettingsTarget(item.key)}
+                      className="flex w-full items-start rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.05]"
+                    >
+                      <div>
+                        <div className="text-sm font-medium text-white">{item.label}</div>
+                        <div className="mt-0.5 text-xs text-zinc-500">{item.note}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -215,7 +294,7 @@ export default function App() {
                   </div>
 
                   {liveTab === "Execution" && (
-                    <CommandCenterView mission={mission} />
+                    <CommandCenterView mission={mission} onOpenSettings={() => openSettingsTarget("execution_profiles")} />
                   )}
 
                   {liveTab !== "Execution" && (
@@ -231,7 +310,11 @@ export default function App() {
 
               {sidebarSection === "codebase" && (
                 <>
-                  <SectionHeader title="Codebase Explorer" description="Code graph files, impacted tests, and documentation pulled into the current context pack.">
+                  <SectionHeader
+                    title="Codebase Explorer"
+                    description="Code graph files, impacted tests, and documentation pulled into the current context pack."
+                    iconSrc="/assets/focus-reticle.svg"
+                  >
                     <StatusDot
                       color={mission.selectedRepo ? "amber" : "purple"}
                       label={mission.selectedRepo ? "managed worktree" : "connect repo"}
@@ -239,15 +322,22 @@ export default function App() {
                   </SectionHeader>
                   <CodebaseView
                     repoId={mission.selectedRepo?.id || null}
-                    preferredPaths={workflowFocusedFiles}
-                    workflowTitle={selectedWorkflowTicket?.title || null}
+                    contextPaths={workflowFocusedFiles}
+                    testPaths={workflowFocusedTests}
+                    docPaths={workflowFocusedDocs}
+                    workflowTitle={codebaseWorkflowTitle}
+                    requestedScope={codebaseScope}
                   />
                 </>
               )}
 
               {sidebarSection === "console" && (
                 <>
-                  <SectionHeader title="Agent Console" description="Execution, approvals, provider events, and verification output in one live stream.">
+                  <SectionHeader
+                    title="Agent Console"
+                    description="Execution, approvals, provider events, and verification output in one live stream."
+                    iconSrc="/assets/telemetry-wave.svg"
+                  >
                     <StatusDot color="emerald" label="real event stream" animate />
                   </SectionHeader>
                   <ConsoleView
@@ -262,7 +352,11 @@ export default function App() {
 
               {sidebarSection === "projects" && (
                 <>
-                  <SectionHeader title="Projects" description="Connect a repo, reopen recent work, and keep the active project warm and ready.">
+                  <SectionHeader
+                    title="Projects"
+                    description="Connect a repo, reopen recent work, and keep the active project warm and ready."
+                    iconSrc="/assets/autonomous-kanban.svg"
+                  >
                     <StatusDot color="cyan" label={`${mission.recentRepos.length} recent`} />
                   </SectionHeader>
                   <ProjectsWorkspaceView
@@ -286,9 +380,15 @@ export default function App() {
                     setGithubRepo={mission.setGithubRepo}
                     connectGithubProject={mission.connectGithubProject}
                     isActing={mission.isActing}
+                    actionMessage={mission.actionMessage}
+                    syncingRepoId={mission.syncingRepoId}
+                    isConnectingLocal={mission.isConnectingLocal}
+                    isBootstrappingProject={mission.isBootstrappingProject}
+                    isConnectingGithub={mission.isConnectingGithub}
                     blueprint={mission.blueprint}
                     updateBlueprint={mission.updateBlueprint}
                     regenerateBlueprint={mission.regenerateBlueprint}
+                    isRefreshingBlueprint={mission.isRefreshingBlueprint}
                     labsMode={labsMode}
                   />
                 </>
@@ -296,7 +396,11 @@ export default function App() {
 
               {sidebarSection === "settings" && (
                 <>
-                  <SectionHeader title="Mission Settings" description="Providers, approvals, connected accounts, and developer Labs when enabled." />
+                  <SectionHeader
+                    title="Mission Settings"
+                    description="Providers, approvals, connected accounts, and developer Labs when enabled."
+                    iconSrc="/assets/provider-switchboard.svg"
+                  />
                   <SettingsControlView />
                 </>
               )}
@@ -343,16 +447,21 @@ function SidebarItem({
 function SectionHeader({
   title,
   description,
+  iconSrc,
   children,
 }: {
   title: string;
   description?: string;
+  iconSrc?: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-xl border border-white/5 bg-white/[0.015]">
-      <div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          {iconSrc ? <img src={iconSrc} alt="" className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" /> : null}
         <h1 className="text-base font-bold text-white">{title}</h1>
+        </div>
         {description ? <p className="text-xs text-zinc-500 mt-0.5">{description}</p> : null}
       </div>
       {children ? <div className="shrink-0">{children}</div> : null}

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="barGlow">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <linearGradient id="barGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#FF007F" />
+      <stop offset="100%" stop-color="#00FFFF" />
+    </linearGradient>
+    <style>
+      .bar { fill: url(#barGrad); filter: url(#barGlow); rx: 3; transform-origin: bottom; }
+      .grid { stroke: #2A1B4D; stroke-width: 1; stroke-dasharray: 2 4; }
+
+      .b1 { animation: eq 1.2s ease-in-out infinite alternate; }
+      .b2 { animation: eq 0.8s ease-in-out 0.2s infinite alternate; }
+      .b3 { animation: eq 1.5s ease-in-out 0.4s infinite alternate; }
+      .b4 { animation: eq 0.9s ease-in-out 0.6s infinite alternate; }
+      .b5 { animation: eq 1.3s ease-in-out 0.1s infinite alternate; }
+
+      @keyframes eq {
+        0% { transform: scaleY(0.2); }
+        100% { transform: scaleY(1); }
+      }
+    </style>
+  </defs>
+
+  <line x1="10" y1="90" x2="110" y2="90" class="grid" />
+  <line x1="10" y1="60" x2="110" y2="60" class="grid" />
+  <line x1="10" y1="30" x2="110" y2="30" class="grid" />
+
+  <g transform="translate(0, -10)">
+    <rect x="25" y="40" width="8" height="60" class="bar b1" />
+    <rect x="40" y="20" width="8" height="80" class="bar b2" />
+    <rect x="55" y="50" width="8" height="50" class="bar b3" />
+    <rect x="70" y="15" width="8" height="85" class="bar b4" />
+    <rect x="85" y="35" width="8" height="65" class="bar b5" />
+  </g>
+</svg>

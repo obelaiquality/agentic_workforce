@@ -21,6 +21,7 @@ import type {
   ChatSessionDto,
   ChallengeCandidate,
   CodeFilePayload,
+  CodeFileDiffPayload,
   CodeGraphEdge,
   CodeGraphNode,
   CodebaseTreeNode,
@@ -29,6 +30,7 @@ import type {
   ContextPack,
   DomainEvent,
   ExecutionAttempt,
+  ExecutionProfileSettings,
   ExecutionRunSummary,
   GitHubRepoBinding,
   InferenceAutotuneResult,
@@ -727,6 +729,7 @@ export async function getSettings() {
       };
       runtimeMode: "local_qwen" | "openai_api";
       modelRoles: Record<string, unknown>;
+      executionProfiles: ExecutionProfileSettings;
       parallelRuntime: {
         maxLocalLanes: number;
         maxExpandedLanes: number;
@@ -812,6 +815,7 @@ export async function updateSettings(input: {
     };
   };
   modelRoles?: Record<string, unknown>;
+  executionProfiles?: ExecutionProfileSettings;
   parallelRuntime?: {
     maxLocalLanes?: number;
     maxExpandedLanes?: number;
@@ -1477,6 +1481,17 @@ export async function moveMissionWorkflowV8(input: WorkflowMoveRequest) {
   });
 }
 
+export async function setMissionWorkflowExecutionProfileV8(input: {
+  workflowId: string;
+  executionProfileId?: string | null;
+  actor?: string;
+}) {
+  return apiRequest<{ item: { ticketId: string; executionProfileId: string | null } }>("/api/v8/mission/workflow.execution-profile", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function getMissionCodebaseTreeV8(projectId: string) {
   return apiRequest<{ items: CodebaseTreeNode[] }>(`/api/v8/mission/codebase/tree?projectId=${encodeURIComponent(projectId)}`);
 }
@@ -1487,6 +1502,14 @@ export async function getMissionCodeFileV8(projectId: string, filePath: string) 
     path: filePath,
   });
   return apiRequest<{ item: CodeFilePayload }>(`/api/v8/mission/codebase/file?${params.toString()}`);
+}
+
+export async function getMissionCodeFileDiffV8(projectId: string, filePath: string) {
+  const params = new URLSearchParams({
+    projectId,
+    path: filePath,
+  });
+  return apiRequest<{ item: CodeFileDiffPayload }>(`/api/v8/mission/codebase/diff?${params.toString()}`);
 }
 
 export async function getMissionConsoleV8(projectId: string) {
@@ -1656,6 +1679,7 @@ export async function reviewOverseerRouteV8(input: {
   ticket_id?: string;
   prompt: string;
   risk_level?: "low" | "medium" | "high";
+  execution_profile_id?: string;
 }) {
   return apiRequest<{
     ticket: Ticket;
@@ -1677,6 +1701,7 @@ export async function executeOverseerRouteV8(input: {
   prompt: string;
   model_role?: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
   provider_id?: "qwen-cli" | "openai-compatible" | "onprem-qwen" | "openai-responses";
+  execution_profile_id?: string;
 }) {
   return apiRequest<{
     runId: string;

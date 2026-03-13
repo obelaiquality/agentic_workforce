@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <radialGradient id="coreGradient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00FFFF" />
+      <stop offset="100%" stop-color="#0055FF" stop-opacity="0" />
+    </radialGradient>
+    <style>
+      .ring { fill: none; stroke-width: 1.5; stroke-linecap: round; filter: url(#neonGlow); }
+      .ring-1 { stroke: #00FFFF; animation: spinX 6s linear infinite; transform-origin: center; }
+      .ring-2 { stroke: #FF00FF; animation: spinY 8s linear infinite; transform-origin: center; }
+      .ring-3 { stroke: #7000FF; stroke-dasharray: 4 8; animation: spinZ 10s linear infinite; transform-origin: center; }
+      .core-pulse { animation: pulseCore 2s ease-in-out infinite alternate; transform-origin: center; }
+
+      @keyframes spinX { 100% { transform: rotateX(360deg) rotateY(120deg); } }
+      @keyframes spinY { 100% { transform: rotateY(360deg) rotateX(45deg); } }
+      @keyframes spinZ { 100% { transform: rotateZ(360deg) scale(1.1); } }
+      @keyframes pulseCore {
+        0% { transform: scale(0.8); opacity: 0.7; }
+        100% { transform: scale(1.2); opacity: 1; }
+      }
+    </style>
+  </defs>
+
+  <circle cx="60" cy="60" r="15" fill="url(#coreGradient)" class="core-pulse" />
+  <circle cx="60" cy="60" r="4" fill="#FFFFFF" class="core-pulse" filter="url(#neonGlow)" />
+
+  <ellipse cx="60" cy="60" rx="35" ry="12" class="ring ring-1" />
+  <ellipse cx="60" cy="60" rx="45" ry="15" class="ring ring-2" />
+  <circle cx="60" cy="60" r="40" class="ring ring-3" />
+</svg>

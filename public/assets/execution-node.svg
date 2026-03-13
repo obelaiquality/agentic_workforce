@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+  <defs>
+    <style>
+      .track { stroke: #725D93; stroke-width: 1.5; fill: none; opacity: 0.3; }
+      .progress { stroke: #A5F6E3; stroke-width: 2; fill: none; stroke-dasharray: 120; stroke-dashoffset: 120; }
+      .node-bg { fill: #E0DAEF; stroke: #3D2D68; stroke-width: 2; }
+      .node-core { fill: #3D2D68; }
+
+      .draw-progress { animation: drawLine 2s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate; }
+      .spin-slow { animation: spin 6s linear infinite; transform-origin: center; }
+      .pulse-core { animation: corePulse 2s infinite alternate; transform-origin: center; }
+
+      @keyframes drawLine {
+        0% { stroke-dashoffset: 120; }
+        100% { stroke-dashoffset: 0; }
+      }
+
+      @keyframes spin {
+        100% { transform: rotate(360deg); }
+      }
+
+      @keyframes corePulse {
+        0% { transform: scale(0.8); fill: #3D2D68; }
+        100% { transform: scale(1.1); fill: #A5F6E3; }
+      }
+    </style>
+  </defs>
+  <line class="track" x1="10" y1="50" x2="90" y2="50" />
+  <line class="progress draw-progress" x1="10" y1="50" x2="90" y2="50" />
+
+  <g class="spin-slow" transform="translate(50, 50)">
+    <polygon class="node-bg" points="0,-15 15,0 0,15 -15,0" />
+  </g>
+  <circle class="node-core pulse-core" cx="50" cy="50" r="4" />
+</svg>

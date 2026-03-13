@@ -330,6 +330,22 @@ function normalizePathForMatch(value) {
     .toLowerCase();
 }
 
+function workflowTitlePattern(title) {
+  return new RegExp(String(title || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+}
+
+async function clickFirstVisibleButton(page, candidates) {
+  for (const candidate of candidates) {
+    const button = page.getByRole("button", { name: candidate }).first();
+    if (await button.isVisible().catch(() => false)) {
+      const label = (await button.textContent().catch(() => null))?.trim() || null;
+      await button.click();
+      return label;
+    }
+  }
+  return null;
+}
+
 async function main() {
   if (runtimePreset !== "openai_all" && runtimePreset !== "local_split") {
     const modelHealth = await fetch("http://127.0.0.1:8000/health").then((response) => response.ok).catch(() => false);
@@ -503,7 +519,29 @@ async function main() {
   } catch {
     await commandComposer.fill(objective);
   }
-  await page.getByRole("button", { name: "Execute" }).click();
+
+  const firstAction = await clickFirstVisibleButton(page, [/^Scope Ticket$/i, /^(Start Work|Continue Work|Resume Review)$/i]);
+  assert(firstAction, "No command action button available after entering objective");
+
+  if (/scope ticket/i.test(firstAction)) {
+    await waitFor(
+      async () => {
+        const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
+        const snapshot = snapshotPayload?.item;
+        return Boolean(snapshot?.workflowCards?.length && snapshot?.routeSummary);
+      },
+      60000,
+      "scoped workflow card"
+    );
+    await page.screenshot({ path: path.join(outputDir, "05-followup-scoped.png"), fullPage: true });
+
+    const secondAction = await waitFor(
+      async () => clickFirstVisibleButton(page, [/^(Start Work|Continue Work|Resume Review)$/i]),
+      30000,
+      "follow-up start action"
+    );
+    assert(secondAction, "No follow-up start action available after scoping");
+  }
 
   let followupReport = await waitFor(
     async () => {
@@ -567,6 +605,44 @@ async function main() {
     );
   }
 
+  const followupSnapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
+  const followupWorkflow =
+    (followupSnapshotPayload?.item?.workflowCards || []).find((item) =>
+      String(item.title || "").toLowerCase().includes("status badge")
+    ) || null;
+  assert(followupWorkflow?.workflowId, "Unable to locate follow-up workflow card in mission snapshot");
+
+  await page.getByRole("button", { name: "Live State" }).click();
+  const followupCard = page.locator("article").filter({
+    has: page.getByRole("heading", { name: workflowTitlePattern(followupWorkflow.title) }),
+  }).first();
+  await followupCard.waitFor({ timeout: 30000 });
+  const expandButton = followupCard.getByRole("button", { name: /^(Expand workflow|Collapse workflow)$/i }).first();
+  await expandButton.click();
+  const openDetailButton = followupCard.getByRole("button", { name: "Open Detail" }).first();
+  await openDetailButton.waitFor({ timeout: 30000 });
+  await page.screenshot({ path: path.join(outputDir, "05-followup-card-expanded.png"), fullPage: true });
+  await openDetailButton.click();
+  await page.getByText("Execution Profile", { exact: true }).waitFor({ timeout: 30000 });
+
+  const selects = page.locator("select");
+  const selectCount = await selects.count();
+  assert(selectCount >= 2, "Expected both command-card and task-detail execution profile selectors");
+  await selects.nth(selectCount - 1).selectOption("custom");
+
+  const overriddenTaskDetail = await waitFor(
+    async () => {
+      const payload = await apiGet(
+        `/api/v8/mission/task-detail?taskId=${encodeURIComponent(followupWorkflow.workflowId)}&projectId=${encodeURIComponent(activeRepo.id)}`
+      );
+      return payload?.item?.executionProfileOverrideId === "custom" ? payload.item : null;
+    },
+    30000,
+    "ticket execution profile override"
+  );
+
+  await page.screenshot({ path: path.join(outputDir, "05-followup-detail-override.png"), fullPage: true });
+
   const updatedTreePayload = await apiGet(`/api/v8/mission/codebase/tree?projectId=${activeRepo.id}`);
   const updatedTree = Array.isArray(updatedTreePayload.items) ? updatedTreePayload.items : [];
   const statusBadgePath =
@@ -608,6 +684,11 @@ async function main() {
     },
     scaffoldReport,
     followupReport,
+    followupWorkflow: {
+      id: followupWorkflow.workflowId,
+      title: followupWorkflow.title,
+      executionProfileOverrideId: overriddenTaskDetail.executionProfileOverrideId,
+    },
     verificationRecheck: {
       lint: lint.status,
       test: test.status,

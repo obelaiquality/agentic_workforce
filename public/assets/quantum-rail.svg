@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="glowRail">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <style>
+      .rail-bg { stroke: #2A1B4D; stroke-width: 4; fill: none; stroke-linecap: round; }
+      .rail-active { stroke: #00FFFF; stroke-width: 2; fill: none; filter: url(#glowRail); }
+      .packet { fill: #FFFFFF; filter: url(#glowRail); }
+
+      .shoot { animation: speedPacket 1.5s cubic-bezier(0.7, 0, 0.3, 1) infinite; }
+      .pulse-rail { animation: glowPulse 2s infinite alternate; }
+
+      @keyframes speedPacket {
+        0% { transform: translateX(-10px) scaleX(1); opacity: 0; }
+        10% { opacity: 1; }
+        50% { transform: translateX(50px) scaleX(3); }
+        90% { opacity: 1; }
+        100% { transform: translateX(110px) scaleX(1); opacity: 0; }
+      }
+
+      @keyframes glowPulse {
+        from { opacity: 0.5; }
+        to { opacity: 1; }
+      }
+    </style>
+  </defs>
+
+  <line x1="15" y1="60" x2="105" y2="60" class="rail-bg" />
+  <line x1="15" y1="60" x2="80" y2="60" class="rail-active pulse-rail" />
+
+  <g class="shoot"><circle cx="15" cy="60" r="3" class="packet" /></g>
+  <g class="shoot" style="animation-delay: 0.4s;"><circle cx="15" cy="60" r="3" class="packet" /></g>
+
+  <circle cx="80" cy="60" r="6" fill="#00FFFF" filter="url(#glowRail)" class="pulse-rail" />
+  <circle cx="80" cy="60" r="2" fill="#110A26" />
+</svg>

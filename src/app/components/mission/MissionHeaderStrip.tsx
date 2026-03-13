@@ -40,7 +40,7 @@ export function MissionHeaderStrip({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-zinc-500">
             <Activity className="h-3.5 w-3.5 text-cyan-400" />
-            Mission Control
+            Agentic Workforce
           </div>
           <div className="mt-1 flex items-center gap-2 min-w-0">
             <FolderGit2 className="h-4 w-4 text-cyan-300 shrink-0" />

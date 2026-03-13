@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   activateModelPluginV2,
@@ -36,14 +36,74 @@ import { Chip, Panel, PanelHeader } from "../UI";
 type SettingsTab = "basic" | "accounts" | "advanced" | "labs";
 type ModelRoleKey = "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
 type LocalRuntimeRoleKey = "utility_fast" | "coder_default" | "review_deep";
+type ExecutionProfileStageKey = "scope" | "build" | "review" | "escalate";
 
 const ROLE_ORDER: ModelRoleKey[] = ["utility_fast", "coder_default", "review_deep", "overseer_escalation"];
+const EXECUTION_PROFILE_STAGE_ORDER: ExecutionProfileStageKey[] = ["scope", "build", "review", "escalate"];
 const ROLE_LABELS: Record<ModelRoleKey, string> = {
   utility_fast: "Fast",
   coder_default: "Build",
   review_deep: "Review",
   overseer_escalation: "Escalate",
 };
+
+const DEFAULT_EXECUTION_PROFILES = {
+  activeProfileId: "balanced",
+  profiles: [
+    {
+      id: "balanced",
+      name: "Balanced",
+      description: "Fast scoping, standard build, deep review, escalate only when needed.",
+      preset: "balanced",
+      stages: {
+        scope: "utility_fast",
+        build: "coder_default",
+        review: "review_deep",
+        escalate: "overseer_escalation",
+      },
+      updatedAt: new Date(0).toISOString(),
+    },
+    {
+      id: "deep_scope",
+      name: "Deep Scope",
+      description: "Use deeper reasoning while scoping before standard implementation.",
+      preset: "deep_scope",
+      stages: {
+        scope: "review_deep",
+        build: "coder_default",
+        review: "review_deep",
+        escalate: "overseer_escalation",
+      },
+      updatedAt: new Date(0).toISOString(),
+    },
+    {
+      id: "build_heavy",
+      name: "Build Heavy",
+      description: "Favor deeper reasoning during implementation and review.",
+      preset: "build_heavy",
+      stages: {
+        scope: "utility_fast",
+        build: "review_deep",
+        review: "review_deep",
+        escalate: "overseer_escalation",
+      },
+      updatedAt: new Date(0).toISOString(),
+    },
+    {
+      id: "custom",
+      name: "Custom",
+      description: "Editable lifecycle profile for project-specific overrides.",
+      preset: "custom",
+      stages: {
+        scope: "utility_fast",
+        build: "coder_default",
+        review: "review_deep",
+        escalate: "overseer_escalation",
+      },
+      updatedAt: new Date(0).toISOString(),
+    },
+  ],
+} as const;
 
 const LOCAL_RUNTIME_ROLES: LocalRuntimeRoleKey[] = ["utility_fast", "coder_default", "review_deep"];
 
@@ -216,11 +276,17 @@ export function SettingsControlView() {
   const labsMode = useUiStore((state) => state.labsMode);
   const setLabsMode = useUiStore((state) => state.setLabsMode);
   const setActiveSection = useUiStore((state) => state.setActiveSection);
+  const settingsFocusTarget = useUiStore((state) => state.settingsFocusTarget);
+  const setSettingsFocusTarget = useUiStore((state) => state.setSettingsFocusTarget);
   const [tab, setTab] = useState<SettingsTab>("basic");
   const [newAccountLabel, setNewAccountLabel] = useState("");
   const [newAccountPath, setNewAccountPath] = useState("");
   const [policyPath, setPolicyPath] = useState("");
   const [autotuneProfile, setAutotuneProfile] = useState<"interactive" | "batch" | "tool_heavy">("interactive");
+  const providersSectionRef = useRef<HTMLDivElement | null>(null);
+  const executionProfilesSectionRef = useRef<HTMLDivElement | null>(null);
+  const accountsSectionRef = useRef<HTMLDivElement | null>(null);
+  const [highlightSection, setHighlightSection] = useState<"providers" | "execution_profiles" | "accounts" | null>(null);
 
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: listProviders });
   const accountsQuery = useQuery({ queryKey: ["qwen-accounts"], queryFn: listQwenAccounts });
@@ -579,6 +645,10 @@ export function SettingsControlView() {
 
   const selectedOnPremPlugin = (onPremPluginsQuery.data?.items ?? []).find((plugin) => plugin.id === onPremSettings.pluginId);
   const selectedInferenceBackend = (onPremBackendsQuery.data?.items ?? []).find((backend) => backend.id === onPremSettings.inferenceBackendId);
+  const executionProfiles = settingsQuery.data?.items.executionProfiles ?? DEFAULT_EXECUTION_PROFILES;
+  const activeExecutionProfile =
+    executionProfiles.profiles.find((profile) => profile.id === executionProfiles.activeProfileId) ??
+    executionProfiles.profiles[0];
   const startupCommand = (selectedInferenceBackend?.startupCommandTemplate ?? "")
     .replaceAll("{{model}}", onPremSettings.model || selectedOnPremPlugin?.runtimeModel || "mlx-community/Qwen3.5-4B-4bit");
   const authSessionMap = useMemo(
@@ -587,6 +657,9 @@ export function SettingsControlView() {
   );
   const applyModelRoles = (nextBindings: Record<ModelRoleKey, Record<string, unknown>>) => {
     updateSettingsMutation.mutate({ modelRoles: nextBindings });
+  };
+  const applyExecutionProfiles = (nextProfiles: typeof executionProfiles) => {
+    updateSettingsMutation.mutate({ executionProfiles: nextProfiles });
   };
   const applyOnPremRoleRuntimes = (nextRuntimes: Record<LocalRuntimeRoleKey, Record<string, unknown>>) => {
     updateSettingsMutation.mutate({ onPremQwenRoleRuntimes: nextRuntimes });
@@ -608,6 +681,29 @@ export function SettingsControlView() {
         ...onPremRoleRuntimes[role],
         ...patch,
       },
+    });
+  };
+  const setActiveExecutionProfile = (profileId: string) => {
+    applyExecutionProfiles({
+      ...executionProfiles,
+      activeProfileId: profileId,
+    });
+  };
+  const updateExecutionProfileStage = (profileId: string, stage: ExecutionProfileStageKey, role: ModelRoleKey) => {
+    applyExecutionProfiles({
+      ...executionProfiles,
+      profiles: executionProfiles.profiles.map((profile) =>
+        profile.id === profileId
+          ? {
+              ...profile,
+              stages: {
+                ...profile.stages,
+                [stage]: role,
+              },
+              updatedAt: new Date().toISOString(),
+            }
+          : profile
+      ),
     });
   };
   const applyRecommendedOpenAiRoles = () => {
@@ -705,6 +801,25 @@ export function SettingsControlView() {
     });
   };
 
+  useEffect(() => {
+    if (!settingsFocusTarget) return;
+    const focusMap = {
+      providers: { tab: "basic" as SettingsTab, ref: providersSectionRef },
+      execution_profiles: { tab: "basic" as SettingsTab, ref: executionProfilesSectionRef },
+      accounts: { tab: "accounts" as SettingsTab, ref: accountsSectionRef },
+    };
+    const target = focusMap[settingsFocusTarget];
+    setTab(target.tab);
+    requestAnimationFrame(() => {
+      target.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setHighlightSection(settingsFocusTarget);
+      window.setTimeout(() => {
+        setHighlightSection((current) => (current === settingsFocusTarget ? null : current));
+      }, 1800);
+      setSettingsFocusTarget(null);
+    });
+  }, [setSettingsFocusTarget, settingsFocusTarget]);
+
   return (
     <div className="space-y-4">
       <Panel>
@@ -741,6 +856,14 @@ export function SettingsControlView() {
 
       {tab === "basic" ? (
         <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-4">
+          <div
+            ref={providersSectionRef}
+            className={
+              highlightSection === "providers"
+                ? "rounded-2xl ring-1 ring-cyan-400/35 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
+                : "transition-all"
+            }
+          >
           <Panel>
             <PanelHeader title="Providers" />
             <div className="p-4 space-y-4">
@@ -760,7 +883,14 @@ export function SettingsControlView() {
                 ))}
               </div>
 
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+              <div
+                ref={executionProfilesSectionRef}
+                className={
+                  highlightSection === "execution_profiles"
+                    ? "rounded-xl border border-cyan-400/35 bg-white/[0.02] p-4 space-y-3 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
+                    : "rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3 transition-all"
+                }
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm text-white font-medium">Runtime mode</div>
@@ -854,6 +984,82 @@ export function SettingsControlView() {
                 <div className="text-xs text-zinc-500">
                   Models are fetched live from your account’s OpenAI `/v1/models` list. Default quick preset is <code>gpt-5-nano</code>.
                   {openAiModelsQuery.data?.error ? ` ${openAiModelsQuery.data.error}` : ""}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-white font-medium">Execution Profiles</div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      Profiles map the ticket lifecycle to responsibility roles. Role routing below still decides which provider and model each role uses.
+                    </div>
+                  </div>
+                  <Chip variant="subtle">{activeExecutionProfile?.name ?? "Balanced"}</Chip>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {executionProfiles.profiles.map((profile) => (
+                    <button
+                      key={profile.id}
+                      type="button"
+                      onClick={() => setActiveExecutionProfile(profile.id)}
+                      className={`rounded-xl border p-3 text-left transition ${
+                        executionProfiles.activeProfileId === profile.id
+                          ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-100"
+                          : "border-white/10 bg-black/20 text-zinc-300 hover:bg-white/[0.03]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-medium text-white">{profile.name}</div>
+                        <Chip variant={executionProfiles.activeProfileId === profile.id ? "ok" : "subtle"} className="text-[10px]">
+                          {profile.preset}
+                        </Chip>
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500">{profile.description}</div>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {EXECUTION_PROFILE_STAGE_ORDER.map((stage) => (
+                          <Chip key={`${profile.id}-${stage}`} variant="subtle" className="text-[9px]">
+                            {stage}: {ROLE_LABELS[profile.stages[stage]]}
+                          </Chip>
+                        ))}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-white">Custom lifecycle mapping</div>
+                      <div className="text-xs text-zinc-500 mt-1">
+                        Edit the `Custom` profile, then choose it in the command center or make it the active global default here.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveExecutionProfile("custom")}
+                      className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/[0.08]"
+                    >
+                      Use Custom
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {EXECUTION_PROFILE_STAGE_ORDER.map((stage) => (
+                      <label key={stage} className="space-y-1 block">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">{stage}</div>
+                        <select
+                          value={executionProfiles.profiles.find((profile) => profile.id === "custom")?.stages[stage] ?? DEFAULT_EXECUTION_PROFILES.profiles[3].stages[stage]}
+                          onChange={(event) => updateExecutionProfileStage("custom", stage, event.target.value as ModelRoleKey)}
+                          className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                        >
+                          {ROLE_ORDER.map((role) => (
+                            <option key={`${stage}-${role}`} value={role}>
+                              {ROLE_LABELS[role]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1261,6 +1467,7 @@ export function SettingsControlView() {
                 ))}
               </div>
             </Panel>
+          </div>
 
             <Panel>
               <PanelHeader title="OpenAI API" />
@@ -1308,6 +1515,14 @@ export function SettingsControlView() {
 
       {tab === "accounts" ? (
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_minmax(0,1.2fr)] gap-4">
+          <div
+            ref={accountsSectionRef}
+            className={
+              highlightSection === "accounts"
+                ? "rounded-2xl ring-1 ring-cyan-400/35 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
+                : "transition-all"
+            }
+          >
           <Panel>
             <PanelHeader title="Add Qwen account">
               <Chip variant="subtle">optional provider path</Chip>
@@ -1341,6 +1556,7 @@ export function SettingsControlView() {
               </div>
             </div>
           </Panel>
+          </div>
 
           <Panel>
             <PanelHeader title="Qwen account profiles">

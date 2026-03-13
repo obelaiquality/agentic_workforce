@@ -5,6 +5,8 @@ type Section = "live" | "codebase" | "console" | "projects" | "settings" | "over
 type WorkflowStatusFilter = "all" | "backlog" | "in_progress" | "needs_review" | "completed";
 type CommandDrawerMode = "overseer" | "task" | "approval" | "run";
 type WorkflowViewMode = "board" | "list";
+type CodebaseScope = "context" | "tests" | "docs" | "all";
+type SettingsFocusTarget = "providers" | "execution_profiles" | "accounts" | null;
 
 interface UiStore {
   activeSection: Section;
@@ -18,6 +20,10 @@ interface UiStore {
   selectedRunId: string | null;
   selectedBenchmarkRunId: string | null;
   labsMode: boolean;
+  codebaseScope: CodebaseScope;
+  codebaseExpandedDirectoriesByRepo: Record<string, string[]>;
+  codebaseSelectedFileByRepoScope: Record<string, Partial<Record<CodebaseScope, string>>>;
+  settingsFocusTarget: SettingsFocusTarget;
   setActiveSection: (section: UiStore["activeSection"]) => void;
   setSelectedSessionId: (sessionId: string | null) => void;
   setSelectedTicketId: (ticketId: string | null) => void;
@@ -29,6 +35,10 @@ interface UiStore {
   setSelectedRunId: (runId: string | null) => void;
   setSelectedBenchmarkRunId: (runId: string | null) => void;
   setLabsMode: (labsMode: boolean) => void;
+  setCodebaseScope: (scope: CodebaseScope) => void;
+  setCodebaseExpandedDirectories: (repoId: string, directories: string[]) => void;
+  setCodebaseSelectedFile: (repoId: string, scope: CodebaseScope, filePath: string | null) => void;
+  setSettingsFocusTarget: (target: SettingsFocusTarget) => void;
 }
 
 export const useUiStore = create<UiStore>()(
@@ -45,6 +55,10 @@ export const useUiStore = create<UiStore>()(
       selectedRunId: null,
       selectedBenchmarkRunId: null,
       labsMode: false,
+      codebaseScope: "all",
+      codebaseExpandedDirectoriesByRepo: {},
+      codebaseSelectedFileByRepoScope: {},
+      settingsFocusTarget: null,
       setActiveSection: (activeSection) => set({ activeSection }),
       setSelectedSessionId: (selectedSessionId) => set({ selectedSessionId }),
       setSelectedTicketId: (selectedTicketId) => set({ selectedTicketId }),
@@ -56,6 +70,31 @@ export const useUiStore = create<UiStore>()(
       setSelectedRunId: (selectedRunId) => set({ selectedRunId }),
       setSelectedBenchmarkRunId: (selectedBenchmarkRunId) => set({ selectedBenchmarkRunId }),
       setLabsMode: (labsMode) => set({ labsMode }),
+      setCodebaseScope: (codebaseScope) => set({ codebaseScope }),
+      setCodebaseExpandedDirectories: (repoId, directories) =>
+        set((state) => ({
+          codebaseExpandedDirectoriesByRepo: {
+            ...state.codebaseExpandedDirectoriesByRepo,
+            [repoId]: directories,
+          },
+        })),
+      setCodebaseSelectedFile: (repoId, scope, filePath) =>
+        set((state) => {
+          const current = state.codebaseSelectedFileByRepoScope[repoId] || {};
+          const next = { ...current };
+          if (filePath) {
+            next[scope] = filePath;
+          } else {
+            delete next[scope];
+          }
+          return {
+            codebaseSelectedFileByRepoScope: {
+              ...state.codebaseSelectedFileByRepoScope,
+              [repoId]: next,
+            },
+          };
+        }),
+      setSettingsFocusTarget: (settingsFocusTarget) => set({ settingsFocusTarget }),
     }),
     {
       name: "agentic-ui-store-v7",
@@ -64,6 +103,9 @@ export const useUiStore = create<UiStore>()(
         selectedRepoId: state.selectedRepoId,
         labsMode: state.labsMode,
         workflowViewMode: state.workflowViewMode,
+        codebaseScope: state.codebaseScope,
+        codebaseExpandedDirectoriesByRepo: state.codebaseExpandedDirectoriesByRepo,
+        codebaseSelectedFileByRepoScope: state.codebaseSelectedFileByRepoScope,
       }),
       migrate: (persistedState: unknown) => {
         const state = (persistedState ?? {}) as Partial<UiStore>;
@@ -76,6 +118,9 @@ export const useUiStore = create<UiStore>()(
           ...state,
           activeSection,
           workflowViewMode: state.workflowViewMode || "board",
+          codebaseScope: state.codebaseScope || "all",
+          codebaseExpandedDirectoriesByRepo: state.codebaseExpandedDirectoriesByRepo || {},
+          codebaseSelectedFileByRepoScope: state.codebaseSelectedFileByRepoScope || {},
         } as UiStore;
       },
     }

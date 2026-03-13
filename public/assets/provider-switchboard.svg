@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="routeGlow">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <style>
+      .wire { fill: none; stroke: #2A1B4D; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+      .signal { fill: none; stroke: #A5F6E3; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; filter: url(#routeGlow); stroke-dasharray: 20 100; stroke-dashoffset: 120; }
+      .node-base { fill: #110A26; stroke: #725D93; stroke-width: 2; }
+
+      .transmit-1 { animation: routeSignal 2s linear infinite; }
+      .transmit-2 { animation: routeSignal 2.5s linear 0.5s infinite; }
+      .transmit-3 { animation: routeSignal 1.8s linear 1s infinite; }
+      .node-flash { animation: flashNode 2s linear infinite; }
+
+      @keyframes routeSignal {
+        0% { stroke-dashoffset: 120; }
+        100% { stroke-dashoffset: -20; }
+      }
+
+      @keyframes flashNode {
+        0%, 80% { fill: #110A26; stroke: #725D93; }
+        90% { fill: #00FFFF; stroke: #00FFFF; filter: url(#routeGlow); }
+        100% { fill: #110A26; stroke: #725D93; }
+      }
+    </style>
+  </defs>
+
+  <path d="M30,60 L50,60 L70,25 L90,25" class="wire" />
+  <path d="M30,60 L90,60" class="wire" />
+  <path d="M30,60 L50,60 L70,95 L90,95" class="wire" />
+
+  <path d="M30,60 L50,60 L70,25 L90,25" class="signal transmit-1" />
+  <path d="M30,60 L90,60" class="signal transmit-2" style="stroke: #FF007F;" />
+  <path d="M30,60 L50,60 L70,95 L90,95" class="signal transmit-3" />
+
+  <circle cx="25" cy="60" r="12" class="node-base" />
+  <circle cx="25" cy="60" r="4" fill="#A5F6E3" filter="url(#routeGlow)" />
+
+  <rect x="85" y="15" width="20" height="20" rx="4" class="node-base node-flash" />
+  <rect x="85" y="50" width="20" height="20" rx="4" class="node-base node-flash" style="animation-delay: 0.5s; animation-duration: 2.5s;" />
+  <rect x="85" y="85" width="20" height="20" rx="4" class="node-base node-flash" style="animation-delay: 1s; animation-duration: 1.8s;" />
+</svg>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="opticGlow">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <style>
+      .drone-chassis { fill: #110A26; stroke: #725D93; stroke-width: 2; stroke-linejoin: round; }
+      .drone-optic { fill: #00FFFF; filter: url(#opticGlow); }
+      .drone-ring { fill: none; stroke: #A5F6E3; stroke-width: 1.5; stroke-dasharray: 4 4; }
+
+      .hover-lead { animation: hoverBot 3s ease-in-out infinite alternate; }
+      .hover-wing-1 { animation: hoverBot 3.5s ease-in-out 0.5s infinite alternate; }
+      .hover-wing-2 { animation: hoverBot 4s ease-in-out 1s infinite alternate; }
+      .process-ring { animation: spin 4s linear infinite; transform-origin: center; }
+      .process-blink { animation: opticBlink 2s infinite alternate; }
+
+      @keyframes hoverBot {
+        0% { transform: translateY(3px); }
+        100% { transform: translateY(-3px); }
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes opticBlink {
+        0%, 80% { opacity: 1; transform: scale(1); }
+        100% { opacity: 0.4; transform: scale(0.8); }
+      }
+    </style>
+  </defs>
+
+  <g class="hover-wing-1" transform="translate(20, 45) scale(0.7)">
+    <polygon points="30,10 50,20 50,40 30,50 10,40 10,20" class="drone-chassis" />
+    <circle cx="30" cy="30" r="12" class="drone-ring process-ring" transform-origin="30 30" />
+    <circle cx="30" cy="30" r="6" class="drone-optic process-blink" style="animation-delay: 0.3s;" />
+  </g>
+
+  <g class="hover-wing-2" transform="translate(80, 45) scale(0.7)">
+    <polygon points="30,10 50,20 50,40 30,50 10,40 10,20" class="drone-chassis" />
+    <circle cx="30" cy="30" r="12" class="drone-ring process-ring" transform-origin="30 30" style="animation-direction: reverse;" />
+    <circle cx="30" cy="30" r="6" class="drone-optic process-blink" style="animation-delay: 0.7s;" />
+  </g>
+
+  <g class="hover-lead" transform="translate(45, 25)">
+    <polygon points="30,10 50,20 50,40 30,50 10,40 10,20" class="drone-chassis" style="stroke: #A48ED1; stroke-width: 3;" />
+    <circle cx="30" cy="30" r="14" class="drone-ring process-ring" transform-origin="30 30" />
+    <circle cx="30" cy="30" r="8" class="drone-optic process-blink" fill="#FF007F" />
+  </g>
+</svg>

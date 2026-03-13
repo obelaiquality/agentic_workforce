@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="verifyGlow">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <style>
+      .shield-base { fill: #110A26; stroke: #3D2D68; stroke-width: 3; stroke-linejoin: round; }
+      .verify-track { fill: none; stroke: #2A1B4D; stroke-width: 4; }
+      .verify-ring { fill: none; stroke: #00FFFF; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 180; stroke-dashoffset: 180; filter: url(#verifyGlow); }
+      .verify-check { fill: none; stroke: #A5F6E3; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 50; stroke-dashoffset: 50; filter: url(#verifyGlow); }
+
+      .draw-ring { animation: loadRing 3s cubic-bezier(0.65, 0, 0.35, 1) forwards infinite; transform-origin: 60px 60px; transform: rotate(-90deg); }
+      .draw-check { animation: popCheck 3s cubic-bezier(0.65, 0, 0.35, 1) forwards infinite; }
+
+      @keyframes loadRing {
+        0% { stroke-dashoffset: 180; }
+        50%, 100% { stroke-dashoffset: 0; }
+      }
+
+      @keyframes popCheck {
+        0%, 50% { stroke-dashoffset: 50; }
+        70%, 100% { stroke-dashoffset: 0; }
+      }
+    </style>
+  </defs>
+
+  <path d="M60,15 L100,25 L100,65 C100,85 60,105 60,105 C60,105 20,85 20,65 L20,25 Z" class="shield-base" />
+
+  <circle cx="60" cy="60" r="28" class="verify-track" />
+  <circle cx="60" cy="60" r="28" class="verify-ring draw-ring" />
+
+  <polyline points="45,60 55,70 75,50" class="verify-check draw-check" />
+</svg>

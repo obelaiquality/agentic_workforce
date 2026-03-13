@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <filter id="kanbanGlow">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <style>
+      .column { fill: none; stroke: #3D2D68; stroke-width: 2; }
+      .task-card { fill: #00FFFF; filter: url(#kanbanGlow); }
+      .progress-line { stroke: #00FFFF; stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; opacity: 0.5; }
+
+      .move-task { animation: hopColumn 4s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite; }
+      .flow-down { animation: stream 2s linear infinite; }
+
+      @keyframes hopColumn {
+        0%, 20% { transform: translate(15px, 60px); opacity: 1; }
+        30%, 60% { transform: translate(50px, 40px); fill: #FF007F; }
+        70%, 90% { transform: translate(85px, 70px); fill: #A5F6E3; }
+        100% { transform: translate(85px, 70px); opacity: 0; }
+      }
+
+      @keyframes stream {
+        to { stroke-dashoffset: -16; }
+      }
+    </style>
+  </defs>
+
+  <rect x="10" y="20" width="30" height="80" rx="4" class="column" />
+  <rect x="45" y="20" width="30" height="80" rx="4" class="column" />
+  <rect x="80" y="20" width="30" height="80" rx="4" class="column" />
+
+  <line x1="25" y1="20" x2="25" y2="100" class="progress-line flow-down" />
+  <line x1="60" y1="20" x2="60" y2="100" class="progress-line flow-down" />
+  <line x1="95" y1="20" x2="95" y2="100" class="progress-line flow-down" />
+
+  <rect x="0" y="0" width="20" height="12" rx="2" class="task-card move-task" />
+</svg>

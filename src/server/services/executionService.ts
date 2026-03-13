@@ -43,13 +43,17 @@ async function withTimeout<T>(label: string, ms: number, operation: Promise<T>):
 }
 
 function runShell(command: string, cwd: string) {
+  const commandTimeoutMs = Math.max(
+    15000,
+    Math.min(180000, Number(process.env.EXECUTION_COMMAND_TIMEOUT_MS || 90000))
+  );
   try {
     const stdout = execSync(command, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       shell: detectShell(),
-      timeout: 300000,
+      timeout: commandTimeoutMs,
     });
     return { ok: true, stdout, stderr: "", exitCode: 0 };
   } catch (error) {
@@ -61,6 +65,66 @@ function runShell(command: string, cwd: string) {
       exitCode: payload.status ?? 1,
     };
   }
+}
+
+function combinedShellOutput(result: { stdout: string; stderr: string }) {
+  return `${result.stderr || ""}\n${result.stdout || ""}`.trim().toLowerCase();
+}
+
+function classifyInfraVerificationFailure(command: string, result: { stdout: string; stderr: string; exitCode: number }) {
+  const output = combinedShellOutput(result);
+  if (!output) return null;
+
+  if (
+    result.exitCode === 127 ||
+    /\bcommand not found\b/.test(output) ||
+    /is not recognized as an internal or external command/.test(output)
+  ) {
+    return {
+      code: `infra_missing_tool:${command}`,
+      message: `Missing tool while running "${command}".`,
+    };
+  }
+
+  if (
+    /cannot find module/.test(output) ||
+    /module not found/.test(output) ||
+    /err_module_not_found/.test(output) ||
+    /no module named/.test(output)
+  ) {
+    return {
+      code: `infra_missing_dependency:${command}`,
+      message: `Missing dependency while running "${command}".`,
+    };
+  }
+
+  if (result.exitCode === 124 || /\btimed out\b/.test(output)) {
+    return {
+      code: `infra_command_timeout:${command}`,
+      message: `Command timeout while running "${command}".`,
+    };
+  }
+
+  return null;
+}
+
+function hasInfraVerificationFailure(failures: string[]) {
+  return failures.some(
+    (failure) =>
+      failure.startsWith("infra_missing_tool:") ||
+      failure.startsWith("infra_missing_dependency:") ||
+      failure.startsWith("infra_command_timeout:") ||
+      failure.startsWith("setup_failed:")
+  );
+}
+
+function resolveDependencyBootstrapCommand(worktreePath: string) {
+  const has = (name: string) => fs.existsSync(path.join(worktreePath, name));
+  if (has("pnpm-lock.yaml")) return "pnpm install";
+  if (has("yarn.lock")) return "yarn install";
+  if (has("bun.lockb") || has("bun.lock")) return "bun install";
+  if (has("package.json")) return "npm install";
+  return null;
 }
 
 function ensureInsideRoot(root: string, relativePath: string) {
@@ -1752,8 +1816,8 @@ export class ExecutionService {
     const timeoutMs = Math.max(
       20000,
       Math.min(
-        180000,
-        Number(process.env.EXECUTION_MODEL_STEP_TIMEOUT_MS || 90000)
+        120000,
+        Number(process.env.EXECUTION_MODEL_STEP_TIMEOUT_MS || 60000)
       )
     );
     await withTimeout(
@@ -2891,7 +2955,7 @@ export class ExecutionService {
         managed ||
         (await withTimeout(
           "generic patch generation",
-          Math.max(30000, Math.min(240000, Number(process.env.EXECUTION_PATCH_TIMEOUT_MS || 150000))),
+          Math.max(30000, Math.min(120000, Number(process.env.EXECUTION_PATCH_TIMEOUT_MS || 60000))),
           this.generateGenericPatch({
             objective: input.objective,
             worktreePath: input.worktreePath,
@@ -3088,6 +3152,7 @@ export class ExecutionService {
     const commandResults: Array<{ command: string; result: ReturnType<typeof runShell> }> = [];
     const repairedFiles: string[] = [];
     const repairedActions: string[] = [];
+    const infraFailureMessages: string[] = [];
 
     const runVerificationCommands = async (repairAttempt = false) => {
       failures.length = 0;
@@ -3124,6 +3189,11 @@ export class ExecutionService {
         artifacts.push(evidence.id);
         if (!result.ok) {
           failures.push(`command_failed:${command}`);
+          const infraFailure = classifyInfraVerificationFailure(command, result);
+          if (infraFailure) {
+            failures.push(infraFailure.code);
+            infraFailureMessages.push(infraFailure.message);
+          }
         }
       }
     };
@@ -3138,6 +3208,34 @@ export class ExecutionService {
       }
       return exists;
     });
+
+    const autoInstallEnabled = process.env.EXECUTION_AUTO_INSTALL_ON_INFRA_FAILURE !== "false";
+    if (autoInstallEnabled && hasInfraVerificationFailure(failures)) {
+      const installCommand = resolveDependencyBootstrapCommand(input.worktreePath);
+      if (installCommand) {
+        const installResult = runShell(installCommand, input.worktreePath);
+        const setupEvidence = await prisma.benchmarkOutcomeEvidence.create({
+          data: {
+            runId: input.runId,
+            kind: "setup_result",
+            payload: {
+              command: installCommand,
+              reason: "infra_failure_autofix",
+              ...installResult,
+            },
+          },
+        });
+        artifacts.push(setupEvidence.id);
+
+        if (installResult.ok) {
+          repairedActions.push(`dependency_bootstrap:${installCommand}`);
+          await runVerificationCommands(true);
+        } else {
+          failures.push(`setup_failed:${installCommand}`);
+          infraFailureMessages.push(`Dependency bootstrap failed: ${installCommand}`);
+        }
+      }
+    }
 
     const cheapRepairs = this.applyCheapStaticRepairs({
       worktreePath: input.worktreePath,
@@ -3156,7 +3254,8 @@ export class ExecutionService {
       attempt.providerId === "onprem-qwen" &&
       Array.isArray(attempt.changedFiles) &&
       attempt.changedFiles.length > 0 &&
-      attempt.changedFiles.length <= 6
+      attempt.changedFiles.length <= 6 &&
+      !hasInfraVerificationFailure(failures)
     ) {
       for (let round = 0; round < 3 && failures.length > 0; round += 1) {
         const repairedBatch = await this.attemptVerificationRepair({
@@ -3195,6 +3294,7 @@ export class ExecutionService {
           actor: input.actor,
           repaired_files: repairedFiles,
           repaired_actions: repairedActions,
+          infra_failure_messages: Array.from(new Set(infraFailureMessages)),
           ...(input.metadata || {}),
         },
       },

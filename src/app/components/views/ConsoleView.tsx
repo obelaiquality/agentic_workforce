@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Filter, Terminal, Workflow } from "lucide-react";
+import { ChevronDown, ChevronRight, Filter } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
 import { getMissionConsoleV8, openMissionConsoleStreamV8 } from "../../lib/apiClient";
+import { modelRoleLabel, providerLabel } from "../../lib/missionLabels";
+import { ProcessingIndicator } from "../ui/processing-indicator";
+import { cn } from "../ui/utils";
 
 const LEVEL_STYLES: Record<ConsoleEvent["level"], { color: string; badge: string; label: string }> = {
   info: { color: "text-zinc-400", badge: "bg-zinc-800 text-zinc-400 border-zinc-700", label: "INFO" },
@@ -20,6 +23,47 @@ const CATEGORY_LABELS: Record<string, string> = {
   indexing: "Indexing",
 };
 
+const CATEGORY_STYLES: Record<
+  ConsoleEvent["category"],
+  { badge: string; rail: string; message: string; dot: string; panel: string }
+> = {
+  execution: {
+    badge: "border-cyan-500/20 bg-cyan-500/10 text-cyan-200",
+    rail: "bg-cyan-400/70",
+    message: "text-cyan-50/95",
+    dot: "bg-cyan-400",
+    panel: "from-cyan-500/8",
+  },
+  verification: {
+    badge: "border-violet-500/20 bg-violet-500/10 text-violet-200",
+    rail: "bg-violet-400/70",
+    message: "text-violet-50/95",
+    dot: "bg-violet-400",
+    panel: "from-violet-500/8",
+  },
+  provider: {
+    badge: "border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-200",
+    rail: "bg-fuchsia-400/70",
+    message: "text-fuchsia-50/95",
+    dot: "bg-fuchsia-400",
+    panel: "from-fuchsia-500/8",
+  },
+  approval: {
+    badge: "border-amber-500/20 bg-amber-500/10 text-amber-200",
+    rail: "bg-amber-400/70",
+    message: "text-amber-50/95",
+    dot: "bg-amber-400",
+    panel: "from-amber-500/8",
+  },
+  indexing: {
+    badge: "border-emerald-500/20 bg-emerald-500/10 text-emerald-200",
+    rail: "bg-emerald-400/70",
+    message: "text-emerald-50/95",
+    dot: "bg-emerald-400",
+    panel: "from-emerald-500/8",
+  },
+};
+
 type WorkflowLog = {
   id: string;
   timestamp: string;
@@ -28,6 +72,145 @@ type WorkflowLog = {
   source?: string;
   taskId?: string;
 };
+
+type StructuredConsolePayload = {
+  headline: string;
+  payload: Record<string, unknown>;
+};
+
+function tryParseStructuredPayload(message: string): StructuredConsolePayload | null {
+  const trimmed = message.trim();
+  const braceIndex = trimmed.indexOf("{");
+  if (braceIndex <= 0 || !trimmed.endsWith("}")) {
+    return null;
+  }
+
+  const headline = trimmed.slice(0, braceIndex).trim();
+  const payloadText = trimmed.slice(braceIndex);
+  try {
+    const payload = JSON.parse(payloadText);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return null;
+    }
+    return {
+      headline,
+      payload: payload as Record<string, unknown>,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatPayloadValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === "object") return `${Object.keys(value as Record<string, unknown>).length} fields`;
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  return String(value);
+}
+
+function summarizeStructuredPayload(payload: Record<string, unknown>) {
+  const summaryKeys = [
+    "execution_profile_name",
+    "execution_mode",
+    "provider_id",
+    "model_role",
+    "verification_depth",
+    "aggregate_type",
+    "max_lanes",
+    "repo_id",
+    "run_id",
+  ];
+
+  return summaryKeys
+    .filter((key) => payload[key] !== undefined && payload[key] !== null && payload[key] !== "")
+    .slice(0, 4)
+    .map((key) => ({
+      key,
+      label: key.replace(/_/g, " "),
+      value: formatPayloadValue(payload[key]),
+    }));
+}
+
+function executionProfileSummary(payload: Record<string, unknown>) {
+  const raw = payload.execution_profile_snapshot;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  if (typeof record.profileName !== "string" || !Array.isArray(record.stages)) {
+    return null;
+  }
+
+  const stages = record.stages
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const stage = item as Record<string, unknown>;
+      if (
+        typeof stage.stage !== "string" ||
+        typeof stage.role !== "string" ||
+        typeof stage.providerId !== "string" ||
+        typeof stage.model !== "string"
+      ) {
+        return null;
+      }
+      return {
+        stage: stage.stage,
+        role: stage.role,
+        providerId: stage.providerId,
+        model: stage.model,
+      };
+    })
+    .filter(Boolean) as Array<{
+    stage: string;
+    role: string;
+    providerId: string;
+    model: string;
+  }>;
+
+  if (!stages.length) {
+    return null;
+  }
+
+  return {
+    profileName: record.profileName,
+    stages,
+  };
+}
+
+function executionStageLabel(stage: string) {
+  switch (stage) {
+    case "scope":
+      return "Scope";
+    case "build":
+      return "Build";
+    case "review":
+      return "Review";
+    case "escalate":
+      return "Escalate";
+    default:
+      return stage;
+  }
+}
+
+function detailEntries(payload: Record<string, unknown>) {
+  return Object.entries(payload)
+    .filter(([key]) => key !== "execution_profile_snapshot")
+    .map(([key, value]) => ({
+      key,
+      label: key.replace(/_/g, " "),
+      value:
+        Array.isArray(value)
+          ? value.map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+        : typeof value === "object" && value !== null
+        ? JSON.stringify(value, null, 2)
+        : String(value ?? "—"),
+      multiline: Array.isArray(value) || (typeof value === "object" && value !== null),
+    }));
+}
 
 export function ConsoleView({
   projectId,
@@ -46,6 +229,7 @@ export function ConsoleView({
   const [followTail, setFollowTail] = useState(true);
   const [scope, setScope] = useState<"workflow" | "project">("project");
   const [liveEvents, setLiveEvents] = useState<ConsoleEvent[]>([]);
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -58,6 +242,7 @@ export function ConsoleView({
 
   useEffect(() => {
     setLiveEvents([]);
+    setExpandedDetails({});
   }, [projectId]);
 
   useEffect(() => {
@@ -127,11 +312,28 @@ export function ConsoleView({
     [categoryFilter, logs]
   );
 
+  const categoryCounts = useMemo(
+    () =>
+      logs.reduce(
+        (acc, event) => {
+          acc[event.category] += 1;
+          return acc;
+        },
+        {
+          execution: 0,
+          verification: 0,
+          provider: 0,
+          approval: 0,
+          indexing: 0,
+        } as Record<ConsoleEvent["category"], number>
+      ),
+    [logs]
+  );
+
   useEffect(() => {
-    if (followTail) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [filtered, followTail]);
+    if (!followTail) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [followTail, liveEvents.length]);
 
   function handleScroll() {
     const container = scrollRef.current;
@@ -153,6 +355,18 @@ export function ConsoleView({
       <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+              <img
+                src={scope === "workflow" ? "/assets/worker-cluster.svg" : "/assets/telemetry-wave.svg"}
+                alt=""
+                className="h-4 w-4 opacity-75"
+                aria-hidden="true"
+              />
+              <img src="/assets/focus-reticle.svg" alt="" className="h-4 w-4 opacity-75" aria-hidden="true" />
+              <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+                {scope === "workflow" ? "Focused telemetry" : "Live project telemetry"}
+              </span>
+            </div>
             {workflowId ? (
               <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                 <button
@@ -207,19 +421,33 @@ export function ConsoleView({
               ) : null}
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-zinc-500">
                 <Filter className="w-3 h-3" />
-                {filtered.length} entries
+                {query.isLoading ? "syncing stream" : `${filtered.length} entries`}
               </div>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {(Object.keys(CATEGORY_STYLES) as Array<ConsoleEvent["category"]>).map((category) => (
+              <div
+                key={category}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]",
+                  CATEGORY_STYLES[category].badge
+                )}
+              >
+                <span className={cn("h-1.5 w-1.5 rounded-full", CATEGORY_STYLES[category].dot)} />
+                {CATEGORY_LABELS[category]}
+                <span className="font-mono text-[9px]">{categoryCounts[category]}</span>
+              </div>
+            ))}
           </div>
 
           {workflowId && scope === "workflow" ? (
             <div className="rounded-[18px] border border-cyan-500/16 bg-cyan-500/[0.06] px-4 py-3 text-xs text-cyan-100">
               <div className="flex items-center gap-2 font-medium">
-                <Workflow className="h-3.5 w-3.5 text-cyan-300" />
+                <ProcessingIndicator kind="telemetry" active size="xs" tone="subtle" />
+                <img src="/assets/autonomous-kanban.svg" alt="" className="h-3.5 w-3.5 opacity-85" aria-hidden="true" />
                 {workflowTitle ? `${workflowTitle} telemetry` : "Workflow telemetry"}
-              </div>
-              <div className="mt-1 text-cyan-100/80">
-                Showing task-linked execution history first. Live project-wide events remain available under Project scope.
               </div>
             </div>
           ) : null}
@@ -231,12 +459,12 @@ export function ConsoleView({
         style={{ minHeight: 500 }}
       >
         <div className="px-4 py-3 border-b border-white/6 bg-zinc-900/30 flex items-center gap-2 shrink-0">
-          <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+          <img src="/assets/quantum-rail.svg" alt="" className="h-3.5 w-3.5 opacity-85" aria-hidden="true" />
+          <ProcessingIndicator kind="telemetry" active size="xs" tone="subtle" />
           <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-mono">
             mission-control — {scope === "workflow" ? "workflow telemetry" : "real event stream"}
           </span>
           <span className="ml-auto text-[10px] font-mono text-zinc-600">{query.isLoading ? "loading" : `${filtered.length} entries`}</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
         </div>
 
         <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
@@ -245,12 +473,125 @@ export function ConsoleView({
           ) : (
             filtered.map((event) => {
               const cfg = LEVEL_STYLES[event.level];
+              const category = CATEGORY_STYLES[event.category];
+              const structured = tryParseStructuredPayload(event.message);
+              const summary = structured ? summarizeStructuredPayload(structured.payload) : [];
+              const profileSummary = structured ? executionProfileSummary(structured.payload) : null;
+              const expanded = Boolean(expandedDetails[event.id]);
               return (
-                <div key={event.id} className="flex gap-2 py-0.5 hover:bg-white/[0.02] rounded group items-start">
-                  <span className="text-zinc-700 shrink-0 tabular-nums select-none pt-px">{format(new Date(event.createdAt), "HH:mm:ss.SSS")}</span>
-                  <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded border ${cfg.badge}`}>{cfg.label}</span>
-                  <span className="text-zinc-500 shrink-0 hidden sm:block">[{event.category}]</span>
-                  <span className={cfg.color}>{event.message}</span>
+                <div
+                  key={event.id}
+                  className={cn(
+                    "group relative overflow-hidden rounded-lg border border-white/6 bg-[linear-gradient(90deg,rgba(255,255,255,0.02),rgba(0,0,0,0.12))] px-3 py-2 transition",
+                    "hover:border-white/12 hover:bg-white/[0.03]"
+                  )}
+                >
+                  <div className={cn("absolute bottom-0 left-0 top-0 w-[2px]", category.rail)} />
+                  <div className={cn("absolute inset-0 bg-gradient-to-r to-transparent opacity-0 transition-opacity group-hover:opacity-100", category.panel)} />
+                  <div className="relative z-[1] flex flex-wrap items-center gap-2">
+                    <span
+                      className="shrink-0 tabular-nums select-none rounded border border-white/6 bg-black/30 px-1.5 py-0.5 text-[10px] text-zinc-500"
+                      title={format(new Date(event.createdAt), "yyyy-MM-dd HH:mm:ss.SSS")}
+                    >
+                      {format(new Date(event.createdAt), "HH:mm:ss")}
+                    </span>
+                    <span className={cn("shrink-0 text-[9px] px-1.5 py-0.5 rounded border uppercase tracking-[0.08em]", category.badge)}>
+                      {CATEGORY_LABELS[event.category]}
+                    </span>
+                    <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded border ${cfg.badge}`}>{cfg.label}</span>
+                    <span className="ml-auto text-[9px] text-zinc-600">
+                      {event.taskId ? `task:${event.taskId.slice(0, 8)}` : "project"}
+                    </span>
+                  </div>
+                  <div className={cn("relative z-[1] mt-1.5 leading-5", cfg.color, category.message)}>
+                    {structured ? (
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-medium text-white/95">{structured.headline}</div>
+                            {summary.length ? (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {summary.map((item) => (
+                                  <span
+                                    key={`${event.id}-${item.key}`}
+                                    className="inline-flex items-center gap-1 rounded-md border border-white/8 bg-white/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-300"
+                                  >
+                                    <span className="text-zinc-500">{item.label}</span>
+                                    <span className="text-white">{item.value}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {profileSummary ? (
+                              <div className="mt-2.5 rounded-lg border border-white/6 bg-black/20 p-2.5">
+                                <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">Execution Profile</div>
+                                <div className="mt-1 text-[11px] text-white">{profileSummary.profileName}</div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {profileSummary.stages.map((stage) => (
+                                    <span
+                                      key={`${event.id}-${stage.stage}`}
+                                      className="inline-flex items-center gap-1 rounded-md border border-white/8 bg-white/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-300"
+                                    >
+                                      <span className="text-zinc-500">{executionStageLabel(stage.stage)}</span>
+                                      <span className="text-white">{modelRoleLabel(stage.role as Parameters<typeof modelRoleLabel>[0])}</span>
+                                      <span className="text-zinc-500">·</span>
+                                      <span className="text-zinc-400">{providerLabel(stage.providerId as Parameters<typeof providerLabel>[0])}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedDetails((current) => ({
+                                ...current,
+                                [event.id]: !current[event.id],
+                              }))
+                            }
+                            className="inline-flex items-center gap-1 rounded-md border border-white/8 bg-white/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-300 transition hover:bg-white/[0.08]"
+                          >
+                            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                            Details
+                          </button>
+                        </div>
+
+                        {expanded ? (
+                          <div className="rounded-lg border border-white/6 bg-black/20 p-3">
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {detailEntries(structured.payload).map((entry) => (
+                                <div
+                                  key={`${event.id}-${entry.key}`}
+                                  className={cn(
+                                    "rounded-md border border-white/6 bg-white/[0.02] px-2.5 py-2",
+                                    entry.multiline ? "sm:col-span-2" : ""
+                                  )}
+                                >
+                                  <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">{entry.label}</div>
+                                  {Array.isArray(entry.value) ? (
+                                    <div className="mt-1.5 space-y-1">
+                                      {entry.value.map((line, index) => (
+                                        <div key={`${entry.key}-${index}`} className="break-words text-[11px] leading-5 text-zinc-200">
+                                          {line}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-200">
+                                      {entry.value}
+                                    </pre>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap break-words text-[12px] leading-6">{event.message}</div>
+                    )}
+                  </div>
                 </div>
               );
             })

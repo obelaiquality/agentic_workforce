@@ -41,10 +41,10 @@ export function Panel({ children, className }: { children: React.ReactNode; clas
   );
 }
 
-export function PanelHeader({ title, children, className }: { title: string; children?: React.ReactNode; className?: string }) {
+export function PanelHeader({ title, children, className }: { title: React.ReactNode; children?: React.ReactNode; className?: string }) {
   return (
     <div className={cn("px-5 py-3 border-b border-white/5 bg-white/[0.02] flex items-center justify-between", className)}>
-      <h2 className="text-sm font-semibold tracking-tight text-zinc-200">{title}</h2>
+      <div className="text-sm font-semibold tracking-tight text-zinc-200">{title}</div>
       {children && <div className="flex items-center gap-2">{children}</div>}
     </div>
   );

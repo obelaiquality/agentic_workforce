@@ -4,6 +4,7 @@ export type ModelRole = "utility_fast" | "coder_default" | "review_deep" | "over
 export type LocalRuntimeRole = "utility_fast" | "coder_default" | "review_deep";
 
 export type ReasoningMode = "off" | "on" | "auto";
+export type ExecutionProfileStage = "scope" | "build" | "review" | "escalate";
 
 export type ExecutionMode = "single_agent" | "centralized_parallel" | "research_swarm";
 
@@ -105,6 +106,7 @@ export interface Ticket {
   acceptanceCriteria: string[];
   dependencies: string[];
   risk: TicketRisk;
+  metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -597,6 +599,7 @@ export interface ProjectBlueprint {
     preferredCoderRole: "coder_default";
     reviewRole: "review_deep";
     escalationPolicy: "manual" | "high_risk_only" | "auto";
+    executionProfileId?: string | null;
   };
   extractedFrom: string[];
   metadata?: Record<string, unknown>;
@@ -643,6 +646,16 @@ export interface CodeFilePayload {
   content: string;
   truncated: boolean;
   source: "managed_worktree";
+}
+
+export interface CodeFileDiffPayload {
+  path: string;
+  status: "added" | "modified" | "deleted" | "unchanged";
+  patch: string | null;
+  additions: number;
+  deletions: number;
+  truncated: boolean;
+  available: boolean;
 }
 
 export interface ConsoleEvent {
@@ -705,9 +718,13 @@ export interface WorkflowCardSummary {
   impactedDocs: string[];
   lastUpdatedAt: string;
   verificationState?: string | null;
+  verificationFailure?: string | null;
+  verificationCommand?: string | null;
   confidence?: number | null;
   progress?: number | null;
   ownerLabel?: string | null;
+  executionProfileOverrideId?: string | null;
+  executionProfileOverrideName?: string | null;
   laneCount: number;
 }
 
@@ -743,7 +760,21 @@ export interface WorkflowTaskDetail {
   workflowSummary: string | null;
   blockers: string[];
   nextSteps: string[];
+  verificationFailures: string[];
+  verificationCommand: string | null;
   route: MissionUiRouteSummary | null;
+  executionProfileOverrideId?: string | null;
+  executionProfileSnapshot?: {
+    profileId: string;
+    profileName: string;
+    stages: Array<{
+      stage: ExecutionProfileStage;
+      role: ModelRole;
+      providerId: ProviderId;
+      model: string;
+      reasoningMode?: ReasoningMode;
+    }>;
+  } | null;
 }
 
 export interface MissionControlSnapshot {
@@ -1022,6 +1053,20 @@ export interface ModelRoleBinding {
   temperature: number;
   maxTokens: number;
   reasoningMode?: ReasoningMode;
+}
+
+export interface ExecutionProfile {
+  id: string;
+  name: string;
+  description: string;
+  preset: "balanced" | "deep_scope" | "build_heavy" | "custom";
+  stages: Record<ExecutionProfileStage, ModelRole>;
+  updatedAt: string;
+}
+
+export interface ExecutionProfileSettings {
+  activeProfileId: string;
+  profiles: ExecutionProfile[];
 }
 
 export interface V2TaskCard {

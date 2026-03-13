@@ -3,6 +3,7 @@ import { publishEvent } from "../eventBus";
 import type { RoutingDecision } from "../../shared/contracts";
 import { SidecarClient } from "../sidecar/client";
 import { V2EventService } from "./v2EventService";
+import { ProviderOrchestrator } from "./providerOrchestrator";
 
 interface PlanRouteInput {
   actor: string;
@@ -53,7 +54,11 @@ function mapDecision(row: {
 }
 
 export class RouterService {
-  constructor(private readonly sidecar: SidecarClient, private readonly events: V2EventService) {}
+  constructor(
+    private readonly sidecar: SidecarClient,
+    private readonly events: V2EventService,
+    private readonly providerOrchestrator: ProviderOrchestrator
+  ) {}
 
   private async logCommand(commandType: string, actor: string, aggregateId: string | null, payload: Record<string, unknown>) {
     return prisma.commandLog.create({
@@ -92,6 +97,10 @@ export class RouterService {
       active_files_count: input.active_files?.length || 0,
     });
 
+    const roleBindings = await this.providerOrchestrator.getModelRoleBindings();
+    const resolvedProviderId =
+      roleBindings[decision.model_role as import("../../shared/contracts").ModelRole]?.providerId || decision.provider_id;
+
     const projection = await prisma.routingDecisionProjection.create({
       data: {
         ticketId: input.ticket_id || null,
@@ -99,7 +108,7 @@ export class RouterService {
         runId: input.run_id || null,
         executionMode: decision.execution_mode,
         modelRole: decision.model_role,
-        providerId: decision.provider_id,
+        providerId: resolvedProviderId,
         maxLanes: decision.max_lanes,
         risk: decision.risk,
         verificationDepth: decision.verification_depth,
@@ -119,7 +128,7 @@ export class RouterService {
         aggregateId: input.run_id || input.ticket_id || projection.id,
         phase: "routing",
         status: "planned",
-        summary: `Execution mode ${decision.execution_mode} via ${decision.provider_id}/${decision.model_role}`,
+        summary: `Execution mode ${decision.execution_mode} via ${resolvedProviderId}/${decision.model_role}`,
         nextSteps:
           decision.execution_mode === "single_agent"
             ? ["materialize_context", "queue_execution"]
@@ -143,7 +152,7 @@ export class RouterService {
         run_id: input.run_id || null,
         execution_mode: decision.execution_mode,
         model_role: decision.model_role,
-        provider_id: decision.provider_id,
+        provider_id: resolvedProviderId,
         max_lanes: decision.max_lanes,
         rationale: decision.rationale,
       },
@@ -157,7 +166,7 @@ export class RouterService {
       runId: input.run_id || null,
       executionMode: decision.execution_mode,
       modelRole: decision.model_role,
-      providerId: decision.provider_id,
+      providerId: resolvedProviderId,
       maxLanes: decision.max_lanes,
     });
 

@@ -14,6 +14,7 @@ type TicketRow = {
   acceptanceCriteria: string[];
   dependencies: string[];
   risk: Ticket["risk"];
+  metadata?: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -55,6 +56,7 @@ function mapTicket(ticket: TicketRow): Ticket {
     acceptanceCriteria: ticket.acceptanceCriteria,
     dependencies: ticket.dependencies,
     risk: ticket.risk,
+    metadata: ticket.metadata ?? undefined,
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
   };
@@ -262,33 +264,39 @@ export class TicketService {
   }
 
   async moveTicket(ticketId: string, status: TicketStatus) {
-    const ticket = await prisma.$transaction(async (tx) => {
-      const current = (await tx.ticket.findUnique({
-        where: { id: ticketId },
-      })) as unknown as TicketRow | null;
-      if (!current) {
-        throw new Error(`Ticket not found: ${ticketId}`);
+    const ticket = await prisma.$transaction(
+      async (tx) => {
+        const current = (await tx.ticket.findUnique({
+          where: { id: ticketId },
+        })) as unknown as TicketRow | null;
+        if (!current) {
+          throw new Error(`Ticket not found: ${ticketId}`);
+        }
+
+        const lane = canonicalLaneForStatus(status);
+        const laneStatuses = statusesForLane(lane);
+        const latestInLane = await tx.ticket.findFirst({
+          where: {
+            repoId: current.repoId,
+            status: { in: laneStatuses },
+            NOT: { id: ticketId },
+          },
+          orderBy: [{ laneOrder: "desc" }, { updatedAt: "desc" }],
+        });
+
+        return (await tx.ticket.update({
+          where: { id: ticketId },
+          data: {
+            status,
+            laneOrder: latestInLane?.laneOrder ? latestInLane.laneOrder + 1000 : 1000,
+          },
+        })) as unknown as TicketRow;
+      },
+      {
+        maxWait: 15000,
+        timeout: 30000,
       }
-
-      const lane = canonicalLaneForStatus(status);
-      const laneStatuses = statusesForLane(lane);
-      const latestInLane = await tx.ticket.findFirst({
-        where: {
-          repoId: current.repoId,
-          status: { in: laneStatuses },
-          NOT: { id: ticketId },
-        },
-        orderBy: [{ laneOrder: "desc" }, { updatedAt: "desc" }],
-      });
-
-      return (await tx.ticket.update({
-        where: { id: ticketId },
-        data: {
-          status,
-          laneOrder: latestInLane?.laneOrder ? latestInLane.laneOrder + 1000 : 1000,
-        },
-      })) as unknown as TicketRow;
-    });
+    );
 
     await prisma.ticketEvent.create({
       data: {
@@ -319,58 +327,64 @@ export class TicketService {
     toLane: CanonicalWorkflowLane,
     beforeTicketId?: string | null
   ) {
-    const ticket = await prisma.$transaction(async (tx) => {
-      const current = (await tx.ticket.findUnique({
-        where: { id: ticketId },
-      })) as unknown as TicketRow | null;
-      if (!current) {
-        throw new Error(`Ticket not found: ${ticketId}`);
-      }
+    const ticket = await prisma.$transaction(
+      async (tx) => {
+        const current = (await tx.ticket.findUnique({
+          where: { id: ticketId },
+        })) as unknown as TicketRow | null;
+        if (!current) {
+          throw new Error(`Ticket not found: ${ticketId}`);
+        }
 
-      const sourceLane = canonicalLaneForStatus(current.status);
-      const targetLane = toLane;
-      const targetStatuses = statusesForLane(targetLane);
-      const targetRows = (await tx.ticket.findMany({
-        where: {
-          repoId: current.repoId,
-          status: { in: targetStatuses },
-        },
-        orderBy: [{ laneOrder: "asc" }, { updatedAt: "desc" }],
-      })) as unknown as TicketRow[];
-
-      const targetIds = sortTickets(targetRows)
-        .map((row) => row.id)
-        .filter((id) => id !== ticketId);
-
-      const insertIndex =
-        beforeTicketId && targetIds.includes(beforeTicketId) ? targetIds.indexOf(beforeTicketId) : targetIds.length;
-      targetIds.splice(insertIndex, 0, ticketId);
-
-      const statusOverride =
-        sourceLane === targetLane ? current.status : primaryStatusForLane(targetLane);
-
-      if (sourceLane !== targetLane) {
-        const sourceRows = (await tx.ticket.findMany({
+        const sourceLane = canonicalLaneForStatus(current.status);
+        const targetLane = toLane;
+        const targetStatuses = statusesForLane(targetLane);
+        const targetRows = (await tx.ticket.findMany({
           where: {
             repoId: current.repoId,
-            status: { in: statusesForLane(sourceLane) },
+            status: { in: targetStatuses },
           },
           orderBy: [{ laneOrder: "asc" }, { updatedAt: "desc" }],
         })) as unknown as TicketRow[];
-        const sourceIds = sortTickets(sourceRows)
+
+        const targetIds = sortTickets(targetRows)
           .map((row) => row.id)
           .filter((id) => id !== ticketId);
-        await resequenceTickets(tx, sourceIds);
+
+        const insertIndex =
+          beforeTicketId && targetIds.includes(beforeTicketId) ? targetIds.indexOf(beforeTicketId) : targetIds.length;
+        targetIds.splice(insertIndex, 0, ticketId);
+
+        const statusOverride =
+          sourceLane === targetLane ? current.status : primaryStatusForLane(targetLane);
+
+        if (sourceLane !== targetLane) {
+          const sourceRows = (await tx.ticket.findMany({
+            where: {
+              repoId: current.repoId,
+              status: { in: statusesForLane(sourceLane) },
+            },
+            orderBy: [{ laneOrder: "asc" }, { updatedAt: "desc" }],
+          })) as unknown as TicketRow[];
+          const sourceIds = sortTickets(sourceRows)
+            .map((row) => row.id)
+            .filter((id) => id !== ticketId);
+          await resequenceTickets(tx, sourceIds);
+        }
+
+        await resequenceTickets(tx, targetIds, {
+          [ticketId]: { status: statusOverride },
+        });
+
+        return (await tx.ticket.findUnique({
+          where: { id: ticketId },
+        })) as unknown as TicketRow;
+      },
+      {
+        maxWait: 15000,
+        timeout: 30000,
       }
-
-      await resequenceTickets(tx, targetIds, {
-        [ticketId]: { status: statusOverride },
-      });
-
-      return (await tx.ticket.findUnique({
-        where: { id: ticketId },
-      })) as unknown as TicketRow;
-    });
+    );
 
     await prisma.ticketEvent.create({
       data: {
@@ -486,6 +500,66 @@ export class TicketService {
       createdAt: comment.createdAt.toISOString(),
       parentCommentId: comment.parentCommentId,
       replies: [],
+    };
+  }
+
+  async getTicketExecutionProfileOverride(ticketId: string) {
+    const event = await prisma.ticketEvent.findFirst({
+      where: {
+        ticketId,
+        type: {
+          in: ["ticket.execution_profile_set", "ticket.execution_profile_cleared"],
+        },
+      },
+      orderBy: [{ createdAt: "desc" }],
+    });
+
+    if (!event) {
+      return undefined;
+    }
+
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    return typeof payload.executionProfileId === "string" ? payload.executionProfileId : null;
+  }
+
+  async setTicketExecutionProfileOverride(input: {
+    ticketId: string;
+    executionProfileId: string | null;
+    actor?: string | null;
+  }) {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: input.ticketId },
+      select: { id: true },
+    });
+    if (!ticket) {
+      throw new Error(`Ticket not found: ${input.ticketId}`);
+    }
+
+    const executionProfileId = input.executionProfileId?.trim() || null;
+    await prisma.ticketEvent.create({
+      data: {
+        ticketId: input.ticketId,
+        type: executionProfileId ? "ticket.execution_profile_set" : "ticket.execution_profile_cleared",
+        payload: {
+          executionProfileId,
+        },
+      },
+    });
+
+    await prisma.auditEvent.create({
+      data: {
+        actor: input.actor?.trim() || "user",
+        eventType: executionProfileId ? "ticket.execution_profile_set" : "ticket.execution_profile_cleared",
+        payload: {
+          ticketId: input.ticketId,
+          executionProfileId,
+        },
+      },
+    });
+
+    return {
+      ticketId: input.ticketId,
+      executionProfileId,
     };
   }
 }

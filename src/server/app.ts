@@ -231,6 +231,178 @@ function openAiUnifiedRoleBindings(model: string) {
   };
 }
 
+function defaultExecutionProfiles() {
+  const now = new Date().toISOString();
+  return {
+    activeProfileId: "balanced",
+    profiles: [
+      {
+        id: "balanced",
+        name: "Balanced",
+        description: "Fast scoping, standard build, deep review, escalate only when needed.",
+        preset: "balanced",
+        stages: {
+          scope: "utility_fast",
+          build: "coder_default",
+          review: "review_deep",
+          escalate: "overseer_escalation",
+        },
+        updatedAt: now,
+      },
+      {
+        id: "deep_scope",
+        name: "Deep Scope",
+        description: "Use deeper reasoning while scoping before standard implementation.",
+        preset: "deep_scope",
+        stages: {
+          scope: "review_deep",
+          build: "coder_default",
+          review: "review_deep",
+          escalate: "overseer_escalation",
+        },
+        updatedAt: now,
+      },
+      {
+        id: "build_heavy",
+        name: "Build Heavy",
+        description: "Favor deeper reasoning during implementation and review.",
+        preset: "build_heavy",
+        stages: {
+          scope: "utility_fast",
+          build: "review_deep",
+          review: "review_deep",
+          escalate: "overseer_escalation",
+        },
+        updatedAt: now,
+      },
+      {
+        id: "custom",
+        name: "Custom",
+        description: "Editable lifecycle profile for project-specific overrides.",
+        preset: "custom",
+        stages: {
+          scope: "utility_fast",
+          build: "coder_default",
+          review: "review_deep",
+          escalate: "overseer_escalation",
+        },
+        updatedAt: now,
+      },
+    ],
+  };
+}
+
+function normalizeExecutionProfiles(value: unknown) {
+  const fallback = defaultExecutionProfiles();
+  const record = asRecord(value);
+  const profiles = Array.isArray(record.profiles)
+    ? record.profiles
+        .map((item) => {
+          const row = asRecord(item);
+          const stages = asRecord(row.stages);
+          return {
+            id: typeof row.id === "string" && row.id.trim() ? row.id : randomUUID(),
+            name: typeof row.name === "string" && row.name.trim() ? row.name : "Custom",
+            description:
+              typeof row.description === "string" && row.description.trim()
+                ? row.description
+                : "Editable lifecycle profile.",
+            preset:
+              row.preset === "balanced" || row.preset === "deep_scope" || row.preset === "build_heavy" || row.preset === "custom"
+                ? row.preset
+                : "custom",
+            stages: {
+              scope:
+                stages.scope === "utility_fast" || stages.scope === "coder_default" || stages.scope === "review_deep" || stages.scope === "overseer_escalation"
+                  ? stages.scope
+                  : "utility_fast",
+              build:
+                stages.build === "utility_fast" || stages.build === "coder_default" || stages.build === "review_deep" || stages.build === "overseer_escalation"
+                  ? stages.build
+                  : "coder_default",
+              review:
+                stages.review === "utility_fast" || stages.review === "coder_default" || stages.review === "review_deep" || stages.review === "overseer_escalation"
+                  ? stages.review
+                  : "review_deep",
+              escalate:
+                stages.escalate === "utility_fast" || stages.escalate === "coder_default" || stages.escalate === "review_deep" || stages.escalate === "overseer_escalation"
+                  ? stages.escalate
+                  : "overseer_escalation",
+            },
+            updatedAt: typeof row.updatedAt === "string" && row.updatedAt.trim() ? row.updatedAt : new Date().toISOString(),
+          };
+        })
+        .filter((item) => item.id)
+    : fallback.profiles;
+
+  const activeProfileId =
+    typeof record.activeProfileId === "string" && profiles.some((item) => item.id === record.activeProfileId)
+      ? record.activeProfileId
+      : profiles[0]?.id || fallback.activeProfileId;
+
+  return {
+    activeProfileId,
+    profiles: profiles.length ? profiles : fallback.profiles,
+  };
+}
+
+function resolveExecutionProfile(input: {
+  executionProfiles: ReturnType<typeof normalizeExecutionProfiles>;
+  selectedProfileId?: string | null;
+  ticketProfileId?: string | null;
+  projectProfileId?: string | null;
+  roleBindings: Record<"utility_fast" | "coder_default" | "review_deep" | "overseer_escalation", {
+    role: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+    providerId: "qwen-cli" | "openai-compatible" | "onprem-qwen" | "openai-responses";
+    pluginId: string | null;
+    model: string;
+    temperature: number;
+    maxTokens: number;
+    reasoningMode?: "off" | "on" | "auto";
+  }>;
+}) {
+  const profileId =
+    input.selectedProfileId && input.executionProfiles.profiles.some((item) => item.id === input.selectedProfileId)
+      ? input.selectedProfileId
+      : input.ticketProfileId && input.executionProfiles.profiles.some((item) => item.id === input.ticketProfileId)
+      ? input.ticketProfileId
+      : input.projectProfileId && input.executionProfiles.profiles.some((item) => item.id === input.projectProfileId)
+      ? input.projectProfileId
+      : input.executionProfiles.activeProfileId;
+  const profile =
+    input.executionProfiles.profiles.find((item) => item.id === profileId) ||
+    input.executionProfiles.profiles[0];
+  return {
+    profileId: profile.id,
+    profileName: profile.name,
+    profileStages: profile.stages,
+    stages: {
+      scope: input.roleBindings[profile.stages.scope],
+      build: input.roleBindings[profile.stages.build],
+      review: input.roleBindings[profile.stages.review],
+      escalate: input.roleBindings[profile.stages.escalate],
+    },
+  };
+}
+
+function buildExecutionProfileSnapshot(
+  profile: ReturnType<typeof resolveExecutionProfile>
+) {
+  return {
+    profileId: profile.profileId,
+    profileName: profile.profileName,
+    stages: (Object.entries(profile.stages) as Array<
+      [keyof typeof profile.stages, (typeof profile.stages)[keyof typeof profile.stages]]
+    >).map(([stage, binding]) => ({
+      stage,
+      role: binding.role,
+      providerId: binding.providerId,
+      model: binding.model,
+      reasoningMode: binding.reasoningMode,
+    })),
+  };
+}
+
 function inferRuntimeMode(activeProvider: string, modelRolesValue: Record<string, unknown>) {
   const roles = ["utility_fast", "coder_default", "review_deep", "overseer_escalation"] as const;
   const allOpenAi = roles.every((role) => {
@@ -651,6 +823,7 @@ const blueprintUpdateSchema = z.object({
       preferredCoderRole: z.literal("coder_default").optional(),
       reviewRole: z.literal("review_deep").optional(),
       escalationPolicy: z.enum(["manual", "high_risk_only", "auto"]).optional(),
+      executionProfileId: z.string().nullable().optional(),
     })
     .optional(),
 });
@@ -669,6 +842,7 @@ const v8OverseerRouteReviewSchema = z.object({
   ticket_id: z.string().optional(),
   prompt: z.string().min(1),
   risk_level: z.enum(["low", "medium", "high"]).optional(),
+  execution_profile_id: z.string().optional(),
 });
 
 const v8OverseerExecuteSchema = z.object({
@@ -678,6 +852,7 @@ const v8OverseerExecuteSchema = z.object({
   prompt: z.string().min(1),
   model_role: z.enum(["utility_fast", "coder_default", "review_deep", "overseer_escalation"]).optional(),
   provider_id: z.enum(["qwen-cli", "openai-compatible", "onprem-qwen", "openai-responses"]).optional(),
+  execution_profile_id: z.string().optional(),
 });
 
 function asRecord(value: unknown) {
@@ -963,7 +1138,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   const auditService = new AuditService();
   const v2EventService = new V2EventService(sidecar);
   const v2QueryService = new V2QueryService(sidecar);
-  const routerService = new RouterService(sidecar, v2EventService);
+  const routerService = new RouterService(sidecar, v2EventService, providerOrchestrator);
   const v2CommandService = new V2CommandService(sidecar, providerOrchestrator, v2EventService, routerService);
   const inferenceTuningService = new InferenceTuningService(v2EventService);
   const distillService = new DistillService(sidecar, v2EventService);
@@ -2128,6 +2303,17 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     });
   }
 
+  function hasInfrastructureVerificationFailure(failures: string[] | undefined) {
+    const list = failures || [];
+    return list.some(
+      (failure) =>
+        failure.startsWith("infra_missing_tool:") ||
+        failure.startsWith("infra_missing_dependency:") ||
+        failure.startsWith("infra_command_timeout:") ||
+        failure.startsWith("setup_failed:")
+    );
+  }
+
   function mapConsoleCategory(type: string): ConsoleEvent["category"] {
     if (type.startsWith("execution.") || type.startsWith("task.")) return "execution";
     if (type.startsWith("verification.") || type.includes("verify")) return "verification";
@@ -2140,6 +2326,100 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     if (type.includes("failed") || type.includes("error") || type.includes("rejected")) return "error";
     if (type.includes("pending") || type.includes("cooldown") || type.includes("warn")) return "warn";
     return "info";
+  }
+
+  function summarizeConsoleString(value: string, max = 84) {
+    const compact = value.replace(/\s+/g, " ").trim();
+    if (compact.length <= max) return compact;
+    return `${compact.slice(0, max - 3)}...`;
+  }
+
+  function normalizeConsoleValue(value: unknown): unknown {
+    if (typeof value === "string") return summarizeConsoleString(value);
+    if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+    if (Array.isArray(value)) {
+      if (value.length === 0) return [];
+      return value
+        .slice(0, 3)
+        .map((item) => (typeof item === "string" ? summarizeConsoleString(item) : normalizeConsoleValue(item)));
+    }
+    if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      const entries = Object.entries(record).slice(0, 6);
+      const next: Record<string, unknown> = {};
+      for (const [key, entryValue] of entries) {
+        next[key] = normalizeConsoleValue(entryValue);
+      }
+      return next;
+    }
+    return String(value ?? "");
+  }
+
+  function compactConsolePayload(payload: unknown) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return null;
+    }
+
+    const record = payload as Record<string, unknown>;
+    const preferredKeys = [
+      "run_id",
+      "runId",
+      "repo_id",
+      "repoId",
+      "project_id",
+      "projectId",
+      "ticket_id",
+      "ticketId",
+      "aggregate_type",
+      "aggregateType",
+      "status",
+      "execution_mode",
+      "executionMode",
+      "verification_depth",
+      "verificationDepth",
+      "provider_id",
+      "providerId",
+      "model_role",
+      "modelRole",
+      "max_lanes",
+      "maxLanes",
+      "context_manifest_id",
+      "contextManifestId",
+      "retrieval_trace_id",
+      "retrievalTraceId",
+      "approval_id",
+      "approvalId",
+      "reason",
+      "errors",
+      "failures",
+      "rationale",
+    ];
+
+    const compact: Record<string, unknown> = {};
+    for (const key of preferredKeys) {
+      if (!(key in record)) continue;
+      const normalized = normalizeConsoleValue(record[key]);
+      if (normalized === undefined || normalized === null || normalized === "") continue;
+      compact[key] = normalized;
+      if (Object.keys(compact).length >= 8) break;
+    }
+
+    if (!Object.keys(compact).length) {
+      for (const [key, value] of Object.entries(record)) {
+        const normalized = normalizeConsoleValue(value);
+        if (normalized === undefined || normalized === null || normalized === "") continue;
+        compact[key] = normalized;
+        if (Object.keys(compact).length >= 8) break;
+      }
+    }
+
+    return Object.keys(compact).length ? compact : null;
+  }
+
+  function buildConsoleMessage(type: string, payload: unknown) {
+    const headline = type.replace(/\./g, " ");
+    const compact = compactConsolePayload(payload);
+    return compact ? `${headline} ${JSON.stringify(compact)}` : headline;
   }
 
   function extractConsoleProjectId(payload: unknown): string | null {
@@ -2216,7 +2496,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       projectId,
       category: mapConsoleCategory(row.eventType),
       level: mapConsoleLevel(row.eventType),
-      message: `${row.eventType.replace(/\./g, " ")} ${JSON.stringify(row.payload).slice(0, 180)}`,
+      message: buildConsoleMessage(row.eventType, row.payload),
       createdAt: row.createdAt.toISOString(),
       taskId: extractConsoleTaskId(row.payload, row.aggregateId, projectId) || undefined,
     }));
@@ -2240,7 +2520,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       projectId,
       category: row.eventType.includes("index") ? "indexing" : "execution",
       level: "info",
-      message: `${row.eventType.replace(/\./g, " ")} ${JSON.stringify(row.payload).slice(0, 180)}`,
+      message: buildConsoleMessage(row.eventType, row.payload),
       createdAt: row.createdAt.toISOString(),
     }));
 
@@ -2251,7 +2531,10 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       level: row.pass ? "info" : "error",
       message: row.pass
         ? `verification passed · ${(row.impactedTests as string[] | unknown[]).length || 0} commands`
-        : `verification failed · ${((row.failures as string[] | unknown[]).slice(0, 2) as string[]).join(" | ")}`,
+        : buildConsoleMessage("verification.failed", {
+            failed_commands: (row.failures as string[] | unknown[]).slice(0, 2),
+            changed_file_checks: (row.changedFileChecks as string[] | unknown[]).slice(0, 2),
+          }),
       createdAt: row.createdAt.toISOString(),
     }));
 
@@ -2382,6 +2665,24 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     };
   });
 
+  app.post("/api/v8/mission/workflow.execution-profile", async (request) => {
+    const body = z
+      .object({
+        workflowId: z.string().min(1),
+        executionProfileId: z.string().nullable().optional(),
+        actor: z.string().optional(),
+      })
+      .parse(request.body);
+
+    return {
+      item: await ticketService.setTicketExecutionProfileOverride({
+        ticketId: body.workflowId,
+        executionProfileId: body.executionProfileId ?? null,
+        actor: body.actor || "user",
+      }),
+    };
+  });
+
   app.get("/api/v8/mission/codebase", async (request) => {
     const query = missionSnapshotQuerySchema.parse(request.query);
     const snapshot = await missionControlService.getSnapshot({
@@ -2407,6 +2708,13 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const query = missionCodebaseFileQuerySchema.parse(request.query);
     return {
       item: await repoService.readCodebaseFile(query.projectId, query.path),
+    };
+  });
+
+  app.get("/api/v8/mission/codebase/diff", async (request) => {
+    const query = missionCodebaseFileQuerySchema.parse(request.query);
+    return {
+      item: await repoService.readCodebaseDiff(query.projectId, query.path),
     };
   });
 
@@ -2445,7 +2753,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         projectId: projectId || query.projectId || null,
         category: mapConsoleCategory(event.type),
         level: mapConsoleLevel(event.type),
-        message: `${event.type.replace(/\./g, " ")} ${JSON.stringify(event.payload).slice(0, 180)}`,
+        message: buildConsoleMessage(event.type, event.payload),
         createdAt: event.createdAt,
         taskId: extractConsoleTaskId(event.payload, null, query.projectId || null) || undefined,
       });
@@ -2631,11 +2939,13 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const worktreePath = path.join(repo.managedWorktreeRoot, "active");
 
     // Non-mutating parallel helpers: ticket, blueprint, and knowledge search are independent
-    const [ticket, blueprint, knowledgeHits] = await Promise.all([
+    const [ticket, blueprint, knowledgeHits, executionProfilesSetting] = await Promise.all([
       ensureMissionTicket(repo.id, input.prompt, input.ticket_id),
       projectBlueprintService.get(repo.id),
       v2QueryService.searchKnowledge(input.prompt),
+      prisma.appSetting.findUnique({ where: { key: "execution_profiles" } }),
     ]);
+    const ticketExecutionProfileId = await ticketService.getTicketExecutionProfileOverride(ticket.id);
     const retrievalIds = knowledgeHits.slice(0, 8).map((item) => item.id);
 
     // Route planning and context pack building can run in parallel when
@@ -2660,10 +2970,26 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       }),
     ]);
     const roleBindings = await providerOrchestrator.getModelRoleBindings();
-    const routeRoleBinding = roleBindings[route.modelRole as import("../shared/contracts").ModelRole];
+    const executionProfiles = normalizeExecutionProfiles(executionProfilesSetting?.value);
+    const resolvedExecutionProfile = resolveExecutionProfile({
+      executionProfiles,
+      selectedProfileId: input.execution_profile_id,
+      ticketProfileId: ticketExecutionProfileId ?? null,
+      projectProfileId: blueprint?.providerPolicy.executionProfileId ?? null,
+      roleBindings,
+    });
+    const executionProfileSnapshot = buildExecutionProfileSnapshot(resolvedExecutionProfile);
+    const routeRoleBinding = resolvedExecutionProfile.stages.scope;
     const responseRoute = {
       ...route,
+      modelRole: routeRoleBinding.role,
       providerId: routeRoleBinding?.providerId || route.providerId,
+      metadata: {
+        ...(route.metadata ?? {}),
+        execution_profile_id: resolvedExecutionProfile.profileId,
+        execution_profile_name: resolvedExecutionProfile.profileName,
+        execution_profile_snapshot: executionProfileSnapshot,
+      },
     };
 
     const context = await contextService.materializeContext({
@@ -2682,6 +3008,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       metadata: {
         blueprint_id: blueprint?.id || null,
         blueprint_version: blueprint?.version || null,
+        execution_profile_id: resolvedExecutionProfile.profileId,
+        execution_profile_name: resolvedExecutionProfile.profileName,
+        execution_profile_snapshot: executionProfileSnapshot,
       },
     });
 
@@ -2705,11 +3034,13 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const worktreePath = path.join(repo.managedWorktreeRoot, "active");
 
     // Non-mutating parallel helpers: ticket, blueprint, and guidelines are independent
-    const [ticket, blueprint, guidelines] = await Promise.all([
+    const [ticket, blueprint, guidelines, executionProfilesSetting] = await Promise.all([
       ensureMissionTicket(repo.id, input.prompt, input.ticket_id),
       projectBlueprintService.get(repo.id),
       repoService.getGuidelines(repo.id),
+      prisma.appSetting.findUnique({ where: { key: "execution_profiles" } }),
     ]);
+    const ticketExecutionProfileId = await ticketService.getTicketExecutionProfileOverride(ticket.id);
     const workingTicket =
       ticket.status === "in_progress" ? ticket : await ticketService.moveTicket(ticket.id, "in_progress");
     // Always compute a fresh route for execute so provider/model-role changes
@@ -2725,15 +3056,25 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       active_files: [],
     });
 
+    const roleBindings = await providerOrchestrator.getModelRoleBindings();
+    const executionProfiles = normalizeExecutionProfiles(executionProfilesSetting?.value);
+    const resolvedExecutionProfile = resolveExecutionProfile({
+      executionProfiles,
+      selectedProfileId: input.execution_profile_id,
+      ticketProfileId: ticketExecutionProfileId ?? null,
+      projectProfileId: blueprint?.providerPolicy.executionProfileId ?? null,
+      roleBindings,
+    });
+    const executionProfileSnapshot = buildExecutionProfileSnapshot(resolvedExecutionProfile);
     const runId = randomUUID();
+    const buildStage = resolvedExecutionProfile.stages.build;
     const resolvedRole = applyEscalationPolicy(
-      (input.model_role || blueprint?.providerPolicy.preferredCoderRole || route.modelRole) as import("../shared/contracts").ModelRole,
+      buildStage.role,
       blueprint?.providerPolicy.escalationPolicy,
       route.risk as "low" | "medium" | "high" | undefined,
     );
-    const roleBindings = await providerOrchestrator.getModelRoleBindings();
     const roleBinding = roleBindings[resolvedRole];
-    const resolvedProvider = input.provider_id || roleBinding?.providerId || route.providerId;
+    const resolvedProvider = input.provider_id || roleBinding?.providerId || buildStage.providerId || route.providerId;
     const planned = await executionService.planExecution({
       actor: input.actor,
       runId,
@@ -2751,6 +3092,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       metadata: {
         blueprint_id: blueprint?.id || null,
         blueprint_version: blueprint?.version || null,
+        execution_profile_id: resolvedExecutionProfile.profileId,
+        execution_profile_name: resolvedExecutionProfile.profileName,
+        execution_profile_snapshot: executionProfileSnapshot,
       },
     });
 
@@ -2765,6 +3109,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       providerId: resolvedProvider,
       routingDecisionId: route.id,
       contextPackId: planned.contextPack.id,
+      metadata: {
+        execution_profile_id: resolvedExecutionProfile.profileId,
+        execution_profile_name: resolvedExecutionProfile.profileName,
+        execution_profile_snapshot: executionProfileSnapshot,
+      },
     });
 
     const verificationPlan = buildVerificationPlanForRun({ blueprint, guidelines });
@@ -2783,6 +3132,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
             verification_reasons: verificationPlan.reasons,
             enforced_rules: verificationPlan.enforcedRules,
             blueprint_version: blueprint?.version || null,
+            execution_profile_id: resolvedExecutionProfile.profileId,
+            execution_profile_name: resolvedExecutionProfile.profileName,
+            execution_profile_snapshot: executionProfileSnapshot,
           },
         })
       : null;
@@ -2815,54 +3167,74 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       await moveLifecycleTicket("review", "verification_passed_initial");
       await moveLifecycleTicket("done", "auto_review_gate_passed");
     } else if (latestVerification) {
+      if (hasInfrastructureVerificationFailure(latestVerification.failures)) {
+        await moveLifecycleTicket("in_progress", "verification_environment_setup_required");
+      } else {
+      let autoReviewError: Error | null = null;
       while (!latestVerification.pass && autoReviewRounds < AUTO_REVIEW_MAX_ROUNDS) {
         autoReviewRounds += 1;
         await moveLifecycleTicket("review", `auto_review_round_${autoReviewRounds}_started`);
 
-        const reviewRole = applyEscalationPolicy(
-          "review_deep",
-          blueprint?.providerPolicy.escalationPolicy,
-          route.risk as "low" | "medium" | "high" | undefined,
-        );
-        const reviewRoleBinding = roleBindings[reviewRole];
-        const reviewProvider = input.provider_id || reviewRoleBinding?.providerId || resolvedProvider;
+        try {
+          const reviewStage = resolvedExecutionProfile.stages.review;
+          const reviewRole = applyEscalationPolicy(
+            reviewStage.role,
+            blueprint?.providerPolicy.escalationPolicy,
+            route.risk as "low" | "medium" | "high" | undefined,
+          );
+          const reviewRoleBinding = roleBindings[reviewRole];
+          const reviewProvider = input.provider_id || reviewRoleBinding?.providerId || reviewStage.providerId || resolvedProvider;
 
-        latestAttempt = await executionService.startExecution({
-          actor: input.actor,
-          runId,
-          repoId: repo.id,
-          projectId: repo.id,
-          worktreePath,
-          objective: [
-            `Auto-review repair round ${autoReviewRounds} for ticket "${lifecycleTicket.title}".`,
-            "Fix failing verification with minimal diffs and preserve intended behavior.",
-            "",
-            "Original objective:",
-            input.prompt,
-          ].join("\n"),
-          modelRole: reviewRole,
-          providerId: reviewProvider,
-          routingDecisionId: route.id,
-          contextPackId: planned.contextPack.id,
-        });
+          latestAttempt = await executionService.startExecution({
+            actor: input.actor,
+            runId,
+            repoId: repo.id,
+            projectId: repo.id,
+            worktreePath,
+            objective: [
+              `Auto-review repair round ${autoReviewRounds} for ticket "${lifecycleTicket.title}".`,
+              "Fix failing verification with minimal diffs and preserve intended behavior.",
+              "",
+              "Original objective:",
+              input.prompt,
+            ].join("\n"),
+            modelRole: reviewRole,
+            providerId: reviewProvider,
+            routingDecisionId: route.id,
+            contextPackId: planned.contextPack.id,
+            metadata: {
+              execution_profile_id: resolvedExecutionProfile.profileId,
+              execution_profile_name: resolvedExecutionProfile.profileName,
+              execution_profile_snapshot: executionProfileSnapshot,
+              execution_stage_override: "review",
+            },
+          });
 
-        latestVerification = await executionService.verifyExecution({
-          actor: input.actor,
-          runId,
-          repoId: repo.id,
-          worktreePath,
-          executionAttemptId: latestAttempt.id,
-          commands: verificationPlan.commands,
-          docsRequired: verificationPlan.docsRequired,
-          fullSuiteRun: verificationPlan.fullSuiteRun,
-          metadata: {
-            verification_commands: verificationPlan.commands,
-            verification_reasons: verificationPlan.reasons,
-            enforced_rules: verificationPlan.enforcedRules,
-            blueprint_version: blueprint?.version || null,
-            auto_review_round: autoReviewRounds,
-          },
-        });
+          latestVerification = await executionService.verifyExecution({
+            actor: input.actor,
+            runId,
+            repoId: repo.id,
+            worktreePath,
+            executionAttemptId: latestAttempt.id,
+            commands: verificationPlan.commands,
+            docsRequired: verificationPlan.docsRequired,
+            fullSuiteRun: verificationPlan.fullSuiteRun,
+              metadata: {
+                verification_commands: verificationPlan.commands,
+                verification_reasons: verificationPlan.reasons,
+                enforced_rules: verificationPlan.enforcedRules,
+                blueprint_version: blueprint?.version || null,
+                auto_review_round: autoReviewRounds,
+                execution_profile_id: resolvedExecutionProfile.profileId,
+                execution_profile_name: resolvedExecutionProfile.profileName,
+                execution_profile_snapshot: executionProfileSnapshot,
+              },
+            });
+        } catch (error) {
+          autoReviewError = error instanceof Error ? error : new Error("Auto-review execution failed.");
+          await moveLifecycleTicket("in_progress", `auto_review_round_${autoReviewRounds}_error`);
+          break;
+        }
 
         if (latestVerification.pass) {
           await moveLifecycleTicket("done", `auto_review_round_${autoReviewRounds}_passed`);
@@ -2874,8 +3246,13 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         }
       }
 
+      if (autoReviewError) {
+        throw autoReviewError;
+      }
+
       if (!latestVerification.pass) {
         await moveLifecycleTicket("in_progress", "verification_followup_required");
+      }
       }
     }
 
@@ -2887,6 +3264,12 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         ...route,
         modelRole: resolvedRole,
         providerId: resolvedProvider,
+        metadata: {
+          ...(route.metadata ?? {}),
+          execution_profile_id: resolvedExecutionProfile.profileId,
+          execution_profile_name: resolvedExecutionProfile.profileName,
+          execution_profile_snapshot: executionProfileSnapshot,
+        },
       },
       attempt: latestAttempt,
       verification: latestVerification,
@@ -3403,6 +3786,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     const openAiResponses = await prisma.appSetting.findUnique({ where: { key: "openai_responses_config" } });
     const modelRoles = await prisma.appSetting.findUnique({ where: { key: "model_role_bindings" } });
     const parallelRuntime = await prisma.appSetting.findUnique({ where: { key: "parallel_runtime_config" } });
+    const executionProfiles = await prisma.appSetting.findUnique({ where: { key: "execution_profiles" } });
     const distill = await prisma.appSetting.findUnique({ where: { key: "distill_config" } });
     const qwenValue = (qwen?.value as Record<string, unknown>) || {};
     const onPremValue = (onPrem?.value as Record<string, unknown>) || {};
@@ -3415,6 +3799,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         ? activeProvider.value
         : "onprem-qwen";
     const parallelRuntimeValue = (parallelRuntime?.value as Record<string, unknown>) || {};
+    const executionProfilesValue = normalizeExecutionProfiles(executionProfiles?.value);
     const distillValue = (distill?.value as Record<string, unknown>) || {};
     const qwenArgs = Array.isArray(qwenValue.args)
       ? qwenValue.args.filter((item): item is string => typeof item === "string")
@@ -3541,6 +3926,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         },
         runtimeMode: inferRuntimeMode(activeProviderValue, modelRolesValue),
         modelRoles: modelRolesValue,
+        executionProfiles: executionProfilesValue,
         parallelRuntime: {
           maxLocalLanes:
             typeof parallelRuntimeValue.maxLocalLanes === "number" ? parallelRuntimeValue.maxLocalLanes : 4,
@@ -3702,6 +4088,22 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         };
       };
       modelRoles?: Record<string, unknown>;
+      executionProfiles?: {
+        activeProfileId?: string;
+        profiles?: Array<{
+          id?: string;
+          name?: string;
+          description?: string;
+          preset?: "balanced" | "deep_scope" | "build_heavy" | "custom";
+          stages?: {
+            scope?: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+            build?: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+            review?: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+            escalate?: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+          };
+          updatedAt?: string;
+        }>;
+      };
       parallelRuntime?: {
         maxLocalLanes?: number;
         maxExpandedLanes?: number;
@@ -3886,6 +4288,14 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
         where: { key: "model_role_bindings" },
         update: { value: input.modelRoles },
         create: { key: "model_role_bindings", value: input.modelRoles },
+      });
+    }
+
+    if (input.executionProfiles) {
+      await prisma.appSetting.upsert({
+        where: { key: "execution_profiles" },
+        update: { value: normalizeExecutionProfiles(input.executionProfiles) },
+        create: { key: "execution_profiles", value: normalizeExecutionProfiles(input.executionProfiles) },
       });
     }
 

@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import type {
+  CodeFileDiffPayload,
   CodeFilePayload,
   CodebaseTreeNode,
   ProviderSession,
@@ -102,6 +103,22 @@ function exists(p: string) {
   return fs.existsSync(p);
 }
 
+function ensureManagedWorktree(sourceRoot: string, managedRoot: string, activePath: string, defaultBranch: string) {
+  fs.mkdirSync(managedRoot, { recursive: true });
+  try {
+    runGit(["-C", sourceRoot, "worktree", "remove", "--force", activePath]);
+  } catch {
+    // Ignore stale or missing worktree registrations and recreate cleanly below.
+  }
+  fs.rmSync(activePath, { recursive: true, force: true });
+  try {
+    runGit(["-C", sourceRoot, "worktree", "prune"]);
+  } catch {
+    // Best effort; a failed prune should not block re-attachment.
+  }
+  runGit(["-C", sourceRoot, "worktree", "add", "--force", activePath, defaultBranch]);
+}
+
 function detectLanguageFromPath(relativePath: string): string | null {
   if (/\.(ts|tsx)$/.test(relativePath)) return "typescript";
   if (/\.(js|jsx|mjs|cjs)$/.test(relativePath)) return "javascript";
@@ -148,6 +165,17 @@ function parseGitStatus(repoRoot: string) {
     // Ignore git status failures and fall back to unchanged.
   }
   return statuses;
+}
+
+function summarizePatch(patch: string) {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.split("\n")) {
+    if (!line || line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) additions += 1;
+    if (line.startsWith("-")) deletions += 1;
+  }
+  return { additions, deletions };
 }
 
 function buildTree(paths: Array<{ path: string; status: CodebaseTreeNode["status"] }>) {
@@ -655,6 +683,77 @@ export class RepoService {
     const sourceRoot = runGit(["-C", path.resolve(input.source_path), "rev-parse", "--show-toplevel"]);
     const defaultBranch = runGit(["-C", sourceRoot, "rev-parse", "--abbrev-ref", "HEAD"]) || "main";
 
+    const existing = await prisma.repoRegistry.findFirst({
+      where: {
+        sourceKind: "local_path",
+        sourceUri: sourceRoot,
+      },
+      orderBy: {
+        updatedAt: "desc",
+      },
+    });
+
+    if (existing) {
+      const managedRoot = existing.managedWorktreeRoot || path.join(this.repoStorageRoot(), existing.id);
+      const activePath = path.join(managedRoot, "active");
+      ensureManagedWorktree(sourceRoot, managedRoot, activePath, defaultBranch);
+
+      const updated = await prisma.repoRegistry.update({
+        where: { id: existing.id },
+        data: {
+          displayName: input.display_name || existing.displayName,
+          canonicalRoot: sourceRoot,
+          managedWorktreeRoot: managedRoot,
+          defaultBranch,
+          toolchainProfile: {
+            languages: inferLanguages(sourceRoot),
+          },
+          metadata: {
+            ...(toRecord(existing.metadata) || {}),
+            attach_mode: "managed_worktree",
+            source_path: sourceRoot,
+            active_worktree_path: activePath,
+            reattached_at: new Date().toISOString(),
+          },
+        },
+      });
+
+      const guidelines = await this.createOrUpdateGuidelines(updated.id, activePath);
+      const snapshot = await this.createIndexSnapshot(updated.id, activePath);
+      const codeGraph = this.codeGraphService ? await this.codeGraphService.indexRepo(updated.id, activePath, input.actor) : null;
+      const blueprint = this.projectBlueprintService ? await this.projectBlueprintService.generate(updated.id) : null;
+
+      await prisma.repoActivationLog.create({
+        data: {
+          repoId: updated.id,
+          actor: input.actor,
+          eventType: "repo.resumed",
+          payload: {
+            source_kind: "local_path",
+            source_uri: sourceRoot,
+            active_worktree_path: activePath,
+            guideline_profile_id: guidelines.id,
+            index_snapshot_id: snapshot.id,
+            code_graph_status: codeGraph?.status || "not_indexed",
+            blueprint_id: blueprint?.id || null,
+          },
+        },
+      });
+
+      publishEvent("global", "repo.resumed", {
+        repoId: updated.id,
+        displayName: updated.displayName,
+      });
+
+      return {
+        repo: mapRepo(updated),
+        guidelines,
+        snapshot,
+        codeGraph,
+        blueprint,
+      };
+    }
+
     const repo = await prisma.repoRegistry.create({
       data: {
         displayName: input.display_name || path.basename(sourceRoot),
@@ -672,9 +771,7 @@ export class RepoService {
 
     const managedRoot = path.join(this.repoStorageRoot(), repo.id);
     const activePath = path.join(managedRoot, "active");
-    fs.mkdirSync(managedRoot, { recursive: true });
-    fs.rmSync(activePath, { recursive: true, force: true });
-    runGit(["-C", sourceRoot, "worktree", "add", "--force", activePath, defaultBranch]);
+    ensureManagedWorktree(sourceRoot, managedRoot, activePath, defaultBranch);
 
     const updated = await prisma.repoRegistry.update({
       where: { id: repo.id },
@@ -1087,6 +1184,99 @@ export class RepoService {
       truncated,
       source: "managed_worktree",
     };
+  }
+
+  async readCodebaseDiff(repoId: string, relativePath: string): Promise<CodeFileDiffPayload> {
+    const worktreePath = await this.getActiveWorktreePath(repoId);
+    const normalizedPath = relativePath.replace(/\\/g, "/");
+    const absolutePath = ensureInsideRoot(worktreePath, normalizedPath);
+    const statusMap = parseGitStatus(worktreePath);
+    const status = statusMap.get(normalizedPath) || "unchanged";
+
+    if (status === "unchanged") {
+      return {
+        path: normalizedPath,
+        status,
+        patch: null,
+        additions: 0,
+        deletions: 0,
+        truncated: false,
+        available: false,
+      };
+    }
+
+    if (status === "added") {
+      const buffer = fs.readFileSync(absolutePath);
+      if (isBinaryBuffer(buffer)) {
+        return {
+          path: normalizedPath,
+          status,
+          patch: null,
+          additions: 0,
+          deletions: 0,
+          truncated: false,
+          available: false,
+        };
+      }
+      const text = buffer.toString("utf8");
+      const lines = text.split("\n");
+      const limit = 220;
+      const additions = lines.length;
+      const patch = lines
+        .slice(0, limit)
+        .map((line) => `+${line}`)
+        .join("\n");
+      return {
+        path: normalizedPath,
+        status,
+        patch,
+        additions,
+        deletions: 0,
+        truncated: lines.length > limit,
+        available: true,
+      };
+    }
+
+    try {
+      const rawPatch = execFileSync("git", ["-C", worktreePath, "diff", "--no-ext-diff", "--unified=2", "HEAD", "--", normalizedPath], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      if (!rawPatch) {
+        return {
+          path: normalizedPath,
+          status,
+          patch: null,
+          additions: 0,
+          deletions: 0,
+          truncated: false,
+          available: false,
+        };
+      }
+      const lines = rawPatch.split("\n");
+      const limit = 260;
+      const patch = lines.slice(0, limit).join("\n");
+      const summary = summarizePatch(rawPatch);
+      return {
+        path: normalizedPath,
+        status,
+        patch,
+        additions: summary.additions,
+        deletions: summary.deletions,
+        truncated: lines.length > limit,
+        available: true,
+      };
+    } catch {
+      return {
+        path: normalizedPath,
+        status,
+        patch: null,
+        additions: 0,
+        deletions: 0,
+        truncated: false,
+        available: false,
+      };
+    }
   }
 
   async getGuidelines(repoId: string) {

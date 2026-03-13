@@ -312,6 +312,71 @@ export async function initDatabase() {
   });
 
   await prisma.appSetting.upsert({
+    where: { key: "execution_profiles" },
+    update: {},
+    create: {
+      key: "execution_profiles",
+      value: {
+        activeProfileId: "balanced",
+        profiles: [
+          {
+            id: "balanced",
+            name: "Balanced",
+            description: "Fast scoping, standard build, deep review, escalate only when needed.",
+            preset: "balanced",
+            stages: {
+              scope: "utility_fast",
+              build: "coder_default",
+              review: "review_deep",
+              escalate: "overseer_escalation",
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          {
+            id: "deep_scope",
+            name: "Deep Scope",
+            description: "Use deeper reasoning while scoping before standard implementation.",
+            preset: "deep_scope",
+            stages: {
+              scope: "review_deep",
+              build: "coder_default",
+              review: "review_deep",
+              escalate: "overseer_escalation",
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          {
+            id: "build_heavy",
+            name: "Build Heavy",
+            description: "Favor deeper reasoning during implementation and review.",
+            preset: "build_heavy",
+            stages: {
+              scope: "utility_fast",
+              build: "review_deep",
+              review: "review_deep",
+              escalate: "overseer_escalation",
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          {
+            id: "custom",
+            name: "Custom",
+            description: "Editable lifecycle profile for project-specific overrides.",
+            preset: "custom",
+            stages: {
+              scope: "utility_fast",
+              build: "coder_default",
+              review: "review_deep",
+              escalate: "overseer_escalation",
+            },
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  });
+
+  await prisma.appSetting.upsert({
     where: { key: "benchmark_rubric" },
     update: {},
     create: {
