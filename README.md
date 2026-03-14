@@ -189,10 +189,13 @@ This runs the normal bootstrap path and launches the Electron app.
 
 ### What the app looks like
 
-These screenshots are from the latest green desktop acceptance run on March 11, 2026. That run verified:
+These screenshots are from the latest green desktop acceptance run on March 14, 2026 (`openai_all` preset). The same lifecycle is also green on `local_split`.
+
+Validated in the latest pass:
 - empty-folder bootstrap
 - TypeScript scaffold
 - follow-up `StatusBadge` feature edit
+- local existing-repo attach flow
 - green `lint`, `test`, and `build`
 
 **Live State** — the command center with the Overseer command card, workflow summary row, and four-lane kanban board:
@@ -218,6 +221,10 @@ These screenshots are from the latest green desktop acceptance run on March 11, 
 **Follow-up Change** — after a real feature task, the new component and test changes are visible immediately in the managed-worktree Codebase view:
 
 ![Follow-up Codebase](docs/screenshots/05-followup-codebase.png)
+
+**Workflow Drill-down** — expanded ticket card with compact execution, verification, and policy context:
+
+![Workflow Drill-down](docs/screenshots/05-followup-card-expanded.png)
 
 ---
 
@@ -528,7 +535,7 @@ npm test
 npx vitest run
 ```
 
-312 tests across 24 test files covering:
+317 tests across 25 test files covering:
 - Provider routing and factory
 - Blueprint extraction and helpers
 - Patch manifest parsing
@@ -570,6 +577,24 @@ Both flows are currently green:
 - `openai_all`: `gpt-5-nano` / `gpt-5.3-codex` / `gpt-5.4`
 - `local_split`: local `0.8B` + local `4B`
 
+### E2E local existing-repo attach
+
+```bash
+npm run test:e2e:local-attach-existing
+```
+
+Validated preset runs:
+
+```bash
+# Existing repo flow with all roles on OpenAI
+E2E_RUNTIME_PRESET=openai_all node scripts/playwright/run_local_attach_existing_repo.mjs
+
+# Existing repo flow with local split runtimes
+E2E_RUNTIME_PRESET=local_split node scripts/playwright/run_local_attach_existing_repo.mjs
+```
+
+Both existing-repo preset runs are currently green.
+
 ### Follow-up scenario tests
 
 ```bash
@@ -606,6 +631,7 @@ npm run build:server   # Backend (tsup)
 | `npm run doctor` | Run preflight health checks |
 | `npm test` | Run unit tests (vitest) |
 | `npm run test:e2e:desktop-acceptance` | Run full Electron E2E test |
+| `npm run test:e2e:local-attach-existing` | Run local existing-repo attach + follow-up E2E |
 | `npm run test:integration:agent-architecture` | Run agent architecture integration tests |
 | `npx prisma db push` | Sync Prisma schema to database |
 | `npx prisma generate` | Regenerate Prisma client |
