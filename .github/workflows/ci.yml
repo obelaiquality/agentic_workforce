@@ -112,3 +112,77 @@ jobs:
 
       - name: Desktop smoke build
         run: npm run build:desktop
+
+  desktop-e2e-stable:
+    runs-on: ubuntu-latest
+    needs: validate
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: agentic
+          POSTGRES_PASSWORD: agentic
+          POSTGRES_DB: agentic_workforce
+        options: >-
+          --health-cmd "pg_isready -U agentic -d agentic_workforce"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://agentic:agentic@127.0.0.1:5433/agentic_workforce?schema=public
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decide whether stable desktop E2E can run
+        id: gate
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Stable desktop E2E skipped because OPENAI_API_KEY is not configured."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Electron runtime dependencies
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libasound2t64
+
+      - name: Install dependencies
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm ci
+
+      - name: Generate Prisma client
+        if: steps.gate.outputs.enabled == 'true'
+        run: npx prisma generate
+
+      - name: Push Prisma schema
+        if: steps.gate.outputs.enabled == 'true'
+        run: npx prisma db push
+
+      - name: Run stable desktop E2E
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: xvfb-run -a npm run test:e2e:desktop-stable
+
+      - name: Upload Playwright artifacts on failure
+        if: failure() && steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-desktop-stable
+          path: output/playwright/**
+          if-no-files-found: ignore

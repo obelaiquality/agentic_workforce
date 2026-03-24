@@ -125,6 +125,27 @@ describe("CommandCenterView", () => {
     expect(taskHeading.compareDocumentPosition(reviewHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(reviewHeading.compareDocumentPosition(boardHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(boardHeading.compareDocumentPosition(outcomeHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("How this works")).toBeInTheDocument();
+    expect(screen.getByText("Good first prompts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a status badge component with tests" })).toBeInTheDocument();
+  });
+
+  it("shows a stable blank-project layout without duplicate review-plan actions", () => {
+    render(
+      <CommandCenterView
+        mission={makeMission({
+          selectedRepo: { id: "repo-blank", displayName: "Blank Repo", branch: "main", defaultBranch: "main" },
+          activeProjectIsBlank: true,
+          input: "Plan the architecture for a new Python CLI from scratch",
+          contextPack: null,
+          route: null,
+        }) as never}
+      />
+    );
+
+    expect(screen.getByText("This repo is still blank. Describe what you want to build, and we will help shape the initial structure before implementation starts.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create the initial README and repo charter for this project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plan the architecture for a new Python CLI from scratch" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Review plan" })).toHaveLength(1);
   });
 });
-

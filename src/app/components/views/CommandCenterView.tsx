@@ -562,6 +562,17 @@ function OverseerCommandCard({
   const contextPack = mission.contextPack;
   const hasInput = Boolean(mission.input.trim());
   const hasRouteContext = Boolean(route && contextPack);
+  const freshProjectPrompts = mission.activeProjectIsBlank
+    ? [
+        "Create the initial README and repo charter for this project",
+        "Plan the architecture for a new Python CLI from scratch",
+        "Set up the initial project structure for a web app without assuming a framework yet",
+      ]
+    : [
+        "Add a status badge component with tests",
+        "Rename the hero headline and update the test",
+        "Document the local runtime setup in the README",
+      ];
   const selectedTicketStatus = mission.selectedTicket?.status ?? null;
   const primaryAction =
     !mission.selectedRepo || !hasInput || mission.isExecuting || mission.isReviewing || !hasRouteContext
@@ -574,6 +585,7 @@ function OverseerCommandCard({
     : !hasRouteContext
     ? "Review plan"
     : "Run task";
+  const showSecondaryReview = Boolean(mission.selectedRepo && hasInput && hasRouteContext);
 
   return (
     <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
@@ -587,7 +599,9 @@ function OverseerCommandCard({
             </div>
             <h2 className="text-[1.22rem] font-semibold tracking-tight text-white lg:text-[1.28rem]">Describe the task</h2>
             <p className="max-w-2xl text-sm leading-5 text-zinc-400">
-              Explain the change you want. We will review the plan, run the task, verify the result, and keep the board updated.
+              {mission.activeProjectIsBlank
+                ? "This repo is still blank. Describe what you want to build, and we will help shape the initial structure before implementation starts."
+                : "Explain the change you want. We will review the plan, run the task, verify the result, and keep the board updated."}
             </p>
           </div>
           <div className="flex max-w-[420px] flex-wrap items-center justify-end gap-2">
@@ -603,12 +617,65 @@ function OverseerCommandCard({
           </div>
         </div>
 
-          <div className="overflow-hidden rounded-[22px] border border-white/10 bg-[#161618] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+        <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">How this works</div>
+            <div className="mt-2 space-y-2">
+              <div className="flex items-start gap-3 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-cyan-500/15 bg-cyan-500/[0.08] text-cyan-300">
+                  <FileSearch className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-white">Review plan</div>
+                  <div className="mt-1 text-xs leading-5 text-zinc-400">
+                    Scope the request, inspect the route, and confirm the affected files before any code runs.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-fuchsia-500/15 bg-fuchsia-500/[0.08] text-fuchsia-300">
+                  <Play className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-white">Run task</div>
+                  <div className="mt-1 text-xs leading-5 text-zinc-400">
+                    Execute in the managed worktree, run verification, and keep the board, codebase, and console in sync.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Good first prompts</div>
+              {mission.activeProjectIsBlank ? (
+                <Chip variant="subtle" className="text-[10px]">
+                  blank repo
+                </Chip>
+              ) : null}
+            </div>
+            <div className="mt-2 grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
+              {freshProjectPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => mission.setInput(prompt)}
+                  className="min-w-0 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-left text-sm leading-5 text-zinc-200 transition hover:bg-white/[0.08] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-[22px] border border-white/10 bg-[#161618] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
             <textarea
               value={mission.input}
               onChange={(event) => mission.setInput(event.target.value)}
-              placeholder="Describe the next change."
-              className="min-h-[128px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-7 text-zinc-100 outline-none placeholder:text-zinc-600 disabled:cursor-not-allowed"
+              placeholder="Describe the next change. Example: Add a status badge and update the test."
+              aria-label="Task objective"
+              className="min-h-[128px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-7 text-zinc-100 outline-none placeholder:text-zinc-600 disabled:cursor-not-allowed focus-visible:outline-none"
             />
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/6 bg-black/20 px-4 py-3">
@@ -648,7 +715,7 @@ function OverseerCommandCard({
                   value={mission.selectedExecutionProfileId}
                   onChange={(event) => mission.setExecutionProfile(event.target.value)}
                   disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
-                  className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed"
+                  className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
                 >
                   {mission.executionProfiles.profiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>
@@ -665,7 +732,7 @@ function OverseerCommandCard({
                 <button
                   onClick={primaryAction}
                   disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
                 >
                   {mission.isExecuting || mission.isReviewing ? (
                     <ProcessingIndicator kind={mission.isExecuting ? "processing" : "thinking"} active size="xs" tone="accent" />
@@ -674,14 +741,16 @@ function OverseerCommandCard({
                   )}
                   {primaryLabel}
                 </button>
-                <button
-                  onClick={mission.reviewRoute}
-                  disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
-                >
-                  <FileSearch className="h-3.5 w-3.5" />
-                  Review plan
-                </button>
+                {showSecondaryReview ? (
+                  <button
+                    onClick={mission.reviewRoute}
+                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
+                  >
+                    <FileSearch className="h-3.5 w-3.5" />
+                    Review plan
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
@@ -953,7 +1022,7 @@ function WorkEmptyState({
             <button
               type="button"
               onClick={openProjects}
-              className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] transition hover:bg-cyan-500"
+              className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] transition hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
             >
               <FolderGit2 className="h-4 w-4" />
               Open Projects
@@ -962,7 +1031,7 @@ function WorkEmptyState({
               <button
                 type="button"
                 onClick={() => activateRepo(recentProjects[0].id)}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08]"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
               >
                 <ArrowRight className="h-4 w-4" />
                 Reopen {recentProjects[0].displayName}
@@ -971,7 +1040,7 @@ function WorkEmptyState({
               <button
                 type="button"
                 onClick={() => openRecentPath(recentRepoPaths[0].path, recentRepoPaths[0].label)}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08]"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
               >
                 <FolderClock className="h-4 w-4" />
                 Open recent folder

@@ -382,11 +382,16 @@ export default function App() {
                     hasDesktopPicker={mission.hasDesktopPicker}
                     repoPickerMessage={mission.repoPickerMessage}
                     chooseLocalRepo={mission.chooseLocalRepo}
-                    startNewProject={mission.startNewProject}
-                    newProjectTemplate={mission.newProjectTemplate}
-                    setNewProjectTemplate={mission.setNewProjectTemplate}
-                    initializeNewProject={mission.initializeNewProject}
-                    pendingBootstrap={mission.pendingBootstrap}
+                    openNewProjectDialog={mission.openNewProjectDialog}
+                    projectStarters={mission.projectStarters}
+                    projectSetupState={mission.projectSetupState}
+                    createBlankProject={mission.createBlankProject}
+                    createProjectFromStarter={mission.createProjectFromStarter}
+                    dismissProjectSetupDialog={mission.dismissProjectSetupDialog}
+                    openStarterDialogForActiveProject={mission.openStarterDialogForActiveProject}
+                    activeProjectIsBlank={mission.activeProjectIsBlank}
+                    activeStarterId={mission.activeStarterId}
+                    openWork={mission.openWork}
                     openRecentPath={mission.connectRecentPath}
                     activateRepo={mission.activateRepo}
                     syncProject={mission.syncProject}
@@ -443,7 +448,7 @@ function SidebarItem({
     <button
       onClick={onClick}
       title={label}
-      className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-all w-full group relative ${
+      className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-all w-full group relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20 ${
         active ? "bg-purple-500/10 text-purple-300" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
       }`}
     >
@@ -492,7 +497,7 @@ function AppModeBanner({
           <button
             type="button"
             onClick={onOpenProjects}
-            className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-100 transition hover:bg-white/[0.06]"
+            className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-100 transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
           >
             Open Projects
           </button>
@@ -500,7 +505,7 @@ function AppModeBanner({
             <button
               type="button"
               onClick={onOpenSettings}
-              className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-100 transition hover:bg-white/[0.06]"
+              className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-100 transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
             >
               Open Essentials
             </button>

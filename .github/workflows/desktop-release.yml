@@ -64,8 +64,72 @@ jobs:
       - name: Build server
         run: npm run build:server
 
-  build-and-package:
+  packaged-smoke-linux:
     needs: validate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: agentic
+          POSTGRES_PASSWORD: agentic
+          POSTGRES_DB: agentic_workforce
+        options: >-
+          --health-cmd "pg_isready -U agentic -d agentic_workforce"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://agentic:agentic@127.0.0.1:5433/agentic_workforce?schema=public
+      API_PORT: "8787"
+      API_TOKEN: release-smoke-token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Electron runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libasound2t64
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Push Prisma schema
+        run: npx prisma db push
+
+      - name: Pack desktop app
+        run: npm run pack:desktop
+
+      - name: Run packaged desktop smoke
+        run: xvfb-run -a npm run test:e2e:desktop-packaged-smoke
+
+      - name: Upload packaged smoke artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-smoke-linux
+          path: output/playwright/**
+          if-no-files-found: ignore
+
+  build-and-package:
+    needs:
+      - validate
+      - packaged-smoke-linux
     strategy:
       fail-fast: false
       matrix:

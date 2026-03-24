@@ -1,153 +1,129 @@
 # Agentic Workforce
 
-Agentic Workforce is a local-first desktop coding agent for real repositories. It connects to a repo, plans a bounded task, executes in a managed worktree, verifies the result, and keeps the evidence visible in one operator UI.
+[![CI](https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml/badge.svg)](https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/obelaiquality/agentic_workforce?display_name=tag&label=latest%20release)](https://github.com/obelaiquality/agentic_workforce/releases)
+[![License](https://img.shields.io/github/license/obelaiquality/agentic_workforce)](LICENSE)
+[![Desktop beta](https://img.shields.io/badge/desktop-beta-06b6d4)](docs/install.md)
 
-The flagship product surface is the Electron desktop app. A lightweight CLI companion is available for source users who want a faster terminal wedge into the same local API.
+Agentic Workforce is a desktop-first coding agent for real local repositories. It connects to a repo, scopes a bounded task, executes in a managed worktree, verifies the result, and keeps the route, evidence, and logs visible in one operator UI. If you want the easiest first success, start with the desktop app and the OpenAI-backed source path.
 
-## Why People Use It
+![Agentic Workforce demo](docs/media/agentic-workforce-demo.gif)
 
-- Connect a real local repo instead of a toy sandbox.
-- Keep execution scoped to managed worktrees rather than mutating your primary checkout directly.
-- Review route context, approvals, console output, and verification evidence in one place.
-- Switch between local OpenAI-compatible runtimes and OpenAI-assisted execution without changing product surfaces.
+## Choose Your Path
 
-## 2-Minute Source Quickstart
+| Path | Best for | What you need |
+| --- | --- | --- |
+| Binary | Beta testers who want the shortest install | A packaged release plus the runtime prerequisites called out in the release notes |
+| Source + OpenAI | First-time source users | Node 20+, PostgreSQL, Docker recommended, `OPENAI_API_KEY` |
+| Source + local runtime | Fully local operators | Node 20+, PostgreSQL, local OpenAI-compatible runtime, optional Rust for packaging |
 
-This is the fastest supported source path if Node and Docker are already available on your machine.
+More detail: [Install](docs/install.md) · [Configuration](docs/configuration.md) · [Known limitations](docs/known-limitations.md)
 
-1. Install dependencies and create a local env file.
+## Fastest First Success
+
+The recommended source path is desktop + OpenAI.
 
 ```bash
 npm install
 cp .env.example .env
-```
 
-2. Add your OpenAI key to `.env`.
+# edit .env and set OPENAI_API_KEY=your_key_here
 
-```bash
-OPENAI_API_KEY=your_key_here
-```
-
-3. Start local infrastructure and launch the desktop app.
-
-```bash
 npm run db:up
 npx prisma db push
 npx prisma generate
 npm run dev:desktop
 ```
 
-4. Open `Projects`, connect a repo, then switch to `Work` and run one bounded task.
+Then:
+
+1. Open `Projects` and either create a new project or connect a local repo.
+2. Return to `Work`, write one bounded task, and click `Review plan`.
+3. Run the task and inspect the result in `Codebase` and `Console`.
 
 Recommended first prompts:
 
 - `Add a status badge component with tests`
 - `Rename the hero headline and update the test`
-- `Scaffold a TypeScript app with tests and documentation`
+- `Document the local runtime setup in the README`
 
-## Install Paths
+## What Works Today
 
-### Binary
+- Desktop app flow for `Projects`, `Work`, `Codebase`, `Console`, and `Settings`
+- Managed-worktree execution against real local repos
+- New project bootstrap from an empty folder
+- Route review, execution, approvals, verification, and report generation
+- CLI companion for connect, plan, run, and report flows against the same local API
+- Stable source validation via `npm run validate`
 
-Use packaged desktop artifacts from tagged GitHub releases when available.
+## What Is Advanced
 
-- macOS: `.dmg`, `.zip`
-- Linux: `.AppImage`, `.deb`
-- Windows: `nsis`, `.zip`
+- Browser preview: useful for inspection and light settings work, not full operator parity
+- Fully local runtime and multi-runtime failover: supported, but still an advanced setup path
+- Benchmarks, Labs, and experimental channels: opt-in and not part of the first-run story
+- Packaged binary release flow: beta quality and still evolving
 
-Details: [docs/install.md](docs/install.md)
+Read this before filing a bug about missing functionality: [Known limitations](docs/known-limitations.md)
 
-### Source + OpenAI
+## Demo And Docs
 
-This is the recommended public beta setup path. It avoids requiring a local model runtime for first success.
-
-Details: [docs/install.md](docs/install.md)
-
-### Source + Local Runtime
-
-Use this when you explicitly want a fully local model path.
-
-Details: [docs/runbooks/local-runtime.md](docs/runbooks/local-runtime.md)
-
-## Product Surfaces
-
-The launch-facing product story is intentionally narrow:
-
-- `Projects` for connecting or creating a project
-- `Work` for task entry, route review, execution, and evidence summary
-- `Codebase` for file inspection and context navigation
-- `Console` for live execution and verification events
-- `Settings` for essentials, advanced routing, and opt-in Labs
-
-Benchmarks stay in-repo as evaluation infrastructure.
-
-## Screenshots
-
-**Work**
-
-![Work Surface](docs/screenshots/01-shell.png)
-
-**Projects**
-
-![Projects Surface](docs/screenshots/01b-projects.png)
-
-**Codebase**
-
-![Codebase Surface](docs/screenshots/03-codebase.png)
-
-## CLI Companion
-
-The CLI is a beta terminal companion to the same local API. It is useful for source users who want to connect a repo, plan or run an objective, watch console progress, or read the latest report without living in the desktop UI.
-
-Examples:
-
-```bash
-npm run cli -- projects
-npm run cli -- connect /absolute/path/to/repo
-npm run cli -- plan --project <project-id> --prompt "Add a status badge component with tests"
-npm run cli -- run --project <project-id> --prompt "Rename the hero headline and update the test"
-```
-
-Details: [docs/cli.md](docs/cli.md)
-
-## Guided Demo Repo
-
-If you want a known-small repo for demos, use the React dashboard fixture in [docs/demo-react-dashboard.md](docs/demo-react-dashboard.md).
-
-## Docs
-
-- Install and support matrix: [docs/install.md](docs/install.md)
+- Demo guide, transcript, and media pipeline: [docs/demo.md](docs/demo.md)
+- Install paths and support matrix: [docs/install.md](docs/install.md)
 - First-run onboarding: [docs/onboarding.md](docs/onboarding.md)
-- Advanced local runtime setup: [docs/runbooks/local-runtime.md](docs/runbooks/local-runtime.md)
+- Environment and runtime configuration: [docs/configuration.md](docs/configuration.md)
+- FAQ: [docs/faq.md](docs/faq.md)
+- Testing matrix and E2E tiers: [docs/testing.md](docs/testing.md)
 - Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
 - CLI companion: [docs/cli.md](docs/cli.md)
-- Guided demo repo: [docs/demo-react-dashboard.md](docs/demo-react-dashboard.md)
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security: [SECURITY.md](SECURITY.md)
-- Support: [SUPPORT.md](SUPPORT.md)
+- Architecture overview: [docs/architecture.md](docs/architecture.md)
+- Guided demo fixture repo: [docs/demo-react-dashboard.md](docs/demo-react-dashboard.md)
+- Release checklist: [docs/release-checklist.md](docs/release-checklist.md)
+
+## Testing
+
+Core validation:
+
+```bash
+npm run validate
+```
+
+Stable desktop acceptance:
+
+```bash
+npm run test:e2e:desktop-stable
+```
+
+Nightly/manual coverage:
+
+```bash
+npm run test:e2e:nightly
+```
+
+Demo media:
+
+```bash
+npm run demo:capture
+npm run demo:render
+```
+
+The E2E tiers and prerequisites are documented in [docs/testing.md](docs/testing.md).
+
+## Support And Open Source Guidance
+
+- Usage questions and setup issues: [SUPPORT.md](SUPPORT.md)
+- Vulnerability reporting: [SECURITY.md](SECURITY.md)
+- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Roadmap: [ROADMAP.md](ROADMAP.md)
+- Maintainers: [MAINTAINERS.md](MAINTAINERS.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
-
-## Release And Support Notes
-
-| Area | Status |
-| --- | --- |
-| Desktop app | Public beta |
-| CLI companion | Beta |
-| Browser preview | Limited, not a replacement for the desktop app |
-| Packaged binaries | Beta release artifacts |
-| Fully local runtime path | Advanced |
-
-- Public releases should be tagged and shipped with changelog entries.
-- PR CI is expected to stay green before a public beta release is cut.
-- Browser preview is for inspection and light settings work, not full local operator parity.
 
 ## Security
 
-- Local API auth is header-only with `x-local-api-token`; query-string tokens and renderer token bridges are not used.
-- Provider API keys are stored outside normal settings JSON and are treated as write-only values in the UI.
-- Experimental remote channels and Labs features are opt-in and off the primary launch path.
-- Standalone `npm run dev:api` now requires a non-empty `API_TOKEN`; browser preview is dev-only and requires a matching `VITE_API_TOKEN` when you run the renderer outside Electron.
-- Existing plaintext provider keys are migrated into the encrypted desktop secret store on first run when secure local storage is available. Outside Electron, the standalone API auto-provisions a per-user local secret-store key if one does not already exist.
+- Local API auth is header-only with `x-local-api-token`.
+- Provider keys are handled as write-only settings and stored outside normal settings JSON.
+- Standalone `npm run dev:api` requires a non-empty `API_TOKEN`.
+- Browser preview requires a matching `VITE_API_TOKEN` because the local API no longer accepts query-string tokens.
+- Experimental channels and autonomy surfaces are opt-in and not part of the default launch path.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 

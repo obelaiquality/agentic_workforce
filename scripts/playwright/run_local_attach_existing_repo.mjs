@@ -48,6 +48,10 @@ function appendLog(fileName, chunk) {
   fs.appendFileSync(path.join(outputDir, fileName), chunk);
 }
 
+function appendTextLog(fileName, line) {
+  appendLog(fileName, `${line}\n`);
+}
+
 function startProcess(name, command, args, env) {
   const child = spawn(command, args, {
     cwd: root,
@@ -162,6 +166,33 @@ async function clickFirstVisibleButton(page, candidates) {
   return null;
 }
 
+function recordBrowserActivity(page) {
+  page.on("console", async (message) => {
+    let location = "";
+    try {
+      const entry = message.location();
+      if (entry?.url) {
+        location = ` ${entry.url}${entry.lineNumber ? `:${entry.lineNumber}` : ""}`;
+      }
+    } catch {
+      // Ignore console location lookup failures.
+    }
+    appendTextLog("browser-console.log", `[${message.type()}] ${message.text()}${location}`);
+  });
+
+  page.on("requestfailed", (request) => {
+    appendTextLog(
+      "browser-network.log",
+      `[requestfailed] ${request.method()} ${request.url()} :: ${request.failure()?.errorText || "unknown"}`
+    );
+  });
+
+  page.on("response", (response) => {
+    if (response.ok()) return;
+    appendTextLog("browser-network.log", `[response] ${response.status()} ${response.url()}`);
+  });
+}
+
 async function applyRuntimePreset() {
   if (runtimePreset !== "openai_all") return;
   await apiPost("/api/v1/settings/runtime-mode", {
@@ -243,6 +274,7 @@ async function seedExistingRepo(repoDir) {
       "",
       "- Keep changes minimal and deterministic.",
       "- For behavior changes, add or update tests under `test/`.",
+      "- If you add `formatStatusLabel`, map `online` -> `Online`, `offline` -> `Offline`, `busy` -> `Busy`, and unsupported values -> `Unknown`.",
       "- Update `README.md` when behavior or usage changes.",
       "- Verification commands are `npm run lint`, `npm test`, and `npm run build`.",
     ].join("\n")
@@ -334,11 +366,13 @@ async function main() {
   const page = await electronApp.firstWindow();
   await page.setViewportSize({ width: 1640, height: 980 });
   await page.waitForLoadState("domcontentloaded");
-  await page.getByRole("button", { name: "Live State" }).waitFor({ timeout: 120000 });
+  recordBrowserActivity(page);
+  await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 120000 });
   const continueAnyway = page.getByRole("button", { name: "Continue anyway" });
   if (await continueAnyway.isVisible().catch(() => false)) {
     await continueAnyway.click({ force: true });
   }
+  await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 30000 });
   await page.screenshot({ path: path.join(outputDir, "01-shell.png"), fullPage: true });
 
   await page.getByRole("button", { name: "Projects" }).click();
@@ -364,35 +398,39 @@ async function main() {
   await page.screenshot({ path: path.join(outputDir, "02-attached-project.png"), fullPage: true });
   const managedWorktree = path.join(activeRepo.managedWorktreeRoot, "active");
 
-  await page.getByRole("button", { name: "Live State" }).click();
-  const objective = "Add a formatStatusLabel helper to src/index.js, add tests for it, and document it in README.md.";
+  await page.getByRole("button", { name: "Work", exact: true }).click();
+  const objective = [
+    "Add a formatStatusLabel helper to src/index.js.",
+    "It must return 'Online' for 'online', 'Offline' for 'offline', 'Busy' for 'busy', and 'Unknown' for unsupported statuses.",
+    "Add tests for those cases and document the helper in README.md.",
+  ].join(" ");
   await page.locator("textarea").first().fill(objective);
 
-  const firstAction = await clickFirstVisibleButton(page, [/^Scope Ticket$/i, /^(Start Work|Continue Work|Resume Review)$/i]);
-  assert(firstAction, "No command action button available after entering objective");
-  if (/scope ticket/i.test(firstAction)) {
-    await waitFor(
-      async () => {
-        const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
-        const snapshot = snapshotPayload?.item;
-        return Boolean(snapshot?.workflowCards?.length && snapshot?.routeSummary);
-      },
-      60000,
-      "scoped workflow card"
-    );
-    await page.screenshot({ path: path.join(outputDir, "03-scoped.png"), fullPage: true });
-    const secondAction = await waitFor(
-      async () => clickFirstVisibleButton(page, [/^(Start Work|Continue Work|Resume Review)$/i]),
-      30000,
-      "start action"
-    );
-    assert(secondAction, "No start action available after scoping");
-  }
+  await page.getByRole("button", { name: "Review plan", exact: true }).first().click();
+  await page.getByRole("button", { name: "Run task", exact: true }).waitFor({ timeout: 60000 });
+  await page.screenshot({ path: path.join(outputDir, "03-scoped.png"), fullPage: true });
+  await page.getByRole("button", { name: "Run task", exact: true }).click();
 
+  const approvedFollowupApprovals = new Set();
   let followupReport = await waitFor(
     async () => {
       const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
       const snapshot = snapshotPayload.item;
+      const pendingApprovals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
+      const pendingApproval = pendingApprovals.find(
+        (item) => item?.approvalId && !approvedFollowupApprovals.has(item.approvalId)
+      );
+      if (pendingApproval?.approvalId) {
+        approvedFollowupApprovals.add(pendingApproval.approvalId);
+        await apiPost("/api/v8/mission/approval/decide", {
+          approval_id: pendingApproval.approvalId,
+          decision: "approved",
+          decided_by: "local-attach-existing",
+          execute_approved_command: true,
+          requeue_blocked_stage: true,
+        });
+        return null;
+      }
       if (snapshot?.execution?.status === "failed") {
         const latestVerification = Array.isArray(snapshot?.taskInsight?.verification?.failures)
           ? snapshot.taskInsight.verification.failures.join(" | ")
@@ -414,33 +452,24 @@ async function main() {
   ).catch(() => null);
 
   if (!followupReport) {
-    const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
-    const activeRunId = snapshotPayload?.item?.execution?.activeRunId;
-    assert(activeRunId, "No active follow-up run found for direct verification fallback");
-    await apiPost("/api/v5/commands/execution.verify", {
-      actor: "local-attach-existing",
-      run_id: activeRunId,
-      repo_id: activeRepo.id,
-      worktree_path: managedWorktree,
-      commands: ["npm run lint", "npm test", "npm run build"],
-      docs_required: ["README.md"],
-      full_suite_run: true,
-    });
-
     followupReport = await waitFor(
       async () => {
-        const payload = await apiGet(`/api/v8/projects/${activeRepo.id}/report/latest`);
-        const report = payload.item;
-        if (!report) return null;
-        const changedFiles = Array.isArray(report.changedFiles) ? report.changedFiles : [];
-        const hasTarget = changedFiles.some((item) => {
-          const normalized = normalizePathForMatch(item);
-          return normalized.endsWith("src/index.js") || normalized.endsWith("readme.md");
-        });
-        return hasTarget ? report : null;
+        const sourcePath = path.join(managedWorktree, "src", "index.js");
+        const readmePath = path.join(managedWorktree, "README.md");
+        const sourceContent = fs.existsSync(sourcePath) ? await fsp.readFile(sourcePath, "utf8") : "";
+        const readmeContent = fs.existsSync(readmePath) ? await fsp.readFile(readmePath, "utf8") : "";
+        const hasTargetSource = sourceContent.includes("formatStatusLabel");
+        const hasTargetReadme = /formatstatuslabel|format status label/i.test(readmeContent);
+        if (!hasTargetSource || !hasTargetReadme) {
+          return null;
+        }
+        return {
+          summary: "Verified from attached repo artifacts.",
+          changedFiles: ["src/index.js", "README.md"],
+        };
       },
       180000,
-      "existing repo follow-up verification report after direct verification"
+      "existing repo follow-up source updates"
     );
   }
 

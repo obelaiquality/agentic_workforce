@@ -71,6 +71,7 @@ describe("SettingsControlView", () => {
 
     expect(await screen.findByText("OpenAI connection")).toBeInTheDocument();
     expect(screen.getByText("Local runtime summary")).toBeInTheDocument();
+    expect(screen.getByText("Use this for first-run success")).toBeInTheDocument();
     expect(screen.queryByText("Execution Profiles")).not.toBeInTheDocument();
     expect(screen.queryByText("Role routing")).not.toBeInTheDocument();
   });
@@ -83,6 +84,6 @@ describe("SettingsControlView", () => {
     expect(await screen.findByText("Execution Profiles")).toBeInTheDocument();
     expect(screen.getByText("Role routing")).toBeInTheDocument();
     expect(screen.getByText("OpenAI API model and budget")).toBeInTheDocument();
+    expect(screen.getByText("Use Advanced for execution profiles, role routing, dedicated runtimes, budgets, and experimental channels.")).toBeInTheDocument();
   });
 });
-

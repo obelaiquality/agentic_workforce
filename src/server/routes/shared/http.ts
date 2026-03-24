@@ -2,8 +2,7 @@ export function isAllowedCorsOrigin(origin: string) {
   try {
     const parsed = new URL(origin);
     const isLocalHost = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
-    const isDevPort = parsed.port === "5173" || parsed.port === "4173";
-    return isLocalHost && isDevPort;
+    return isLocalHost;
   } catch {
     return false;
   }

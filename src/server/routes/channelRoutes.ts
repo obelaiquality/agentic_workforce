@@ -4,6 +4,9 @@ import { publishEvent } from "../eventBus";
 import { ApprovalService } from "../services/approvalService";
 import { ChannelService } from "../services/channelService";
 import { CommandEngine } from "../services/commandEngine";
+import { ExecutionService } from "../services/executionService";
+import { ProjectBlueprintService } from "../services/projectBlueprintService";
+import { RepoService } from "../services/repoService";
 import { TicketService } from "../services/ticketService";
 import { V2EventService } from "../services/v2EventService";
 import { decideApprovalWithCommandFollowup } from "./shared/commandApproval";
@@ -35,12 +38,25 @@ type ChannelRouteDeps = {
   approvalService: ApprovalService;
   channelService: ChannelService;
   commandEngine: CommandEngine;
+  executionService: ExecutionService;
+  projectBlueprintService: ProjectBlueprintService;
+  repoService: RepoService;
   ticketService: TicketService;
   v2EventService: V2EventService;
 };
 
 export function registerChannelRoutes(deps: ChannelRouteDeps) {
-  const { app, approvalService, channelService, commandEngine, ticketService, v2EventService } = deps;
+  const {
+    app,
+    approvalService,
+    channelService,
+    commandEngine,
+    executionService,
+    projectBlueprintService,
+    repoService,
+    ticketService,
+    v2EventService,
+  } = deps;
 
   app.get("/api/v1/experimental/channels/activity", async (request) => {
     const query = z.object({ projectId: z.string().optional() }).parse(request.query);
@@ -88,6 +104,9 @@ export function registerChannelRoutes(deps: ChannelRouteDeps) {
         executeApprovedCommand: true,
         requeueBlockedStage: true,
         approvalService,
+        executionService,
+        projectBlueprintService,
+        repoService,
         ticketService,
         commandEngine,
         v2EventService,

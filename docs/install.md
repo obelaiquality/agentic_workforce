@@ -2,6 +2,12 @@
 
 Agentic Workforce supports three install lanes. Pick the smallest one that matches your goal.
 
+Before you start, read:
+
+- [docs/configuration.md](configuration.md) for env vars and runtime choices
+- [docs/known-limitations.md](known-limitations.md) for browser-preview, Labs, and packaging caveats
+- [docs/testing.md](testing.md) if you plan to contribute or validate a release branch
+
 ## Support Matrix
 
 | Install lane | Best for | Requires |
@@ -83,3 +89,9 @@ Expected outcome:
 - Browser preview via `npm run dev` and `npm run dev:api` is useful for inspection, not for the full local operator flow. Standalone `npm run dev:api` requires a non-empty `API_TOKEN`, and the renderer must use the same value via `VITE_API_TOKEN` because local API auth is header-only.
 - Advanced/internal settings live in `.env.advanced.example` and are not required for first success.
 - On desktop, existing plaintext provider API keys are migrated into the encrypted local secret store on first run when secure OS-backed storage is available. Outside Electron, the standalone API auto-provisions a per-user local secret-store key for the same write-only settings flow.
+
+Next steps:
+
+- [Onboarding](onboarding.md)
+- [Demo guide](demo.md)
+- [Troubleshooting](troubleshooting.md)

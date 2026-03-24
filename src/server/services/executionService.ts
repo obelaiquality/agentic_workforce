@@ -3186,6 +3186,7 @@ export class ExecutionService {
               toolType: "repo.verify",
             })
           : null;
+        const directResult = ticketIdForPolicy ? null : runShell(command.displayCommand, input.worktreePath);
         const policyDecision = toolEventResult?.event.policyDecision || "allowed";
         if (toolEventResult && !toolEventResult.result) {
           const evidence = await prisma.benchmarkOutcomeEvidence.create({
@@ -3215,7 +3216,7 @@ export class ExecutionService {
           continue;
         }
 
-        const result = toolEventResult?.result;
+        const result = toolEventResult?.result || directResult;
         if (!result) {
           throw new Error(`Verification command did not produce a result: ${command.displayCommand}`);
         }
@@ -3289,8 +3290,9 @@ export class ExecutionService {
               toolType: "repo.install",
             })
           : null;
+        const directInstallResult = ticketIdForPolicy ? null : runShell(installCommand, input.worktreePath);
         const installPolicyDecision = installToolEventResult?.event.policyDecision || "allowed";
-        const installResult = installToolEventResult?.result;
+        const installResult = installToolEventResult?.result || directInstallResult;
         if (!installResult) {
           throw new Error(`Dependency bootstrap command did not produce a result: ${installCommand}`);
         }

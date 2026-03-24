@@ -44,6 +44,8 @@ import type {
   PolicyDecision,
   ProjectBlueprint,
   ProjectBinding,
+  ProjectStarterDefinition,
+  ProjectStarterId,
   ProviderBudgetState,
   ProviderDescriptor,
   ProviderId,
@@ -1816,6 +1818,10 @@ export async function getProjectBlueprintSourcesV8(projectId: string) {
   return apiRequest<{ items: string[] }>(`/api/v8/projects/${projectId}/blueprint/sources`);
 }
 
+export async function getProjectStartersV8() {
+  return apiRequest<{ items: ProjectStarterDefinition[] }>("/api/v8/project-starters");
+}
+
 export async function generateProjectBlueprintV8(projectId: string) {
   return apiRequest<{ item: ProjectBlueprint }>(`/api/v8/projects/${projectId}/blueprint/generate`, {
     method: "POST",
@@ -1834,8 +1840,10 @@ export async function connectLocalProjectV8(input: { actor: string; source_path:
   return apiRequest<
     | {
         bootstrapRequired: true;
+        emptyFolder: true;
         folderPath: string;
-        suggestedTemplate: "typescript_vite_react";
+        suggestedStarterId: ProjectStarterId | null;
+        canStartBlank: true;
       }
     | {
         bootstrapRequired?: false;
@@ -1878,8 +1886,10 @@ export async function openRecentProjectV8(input: { actor: string; source_path: s
   return apiRequest<
     | {
         bootstrapRequired: true;
+        emptyFolder: true;
         folderPath: string;
-        suggestedTemplate: "typescript_vite_react";
+        suggestedStarterId: ProjectStarterId | null;
+        canStartBlank: true;
       }
     | {
         bootstrapRequired?: false;
@@ -1900,28 +1910,28 @@ export async function bootstrapEmptyProjectV8(input: {
   actor: string;
   folderPath: string;
   displayName?: string;
-  template?: "typescript_vite_react";
+  starterId?: ProjectStarterId | null;
   initializeGit?: boolean;
 }) {
   return apiRequest<{
     project: ProjectBinding;
     repo: RepoRegistration;
     blueprint: ProjectBlueprint | null;
-    template: "typescript_vite_react";
+    starterId: ProjectStarterId | null;
   }>("/api/v8/projects/bootstrap/empty", {
     method: "POST",
     body: JSON.stringify(input),
   });
 }
 
-export async function getScaffoldPlanV8(projectId: string) {
+export async function getScaffoldPlanV8(projectId: string, input?: { starterId?: ProjectStarterId }) {
   return apiRequest<{ item: ScaffoldPlan }>(`/api/v8/projects/${projectId}/scaffold/plan`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(input || {}),
   });
 }
 
-export async function executeScaffoldV8(projectId: string, input: { actor: string; objective?: string; template?: "typescript_vite_react" }) {
+export async function executeScaffoldV8(projectId: string, input: { actor: string; objective?: string; starterId?: ProjectStarterId }) {
   return apiRequest<{
     plan: ScaffoldPlan;
     result: ScaffoldExecutionResult;

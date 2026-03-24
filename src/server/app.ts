@@ -120,7 +120,12 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     commandEngine,
   );
   const githubService = new GitHubService(repoService);
-  const projectScaffoldService = new ProjectScaffoldService(repoService, projectBlueprintService, executionService);
+  const projectScaffoldService = new ProjectScaffoldService(
+    repoService,
+    projectBlueprintService,
+    executionService,
+    providerOrchestrator,
+  );
   const missionControlService = new MissionControlService(
     repoService,
     projectBlueprintService,
@@ -150,6 +155,10 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   });
 
   app.addHook("preHandler", async (request, reply) => {
+    if (request.method === "OPTIONS") {
+      return;
+    }
+
     if (isAuthorizedLocalApiRequest({
       url: request.url,
       apiToken,
@@ -224,6 +233,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     approvalService,
     channelService,
     commandEngine,
+    executionService,
+    projectBlueprintService,
+    repoService,
     ticketService,
     v2EventService,
   });

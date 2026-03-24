@@ -1033,8 +1033,14 @@ export function CodebaseView({
 
   if (!repoId) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
-        Connect a repo to inspect its code graph and managed worktree.
+      <div className="rounded-xl border border-dashed border-white/10 p-6">
+        <div className="text-sm font-medium text-white">Connect a project to inspect the managed worktree</div>
+        <div className="mt-2 text-sm text-zinc-400">
+          This view is strongest after you review or run a task, because Work can focus it on impacted files, tests, and docs.
+        </div>
+        <div className="mt-3 text-xs text-zinc-500">
+          Best next step: open Projects, activate a repo, then return here from Work to inspect the scoped file set.
+        </div>
       </div>
     );
   }
@@ -1240,11 +1246,15 @@ export function CodebaseView({
                 <ProcessingIndicator kind="processing" active size="xs" tone="subtle" />
                 Loading codebase…
               </div>
+            ) : treeQuery.isError ? (
+              <div className="p-3 text-xs text-rose-200">
+                {treeQuery.error instanceof Error ? treeQuery.error.message : "The codebase tree could not be loaded."}
+              </div>
             ) : searchedFiles.length === 0 ? (
               <div className="p-3 text-xs text-zinc-500">
                 {effectiveScope !== "all"
-                  ? `No ${effectiveScope} files are available for the current scope yet.`
-                  : "No files match the current filter."}
+                  ? `No ${effectiveScope} files are available for the current scope yet. Review a plan or run a task from Work to populate this focused scope.`
+                  : "No files match the current filter. Clear the filter or return to Work to generate a new scoped context."}
               </div>
             ) : (
               tree.map((node) => (

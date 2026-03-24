@@ -17,6 +17,7 @@ import type {
 import { V2EventService } from "./v2EventService";
 import { CodeGraphService } from "./codeGraphService";
 import { ProjectBlueprintService } from "./projectBlueprintService";
+import { normalizeStarterMetadata } from "./projectStarterCatalog";
 
 type SourceKind = "local_path" | "git_url" | "managed_pack";
 
@@ -407,7 +408,7 @@ function mapRepo(row: {
   createdAt: Date;
   updatedAt: Date;
 }): RepoRegistration {
-  const metadata = toRecord(row.metadata);
+  const metadata = normalizeStarterMetadata(toRecord(row.metadata));
   const developerOnly = row.sourceKind === "managed_pack" || metadata.developerOnly === true || metadata.developer_only === true;
   return {
     id: row.id,
@@ -859,7 +860,9 @@ export class RepoService {
       data: {
         metadata: {
           ...(toRecord(attached.repo.metadata) || {}),
-          bootstrap_template: input.template,
+          bootstrap_template: input.starterId ?? null,
+          creation_mode: input.starterId ? "starter" : "blank",
+          requested_starter_id: input.starterId ?? null,
           bootstrap_initialized_at: new Date().toISOString(),
         },
       },

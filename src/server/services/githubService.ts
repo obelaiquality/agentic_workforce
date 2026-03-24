@@ -4,6 +4,7 @@ import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import type { GitHubRepoBinding, ProjectBinding, RepoRegistration, ShareableRunReport } from "../../shared/contracts";
 import { RepoService } from "./repoService";
+import { normalizeStarterMetadata } from "./projectStarterCatalog";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -22,7 +23,7 @@ function runGit(args: string[], cwd?: string) {
 }
 
 function mapProjectBinding(repo: RepoRegistration, guidelineProfileVersion = 1): ProjectBinding {
-  const metadata = toRecord(repo.metadata);
+  const metadata = normalizeStarterMetadata(toRecord(repo.metadata));
   return {
     id: repo.id,
     displayName: repo.displayName,

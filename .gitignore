@@ -41,6 +41,7 @@ rust/sidecar/target/
 # Playwright CLI snapshots and E2E output
 .playwright-cli/
 output/
+tmp-electron-probe-userdata*/
 
 # Claude Code project memory
 .claude/

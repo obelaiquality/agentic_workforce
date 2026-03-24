@@ -949,14 +949,39 @@ export function SettingsControlView() {
             <button
               key={item.key}
               onClick={() => setView(item.key)}
-              className={`rounded-full px-3 py-1.5 text-xs ${view === item.key ? "bg-cyan-500/15 border border-cyan-400/30 text-cyan-100" : "border border-white/10 bg-white/[0.03] text-zinc-400"}`}
+              className={`rounded-full px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20 ${view === item.key ? "bg-cyan-500/15 border border-cyan-400/30 text-cyan-100" : "border border-white/10 bg-white/[0.03] text-zinc-400"}`}
             >
               {item.label}
             </button>
           ))}
-          <div className="ml-auto flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">
+          <label className="ml-auto flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">
             <span className="text-xs text-zinc-400">Show Labs</span>
-            <input type="checkbox" checked={labsMode} onChange={(event) => setLabsMode(event.target.checked)} />
+            <input aria-label="Show Labs" type="checkbox" checked={labsMode} onChange={(event) => setLabsMode(event.target.checked)} />
+          </label>
+        </div>
+        <div className="px-4 pb-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Essentials</div>
+              <div className="mt-1 text-sm text-white">Use this for first-run success</div>
+              <div className="mt-1 text-xs text-zinc-400">
+                Start here for runtime mode, provider keys, local runtime summary, and normal approval defaults.
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Advanced</div>
+              <div className="mt-1 text-sm text-white">Routing and deeper control</div>
+              <div className="mt-1 text-xs text-zinc-400">
+                Use Advanced for execution profiles, role routing, dedicated runtimes, budgets, and experimental channels.
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Labs</div>
+              <div className="mt-1 text-sm text-white">Hidden by default</div>
+              <div className="mt-1 text-xs text-zinc-400">
+                Labs stay off the normal onboarding path so first-time users stay focused on the stable desktop workflow.
+              </div>
+            </div>
           </div>
         </div>
       </Panel>

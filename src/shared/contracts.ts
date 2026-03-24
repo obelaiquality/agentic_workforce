@@ -411,6 +411,17 @@ export interface RepoRegistration {
   updatedAt: string;
 }
 
+export type ProjectStarterId = "neutral_baseline" | "typescript_vite_react";
+
+export interface ProjectStarterDefinition {
+  id: ProjectStarterId;
+  label: string;
+  description: string;
+  kind: "generic" | "stack";
+  recommended: boolean;
+  verificationMode: "none" | "commands";
+}
+
 export interface ProjectBinding {
   id: string;
   displayName: string;
@@ -728,7 +739,7 @@ export interface ConsoleEvent {
 export interface ProjectBootstrapRequest {
   folderPath: string;
   displayName?: string;
-  template: "typescript_vite_react";
+  starterId?: ProjectStarterId | null;
   initializeGit: boolean;
 }
 
@@ -743,7 +754,7 @@ export interface ScaffoldPlan {
 
 export interface ScaffoldExecutionResult {
   projectId: string;
-  runId: string;
+  runId: string | null;
   appliedFiles: string[];
   verificationBundleId: string | null;
   reportId: string | null;

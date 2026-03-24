@@ -1,0 +1,62 @@
+name: Nightly E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  nightly-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: agentic
+          POSTGRES_PASSWORD: agentic
+          POSTGRES_DB: agentic_workforce
+        options: >-
+          --health-cmd "pg_isready -U agentic -d agentic_workforce"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://agentic:agentic@127.0.0.1:5433/agentic_workforce?schema=public
+      ENABLE_LOCAL_FAILOVER_E2E: ${{ vars.ENABLE_LOCAL_FAILOVER_E2E }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Electron runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libasound2t64
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Push Prisma schema
+        run: npx prisma db push
+
+      - name: Run nightly suite
+        run: xvfb-run -a npm run test:e2e:nightly
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-nightly
+          path: output/playwright/**
+          if-no-files-found: ignore

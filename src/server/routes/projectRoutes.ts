@@ -9,8 +9,11 @@ import { ExecutionService } from "../services/executionService";
 import { GitHubService } from "../services/githubService";
 import { ProjectBlueprintService } from "../services/projectBlueprintService";
 import { ProjectScaffoldService } from "../services/projectScaffoldService";
+import { DEFAULT_EMPTY_FOLDER_STARTER_ID } from "../services/projectStarterCatalog";
 import { buildVerificationCommandPlans } from "../services/verificationPolicy";
 import { mapRepoToProjectBinding } from "./shared/projectBindings";
+
+const projectStarterIdSchema = z.enum(["neutral_baseline", "typescript_vite_react"]);
 
 const attachLocalRepoSchema = z.object({
   actor: z.string().min(1),
@@ -131,14 +134,14 @@ const scaffoldBootstrapSchema = z.object({
   actor: z.string().min(1),
   folderPath: z.string().min(1),
   displayName: z.string().optional(),
-  template: z.literal("typescript_vite_react").default("typescript_vite_react"),
+  starterId: projectStarterIdSchema.nullable().optional(),
   initializeGit: z.boolean().default(true),
 });
 
 const scaffoldExecuteSchema = z.object({
   actor: z.string().min(1),
   objective: z.string().min(1).optional(),
-  template: z.literal("typescript_vite_react").default("typescript_vite_react"),
+  starterId: projectStarterIdSchema.optional(),
 });
 
 const blueprintUpdateSchema = z.object({
@@ -256,8 +259,10 @@ async function attachOrBootstrapLocal(
     if (inspection.isEmpty || !inspection.hasFiles) {
       return {
         bootstrapRequired: true as const,
+        emptyFolder: true as const,
         folderPath: inspection.absolutePath,
-        suggestedTemplate: "typescript_vite_react" as const,
+        suggestedStarterId: DEFAULT_EMPTY_FOLDER_STARTER_ID,
+        canStartBlank: true as const,
       };
     }
     throw new Error("Selected folder is not a Git repo. Choose an existing repo or an empty folder to initialize.");
@@ -737,6 +742,10 @@ export function registerProjectRoutes(deps: ProjectRouteDeps) {
     };
   });
 
+  app.get("/api/v8/project-starters", async () => ({
+    items: projectScaffoldService.listStarters(),
+  }));
+
   app.post("/api/v8/projects/connect/local", async (request) => {
     const input = attachLocalRepoSchema.parse(request.body);
     return attachOrBootstrapLocal(input, { repoService });
@@ -779,8 +788,9 @@ export function registerProjectRoutes(deps: ProjectRouteDeps) {
 
   app.post("/api/v8/projects/:id/scaffold/plan", async (request) => {
     const id = (request.params as { id: string }).id;
+    const input = z.object({ starterId: projectStarterIdSchema.optional() }).parse(request.body ?? {});
     return {
-      item: await projectScaffoldService.plan(id),
+      item: await projectScaffoldService.plan(id, input.starterId),
     };
   });
 
@@ -790,7 +800,7 @@ export function registerProjectRoutes(deps: ProjectRouteDeps) {
     return projectScaffoldService.execute({
       actor: input.actor,
       projectId: id,
-      template: input.template,
+      starterId: input.starterId,
       objective: input.objective,
     });
   });

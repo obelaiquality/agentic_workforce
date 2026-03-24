@@ -65,7 +65,10 @@ async function ensureSession(baseUrl, token) {
       "x-local-api-token": token,
     },
   });
-  if (!response.ok && response.status !== 204) {
+  if (response.ok || response.status === 204 || response.status === 404 || response.status === 405) {
+    return;
+  }
+  if (!response.ok) {
     const text = await response.text();
     fail(text || `Failed to initialize API session (${response.status})`);
   }
@@ -258,6 +261,7 @@ async function commandConnect(baseUrl, token, argv) {
   const actor = getOption(argv, "--actor", "cli");
   const displayName = getOption(argv, "--name", undefined);
   const bootstrap = hasFlag(argv, "--bootstrap");
+  const starter = getOption(argv, "--starter", undefined);
   const absolutePath = path.resolve(process.cwd(), sourcePath);
 
   try {
@@ -280,8 +284,8 @@ async function commandConnect(baseUrl, token, argv) {
 
   if (response.bootstrapRequired) {
     if (!bootstrap) {
-      console.log(`The folder is empty and needs bootstrap scaffolding: ${response.folderPath}`);
-      console.log("Re-run with `--bootstrap` to create the starter TypeScript + React project.");
+      console.log(`The folder is empty and needs project setup: ${response.folderPath}`);
+      console.log("Re-run with `--bootstrap` to create a blank managed repo, or add `--starter neutral_baseline|typescript_vite_react`.");
       return;
     }
 
@@ -291,10 +295,20 @@ async function commandConnect(baseUrl, token, argv) {
         actor,
         folderPath: response.folderPath,
         displayName,
-        template: response.suggestedTemplate || "typescript_vite_react",
+        starterId: starter || null,
         initializeGit: true,
       }),
     });
+
+    if (starter) {
+      await apiRequest(baseUrl, token, `/api/v8/projects/${bootstrapped.project.id}/scaffold/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          actor,
+          starterId: starter,
+        }),
+      });
+    }
 
     console.log(`Bootstrapped project ${bootstrapped.project.id} (${bootstrapped.project.displayName})`);
     console.log(`Root: ${bootstrapped.project.canonicalRoot || absolutePath}`);

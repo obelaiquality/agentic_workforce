@@ -1,10 +1,23 @@
-import { useState } from "react";
-import { FolderGit2, Github, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { FolderGit2, Github, RefreshCw, Sparkles } from "lucide-react";
 import { Chip, Panel, PanelHeader } from "../UI";
-import type { ProjectBlueprint, RepoRegistration } from "../../../shared/contracts";
+import type {
+  ProjectBlueprint,
+  ProjectStarterDefinition,
+  ProjectStarterId,
+  RepoRegistration,
+} from "../../../shared/contracts";
 import type { RecentRepoPath } from "../../lib/desktopBridge";
 import { ProjectBlueprintPanel } from "../mission/ProjectBlueprintPanel";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ProcessingIndicator } from "../ui/processing-indicator";
+
+function starterLabel(starterId: ProjectStarterId | null) {
+  if (!starterId) {
+    return "Blank repo";
+  }
+  return starterId === "neutral_baseline" ? "Neutral baseline" : "TypeScript app";
+}
 
 export function ProjectsWorkspaceView({
   activeRepo,
@@ -13,11 +26,16 @@ export function ProjectsWorkspaceView({
   hasDesktopPicker,
   repoPickerMessage,
   chooseLocalRepo,
-  startNewProject,
-  newProjectTemplate,
-  setNewProjectTemplate,
-  initializeNewProject,
-  pendingBootstrap,
+  openNewProjectDialog,
+  projectStarters,
+  projectSetupState,
+  createBlankProject,
+  createProjectFromStarter,
+  dismissProjectSetupDialog,
+  openStarterDialogForActiveProject,
+  activeProjectIsBlank,
+  activeStarterId,
+  openWork,
   openRecentPath,
   activateRepo,
   syncProject,
@@ -44,11 +62,23 @@ export function ProjectsWorkspaceView({
   hasDesktopPicker: boolean;
   repoPickerMessage: string | null;
   chooseLocalRepo: () => void;
-  startNewProject: () => void;
-  newProjectTemplate: "typescript_vite_react";
-  setNewProjectTemplate: (template: "typescript_vite_react") => void;
-  initializeNewProject: () => void;
-  pendingBootstrap: { folderPath: string; suggestedTemplate: "typescript_vite_react"; displayName?: string } | null;
+  openNewProjectDialog: () => void;
+  projectStarters: ProjectStarterDefinition[];
+  projectSetupState: {
+    mode: "create" | "apply";
+    source: "new_project" | "empty_folder" | "active_repo";
+    folderPath?: string;
+    displayName?: string;
+    targetRepoId?: string;
+    targetRepoName?: string;
+  } | null;
+  createBlankProject: () => void;
+  createProjectFromStarter: (starterId: ProjectStarterId) => void;
+  dismissProjectSetupDialog: () => void;
+  openStarterDialogForActiveProject: () => void;
+  activeProjectIsBlank: boolean;
+  activeStarterId: ProjectStarterId | null;
+  openWork: () => void;
   openRecentPath: (path: string, label?: string) => void;
   activateRepo: (repoId: string) => void;
   syncProject: (repoId: string) => void;
@@ -70,6 +100,7 @@ export function ProjectsWorkspaceView({
   labsMode: boolean;
 }) {
   const [showGithub, setShowGithub] = useState(false);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const workspaceActivityKind =
     isRefreshingBlueprint
       ? "blueprint"
@@ -85,8 +116,110 @@ export function ProjectsWorkspaceView({
       ? "verifying"
       : "telemetry";
 
+  useEffect(() => {
+    if (projectSetupState) {
+      setProjectDialogOpen(true);
+      return;
+    }
+    setProjectDialogOpen(false);
+  }, [projectSetupState]);
+
+  const recommendedStarter = useMemo(
+    () => projectStarters.find((starter) => starter.recommended) || null,
+    [projectStarters]
+  );
+  const emptyFolderSetup = projectSetupState?.source === "empty_folder" && projectSetupState.mode === "create";
+  const projectDialogTitle =
+    projectSetupState?.mode === "apply"
+      ? `Apply a starter to ${projectSetupState.targetRepoName || "this repo"}`
+      : emptyFolderSetup
+      ? "Set up this empty folder"
+      : "Create a new project";
+  const projectDialogDescription =
+    projectSetupState?.mode === "apply"
+      ? "Pick a starter to add structure without changing the repo connection."
+      : emptyFolderSetup
+      ? "This folder is empty. Start blank or apply a starter before you switch back to Work."
+      : "Create a blank managed repo first, or start with a focused starter.";
+
+  function handleProjectDialogOpenChange(open: boolean) {
+    setProjectDialogOpen(open);
+    if (!open && projectSetupState?.source !== "empty_folder") {
+      dismissProjectSetupDialog();
+    }
+  }
+
   return (
     <div className="space-y-4">
+      <Dialog open={projectDialogOpen} onOpenChange={handleProjectDialogOpenChange}>
+        <DialogContent className="max-w-3xl border-white/10 bg-[#121216] text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>{projectDialogTitle}</DialogTitle>
+            <DialogDescription className="text-zinc-400">{projectDialogDescription}</DialogDescription>
+          </DialogHeader>
+
+          {projectSetupState?.folderPath ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-zinc-400">
+              Target folder: <span className="font-mono text-zinc-200">{projectSetupState.folderPath}</span>
+            </div>
+          ) : null}
+
+          {projectSetupState?.mode === "create" ? (
+            <button
+              onClick={createBlankProject}
+              disabled={isActing}
+              className="w-full rounded-2xl border border-cyan-500/20 bg-cyan-500/8 p-4 text-left transition hover:border-cyan-400/30 hover:bg-cyan-500/12 disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-300">
+                Blank Project
+                <Chip variant="subtle" className="text-[10px]">
+                  Recommended
+                </Chip>
+              </div>
+              <div className="mt-2 text-base font-medium text-white">Create a managed Git repo with no stack assumptions</div>
+              <div className="mt-1 text-sm text-zinc-300">
+                Initialize the repo, keep the folder generic, and decide on architecture or tooling later from Work.
+              </div>
+            </button>
+          ) : null}
+
+          <div className="space-y-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+              {projectSetupState?.mode === "apply" ? "Available starters" : "Optional starters"}
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {projectStarters.map((starter) => (
+                <button
+                  key={starter.id}
+                  onClick={() => createProjectFromStarter(starter.id)}
+                  disabled={isActing}
+                  className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.06] disabled:opacity-60"
+                >
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                    {starter.kind === "generic" ? "Generic starter" : "Stack starter"}
+                    {recommendedStarter?.id === starter.id ? (
+                      <Chip variant="subtle" className="text-[10px]">
+                        Recommended starter
+                      </Chip>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 text-base font-medium text-white">
+                    {starter.label}
+                    <Sparkles className="h-4 w-4 text-cyan-300" />
+                  </div>
+                  <div className="mt-1 text-sm text-zinc-300">{starter.description}</div>
+                  <div className="mt-3 text-xs text-zinc-500">
+                    {starter.verificationMode === "commands"
+                      ? "Runs starter-specific verification after scaffolding."
+                      : "Adds minimal files only, with no package-manager or build assumptions."}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <Panel>
           <PanelHeader title="Connect or Create">
@@ -105,34 +238,48 @@ export function ProjectsWorkspaceView({
                   </div>
                 </div>
               </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">New Project</div>
+                  <div className="mt-1 text-sm text-white">Start blank or add a starter</div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    Create a managed repo first. Add a neutral baseline or a stack starter only if you want one.
+                  </div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Choose Local Repo</div>
+                  <div className="mt-1 text-sm text-white">Attach an existing repository</div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    Use this when you already have a Git repo and want the app to work from a managed worktree instead of your primary checkout.
+                  </div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Next Step</div>
+                  <div className="mt-1 text-sm text-white">Return to Work</div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    Once a project is active, switch back to Work to review the plan, run the task, and inspect evidence.
+                  </div>
+                </div>
+              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   onClick={chooseLocalRepo}
                   disabled={isActing}
-                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
                 >
                   {isConnectingLocal ? <ProcessingIndicator kind="repo" active size="xs" tone="accent" /> : <FolderGit2 className="h-4 w-4" />}
                   {isConnectingLocal ? "Opening Repo..." : "Choose Local Repo"}
                 </button>
-                <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5">
-                  <select
-                    value={newProjectTemplate}
-                    onChange={(event) => setNewProjectTemplate(event.target.value as "typescript_vite_react")}
-                    className="bg-transparent px-2 py-1 text-xs text-zinc-200 outline-none"
-                  >
-                    <option value="typescript_vite_react">TypeScript App</option>
-                  </select>
-                  <button
-                    onClick={startNewProject}
-                    disabled={isActing}
-                    className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
-                  >
-                    {isBootstrappingProject ? "Initializing..." : "New Project"}
-                  </button>
-                </div>
+                <button
+                  onClick={openNewProjectDialog}
+                  disabled={isActing}
+                  className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/30"
+                >
+                  {isBootstrappingProject ? "Working..." : "New Project"}
+                </button>
                 <button
                   onClick={() => setShowGithub((value) => !value)}
-                  className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300 hover:bg-white/[0.08]"
+                  className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
                 >
                   {isConnectingGithub ? <ProcessingIndicator kind="repo" active size="xs" tone="subtle" /> : <Github className="h-4 w-4" />}
                   {showGithub ? "Hide GitHub" : "Connect GitHub Repo"}
@@ -164,22 +311,22 @@ export function ProjectsWorkspaceView({
               <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{repoPickerMessage}</div>
             ) : !hasDesktopPicker ? (
               <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3 text-xs text-zinc-400">
-                Browser preview is limited. Use the desktop app for the repo picker and full local task execution.
+                Browser preview is limited. Use the desktop app for the repo picker and full local task execution. If you only need to inspect the UI, keep going here. If you need a real local repo, switch to Electron.
               </div>
             ) : null}
 
-            {pendingBootstrap ? (
+            {emptyFolderSetup ? (
               <div className="rounded-xl border border-purple-500/20 bg-purple-500/8 p-4">
-                <div className="text-sm font-medium text-white">Initialize new TypeScript project</div>
+                <div className="text-sm font-medium text-white">This folder is empty</div>
                 <div className="mt-1 text-xs text-zinc-300">
-                  Empty folder detected. Initialize Git, create the scaffold, and run lint, tests, and build.
+                  Start blank or apply a starter here. The folder stays generic unless you explicitly choose a starter.
                 </div>
                 <button
-                  onClick={initializeNewProject}
+                  onClick={() => setProjectDialogOpen(true)}
                   disabled={isActing}
-                  className="mt-3 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+                  className="mt-3 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/30"
                 >
-                  Initialize New Project
+                  Open New Project Flow
                 </button>
               </div>
             ) : null}
@@ -204,7 +351,7 @@ export function ProjectsWorkspaceView({
                 <button
                   onClick={connectGithubProject}
                   disabled={isActing || !githubOwner.trim() || !githubRepo.trim()}
-                  className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+                  className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/30"
                 >
                   Connect GitHub Repo
                 </button>
@@ -226,18 +373,29 @@ export function ProjectsWorkspaceView({
               <>
                 <div>
                   <div className="text-lg font-semibold text-white">{activeRepo.displayName}</div>
-                  <div className="mt-1 text-xs text-zinc-500">
-                    {activeRepo.branch || activeRepo.defaultBranch || "main"} · {activeRepo.sourceKind.replace(/_/g, " ")}
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    <span>{activeRepo.branch || activeRepo.defaultBranch || "main"}</span>
+                    <span>·</span>
+                    <span>{activeRepo.sourceKind.replace(/_/g, " ")}</span>
+                    <Chip variant="subtle" className="text-[10px]">
+                      {starterLabel(activeStarterId)}
+                    </Chip>
                   </div>
                 </div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-xs text-zinc-400">
-                  The project is active and ready. Go back to Work to describe the next task.
-                </div>
-                <div className="flex gap-2">
+                {activeProjectIsBlank ? (
+                  <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/8 p-4 text-xs text-cyan-100">
+                    This is a blank repo. Go to Work to define the first task, or apply a starter if you want an initial baseline.
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-xs text-zinc-400">
+                    The project is active and ready. Go back to Work, click Review plan first, then run the next bounded task.
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => syncProject(activeRepo.id)}
                     disabled={Boolean(syncingRepoId)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
                   >
                     {syncingRepoId === activeRepo.id ? (
                       <ProcessingIndicator kind="repo" active size="xs" tone="accent" />
@@ -246,6 +404,23 @@ export function ProjectsWorkspaceView({
                     )}
                     {syncingRepoId === activeRepo.id ? "Syncing..." : activeRepo.sourceKind === "github_app_bound" ? "Sync" : "Refresh"}
                   </button>
+                  {activeProjectIsBlank ? (
+                    <>
+                      <button
+                        onClick={openWork}
+                        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
+                      >
+                        Go to Work
+                      </button>
+                      <button
+                        onClick={openStarterDialogForActiveProject}
+                        disabled={isActing}
+                        className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/30"
+                      >
+                        Apply Starter
+                      </button>
+                    </>
+                  ) : null}
                 </div>
                 <div className="rounded-xl border border-white/8 bg-white/[0.015] px-4 py-3">
                   <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
@@ -257,13 +432,15 @@ export function ProjectsWorkspaceView({
                       ? "Refreshing remote metadata and project timestamps."
                       : activeRepo.sourceKind === "github_app_bound"
                       ? "Use Sync to fetch the latest remote state and refresh project metadata."
+                      : activeProjectIsBlank
+                      ? "Blank repos stay intentionally generic until you describe the first task or apply a starter."
                       : "Use Refresh to update project metadata after local changes or reconnects."}
                   </div>
                 </div>
               </>
             ) : (
               <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
-                Open or create a project here, then return to Work to start planning tasks.
+                Open or create a project here, then return to Work to start with Review plan before you run a task.
               </div>
             )}
           </div>
@@ -290,15 +467,18 @@ export function ProjectsWorkspaceView({
                     <span className="text-[10px] uppercase tracking-wide text-zinc-600">{repo.sourceKind.replace(/_/g, " ")}</span>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => activateRepo(repo.id)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-500">Open</button>
+                    <button
+                      onClick={() => activateRepo(repo.id)}
+                      className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
+                    >
+                      Open
+                    </button>
                     <button
                       onClick={() => syncProject(repo.id)}
                       disabled={Boolean(syncingRepoId)}
-                      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-60"
+                      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
                     >
-                      {syncingRepoId === repo.id ? (
-                        <ProcessingIndicator kind="repo" active size="xs" tone="subtle" />
-                      ) : null}
+                      {syncingRepoId === repo.id ? <ProcessingIndicator kind="repo" active size="xs" tone="subtle" /> : null}
                       {syncingRepoId === repo.id ? "Syncing..." : repo.sourceKind === "github_app_bound" ? "Sync" : "Refresh"}
                     </button>
                   </div>
@@ -315,7 +495,7 @@ export function ProjectsWorkspaceView({
                   <button
                     key={item.path}
                     onClick={() => openRecentPath(item.path, item.label)}
-                    className="rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-3 text-left hover:bg-white/[0.04]"
+                    className="rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-3 text-left hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
                   >
                     <div className="text-sm text-white truncate">{item.label}</div>
                     <div className="text-xs text-zinc-500 truncate">{item.path}</div>
@@ -333,7 +513,7 @@ export function ProjectsWorkspaceView({
         </div>
       </Panel>
 
-      {(activeRepo || blueprint || pendingBootstrap) ? (
+      {(activeRepo || blueprint || projectSetupState) ? (
         <ProjectBlueprintPanel
           blueprint={blueprint}
           hasActiveRepo={Boolean(activeRepo)}

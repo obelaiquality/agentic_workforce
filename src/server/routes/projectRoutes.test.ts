@@ -26,6 +26,26 @@ function createHarness() {
     startExecution: vi.fn().mockResolvedValue({ id: "attempt-1" }),
     verifyExecution: vi.fn().mockResolvedValue({ id: "verification-1" }),
   };
+  const projectScaffoldService = {
+    listStarters: vi.fn().mockReturnValue([
+      {
+        id: "neutral_baseline",
+        label: "Neutral Baseline",
+        description: "Generic starter.",
+        kind: "generic",
+        recommended: true,
+        verificationMode: "none",
+      },
+      {
+        id: "typescript_vite_react",
+        label: "TypeScript App",
+        description: "Stack starter.",
+        kind: "stack",
+        recommended: false,
+        verificationMode: "commands",
+      },
+    ]),
+  };
 
   registerProjectRoutes({
     app,
@@ -35,10 +55,10 @@ function createHarness() {
     executionService: executionService as never,
     githubService: {} as never,
     projectBlueprintService: {} as never,
-    projectScaffoldService: {} as never,
+    projectScaffoldService: projectScaffoldService as never,
   });
 
-  return { app, repoService, executionService };
+  return { app, repoService, executionService, projectScaffoldService };
 }
 
 describe("projectRoutes legacy execution hardening", () => {
@@ -70,6 +90,22 @@ describe("projectRoutes legacy execution hardening", () => {
       error: "Legacy execution planning requires ticket_id. Use mission execution routes for ad-hoc runs.",
     });
     expect(executionService.planExecution).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("returns the starter catalog from the dedicated v8 endpoint", async () => {
+    const { app, projectScaffoldService } = createHarness();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v8/project-starters",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      items: projectScaffoldService.listStarters(),
+    });
 
     await app.close();
   });

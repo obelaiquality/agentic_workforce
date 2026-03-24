@@ -12,6 +12,7 @@ import {
   generateProjectBlueprintV8,
   getSettings,
   getMissionSnapshotV8,
+  getProjectStartersV8,
   openRecentProjectV8,
   openSessionStream,
   reviewOverseerRouteV8,
@@ -52,6 +53,8 @@ import type {
   ModelRole,
   MissionControlSnapshot,
   ProjectBlueprint,
+  ProjectStarterDefinition,
+  ProjectStarterId,
   RepoRegistration,
   RoutingDecision,
 } from "../../shared/contracts";
@@ -171,6 +174,45 @@ type AppModeNotice = {
   detail: string;
 };
 
+type ProjectSetupState = {
+  mode: "create" | "apply";
+  source: "new_project" | "empty_folder" | "active_repo";
+  folderPath?: string;
+  displayName?: string;
+  targetRepoId?: string;
+  targetRepoName?: string;
+};
+
+function asRecord(value: unknown) {
+  return (value ?? {}) as Record<string, unknown>;
+}
+
+function readStarterId(repo: RepoRegistration | null | undefined) {
+  const starterId = asRecord(repo?.metadata).starter_id;
+  return typeof starterId === "string" ? starterId : null;
+}
+
+function isBlankProject(repo: RepoRegistration | null | undefined) {
+  const metadata = asRecord(repo?.metadata);
+  return metadata.creation_mode === "blank" && typeof metadata.starter_id !== "string";
+}
+
+function starterObjective(starterId: ProjectStarterId) {
+  if (starterId === "neutral_baseline") {
+    return "Create a neutral project baseline with a README, repo charter, and generic ignore rules.";
+  }
+  return "Scaffold a TypeScript app with tests and documentation.";
+}
+
+function starterSuccessMessage(starterId: ProjectStarterId, status: "completed" | "needs_review" | "failed") {
+  if (starterId === "neutral_baseline") {
+    return "Neutral baseline applied. Go to Work or keep shaping the repo from Projects.";
+  }
+  return status === "completed"
+    ? "TypeScript project scaffolded and verified."
+    : "TypeScript project scaffolded. Review the verification follow-up.";
+}
+
 function summarizeAppError(error: unknown) {
   if (!(error instanceof Error)) {
     return "The local API is unavailable.";
@@ -233,17 +275,18 @@ export function useMissionControlLiveData() {
   const [repoPickerMessage, setRepoPickerMessage] = useState<string | null>(null);
   const [githubOwner, setGithubOwner] = useState("");
   const [githubRepo, setGithubRepo] = useState("");
-  const [newProjectTemplate, setNewProjectTemplate] = useState<"typescript_vite_react">("typescript_vite_react");
-  const [pendingBootstrap, setPendingBootstrap] = useState<{
-    folderPath: string;
-    suggestedTemplate: "typescript_vite_react";
-    displayName?: string;
-  } | null>(null);
+  const [projectSetupState, setProjectSetupState] = useState<ProjectSetupState | null>(null);
 
   const recentPathsQuery = useQuery({
     queryKey: ["desktop-recent-repos"],
     queryFn: listRecentRepoPaths,
     staleTime: 10000,
+  });
+
+  const starterCatalogQuery = useQuery({
+    queryKey: ["project-starters-v8"],
+    queryFn: getProjectStartersV8,
+    staleTime: 60000,
   });
 
   const settingsQuery = useQuery({
@@ -285,6 +328,9 @@ export function useMissionControlLiveData() {
     () => (snapshot?.project ? visibleRepos.find((repo) => repo.id === snapshot.project?.id) ?? snapshot.project : recentRepos[0] ?? null),
     [snapshot?.project, visibleRepos, recentRepos]
   );
+  const projectStarters = starterCatalogQuery.data?.items ?? [];
+  const activeStarterId = readStarterId(selectedRepo) as ProjectStarterId | null;
+  const activeProjectIsBlank = isBlankProject(selectedRepo);
 
   const blueprintQuery = useQuery({
     queryKey: ["project-blueprint-v8", selectedRepo?.id],
@@ -456,13 +502,15 @@ export function useMissionControlLiveData() {
     },
     onSuccess: (result) => {
       if ("bootstrapRequired" in result && result.bootstrapRequired) {
-        setPendingBootstrap({
+        setProjectSetupState({
+          mode: "create",
+          source: "empty_folder",
           folderPath: result.folderPath,
-          suggestedTemplate: result.suggestedTemplate,
+          displayName: result.folderPath.split("/").pop() || "New Project",
         });
         setRepoPickerMessage(null);
-        setActionMessage("Empty folder detected. Initialize a new TypeScript project to continue.");
-        setActiveSection("live");
+        setActionMessage("This folder is empty. Create a blank project or apply a starter to continue.");
+        setActiveSection("projects");
         return;
       }
 
@@ -476,7 +524,7 @@ export function useMissionControlLiveData() {
       setRoutePreview(null);
       setContextPackPreview(null);
       setBlueprintPreview(blueprint);
-      setPendingBootstrap(null);
+      setProjectSetupState(null);
       setRepoPickerMessage(null);
       setActionMessage("Repo connected.");
       setActiveSection("live");
@@ -493,12 +541,20 @@ export function useMissionControlLiveData() {
       setRepoPickerMessage(null);
       setActionMessage("Initializing new project...");
     },
-    mutationFn: async ({ folderPath, displayName, template }: { folderPath: string; displayName?: string; template?: "typescript_vite_react" }) => {
+    mutationFn: async ({
+      folderPath,
+      displayName,
+      starterId,
+    }: {
+      folderPath: string;
+      displayName?: string;
+      starterId?: ProjectStarterId | null;
+    }) => {
       const bootstrap = await bootstrapEmptyProjectV8({
         actor: "user",
         folderPath,
         displayName,
-        template: template || "typescript_vite_react",
+        starterId: starterId ?? null,
         initializeGit: true,
       });
 
@@ -513,36 +569,70 @@ export function useMissionControlLiveData() {
         },
       });
 
-      const scaffold = await executeScaffoldV8(bootstrap.repo.id, {
-        actor: "user",
-        template: template || "typescript_vite_react",
-        objective: "Scaffold a TypeScript app with tests and documentation.",
-      });
+      const scaffold = starterId
+        ? await executeScaffoldV8(bootstrap.repo.id, {
+            actor: "user",
+            starterId,
+            objective: starterObjective(starterId),
+          })
+        : null;
 
       return {
         bootstrap,
         scaffold,
+        starterId: starterId ?? null,
       };
     },
-    onSuccess: ({ bootstrap, scaffold }) => {
+    onSuccess: ({ bootstrap, scaffold, starterId }) => {
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
       queryClient.invalidateQueries({ queryKey: ["desktop-recent-repos"] });
       setSelectedRepoId(bootstrap.repo.id);
       setSelectedTicketId(null);
       setSelectedSessionId(null);
-      setSelectedRunId(scaffold.result.runId);
+      setSelectedRunId(scaffold?.result.runId ?? null);
       setRoutePreview(null);
       setContextPackPreview(null);
-      setBlueprintPreview(scaffold.blueprint || bootstrap.blueprint);
-      setPendingBootstrap(null);
+      setBlueprintPreview(scaffold?.blueprint || bootstrap.blueprint);
+      setProjectSetupState(null);
       setRepoPickerMessage(null);
-      setActionMessage(scaffold.result.status === "completed" ? "TypeScript project scaffolded and verified." : "Project scaffolded. Review the verification follow-up.");
-      setActiveSection("live");
+      setActionMessage(
+        starterId && scaffold
+          ? starterSuccessMessage(starterId, scaffold.result.status)
+          : "Blank project created. Go to Work or apply a starter."
+      );
+      setActiveSection(starterId ? "live" : "projects");
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : "Unable to initialize the selected folder.";
       setRepoPickerMessage(message);
       setActionMessage(`Project initialization failed: ${message}`);
+    },
+  });
+
+  const applyStarterMutation = useMutation({
+    onMutate: () => {
+      setRepoPickerMessage(null);
+      setActionMessage("Applying starter...");
+    },
+    mutationFn: async ({ repoId, starterId }: { repoId: string; starterId: ProjectStarterId }) =>
+      executeScaffoldV8(repoId, {
+        actor: "user",
+        starterId,
+        objective: starterObjective(starterId),
+      }),
+    onSuccess: (result, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      queryClient.invalidateQueries({ queryKey: ["desktop-recent-repos"] });
+      setSelectedRunId(result.result.runId ?? null);
+      setBlueprintPreview(result.blueprint);
+      setProjectSetupState(null);
+      setActionMessage(starterSuccessMessage(variables.starterId, result.result.status));
+      setActiveSection("live");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Unable to apply the selected starter.";
+      setRepoPickerMessage(message);
+      setActionMessage(`Starter application failed: ${message}`);
     },
   });
 
@@ -909,18 +999,64 @@ export function useMissionControlLiveData() {
     }
   }
 
-  async function startNewProject() {
-    if (!hasDesktopRepoPicker()) {
+  function openNewProjectDialog() {
+    setProjectSetupState({
+      mode: "create",
+      source: "new_project",
+    });
+  }
+
+  function openStarterDialogForActiveProject() {
+    if (!selectedRepo?.id) {
+      return;
+    }
+    setProjectSetupState({
+      mode: "apply",
+      source: "active_repo",
+      targetRepoId: selectedRepo.id,
+      targetRepoName: selectedRepo.displayName,
+    });
+  }
+
+  function dismissProjectSetupDialog() {
+    setProjectSetupState(null);
+  }
+
+  async function runProjectSetup(starterId: ProjectStarterId | null) {
+    const setupState = projectSetupState;
+    if (!setupState) {
+      return;
+    }
+
+    if (setupState.mode === "apply") {
+      if (!setupState.targetRepoId || !starterId) {
+        return;
+      }
+      applyStarterMutation.mutate({
+        repoId: setupState.targetRepoId,
+        starterId,
+      });
+      return;
+    }
+
+    if (!hasDesktopRepoPicker() && !setupState.folderPath) {
       setRepoPickerMessage("New Project uses the desktop folder picker. Open the Electron window to choose a target folder.");
       return;
     }
-    const picked = await pickRepoDirectory();
-    if (picked.canceled || !picked.path) {
-      return;
+
+    let folderPath = setupState.folderPath;
+    if (!folderPath) {
+      const picked = await pickRepoDirectory();
+      if (picked.canceled || !picked.path) {
+        return;
+      }
+      folderPath = picked.path;
     }
+
     bootstrapProjectMutation.mutate({
-      folderPath: picked.path,
-      template: newProjectTemplate,
+      folderPath,
+      displayName: setupState.displayName,
+      starterId,
     });
   }
 
@@ -1011,6 +1147,8 @@ export function useMissionControlLiveData() {
         ? setTicketExecutionProfileMutation.error.message
         : setTicketPermissionMutation.error instanceof Error
         ? setTicketPermissionMutation.error.message
+        : starterCatalogQuery.error instanceof Error
+        ? starterCatalogQuery.error.message
         : snapshotQuery.error instanceof Error
         ? snapshotQuery.error.message
         : null,
@@ -1040,14 +1178,17 @@ export function useMissionControlLiveData() {
     setGithubRepo,
     hasDesktopPicker,
     hasAnyProjects: recentRepos.length > 0,
-    newProjectTemplate,
-    setNewProjectTemplate,
+    projectStarters,
+    projectSetupState,
+    activeStarterId,
+    activeProjectIsBlank,
     isActing:
       sendMutation.isPending ||
       reviewRouteMutation.isPending ||
       executeMutation.isPending ||
       connectLocalMutation.isPending ||
       bootstrapProjectMutation.isPending ||
+      applyStarterMutation.isPending ||
       connectGithubMutation.isPending ||
       activateRepoMutation.isPending ||
       syncProjectMutation.isPending ||
@@ -1058,26 +1199,22 @@ export function useMissionControlLiveData() {
       setTicketExecutionProfileMutation.isPending ||
       setTicketPermissionMutation.isPending,
     chooseLocalRepo,
-    startNewProject,
-    pendingBootstrap,
-    initializeNewProject: () => {
-      if (!pendingBootstrap) return;
-      bootstrapProjectMutation.mutate({
-        folderPath: pendingBootstrap.folderPath,
-        displayName: pendingBootstrap.displayName,
-        template: pendingBootstrap.suggestedTemplate,
-      });
-    },
+    openNewProjectDialog,
+    openStarterDialogForActiveProject,
+    dismissProjectSetupDialog,
+    createBlankProject: () => runProjectSetup(null),
+    createProjectFromStarter: (starterId: ProjectStarterId) => runProjectSetup(starterId),
     connectRecentPath: (path: string, label?: string) =>
       openRecentProjectV8({ actor: "user", source_path: path, display_name: label }).then(async (result) => {
         if ("bootstrapRequired" in result && result.bootstrapRequired) {
-          setPendingBootstrap({
+          setProjectSetupState({
+            mode: "create",
+            source: "empty_folder",
             folderPath: result.folderPath,
-            suggestedTemplate: result.suggestedTemplate,
             displayName: label,
           });
-          setActionMessage("This folder is empty. Initialize a new TypeScript project to continue.");
-          setActiveSection("live");
+          setActionMessage("This folder is empty. Create a blank project or apply a starter to continue.");
+          setActiveSection("projects");
           return;
         }
 
@@ -1099,7 +1236,7 @@ export function useMissionControlLiveData() {
         setRoutePreview(null);
         setContextPackPreview(null);
         setBlueprintPreview(blueprint ?? null);
-        setPendingBootstrap(null);
+        setProjectSetupState(null);
         queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
         setActiveSection("live");
       }),
@@ -1108,7 +1245,7 @@ export function useMissionControlLiveData() {
     syncProject: (repoId: string) => syncProjectMutation.mutate(repoId),
     syncingRepoId: syncProjectMutation.isPending ? syncProjectMutation.variables ?? null : null,
     isConnectingLocal: connectLocalMutation.isPending,
-    isBootstrappingProject: bootstrapProjectMutation.isPending,
+    isBootstrappingProject: bootstrapProjectMutation.isPending || applyStarterMutation.isPending,
     isConnectingGithub: connectGithubMutation.isPending,
     isRefreshingBlueprint: regenerateBlueprintMutation.isPending,
     setSelectedTicketId,
@@ -1136,6 +1273,7 @@ export function useMissionControlLiveData() {
     updateBlueprint: (patch: Partial<ProjectBlueprint>) => updateBlueprintMutation.mutate(patch),
     regenerateBlueprint: () => regenerateBlueprintMutation.mutate(),
     openProjects: () => setActiveSection("projects"),
+    openWork: () => setActiveSection("live"),
     refreshSnapshot: () => {
       void queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
       setActionMessage("Mission state refreshed.");

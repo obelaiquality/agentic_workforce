@@ -134,6 +134,16 @@ function runCheck(command, args) {
 
 function gatherPreflightChecks() {
   const checks = [];
+  let databaseHost = "127.0.0.1";
+  let databasePort = "5433";
+
+  try {
+    const parsed = new URL(defaultDatabaseUrl);
+    databaseHost = parsed.hostname || databaseHost;
+    databasePort = parsed.port || databasePort;
+  } catch {
+    // Fall back to the default local Postgres target.
+  }
 
   const modelCacheCandidates = [
     path.join(os.homedir(), ".cache", "huggingface", "hub", "models--Qwen--Qwen3.5-0.8B"),
@@ -142,13 +152,16 @@ function gatherPreflightChecks() {
   const modelCachePath = modelCacheCandidates.find((candidate) => fs.existsSync(candidate));
 
   // Postgres connectivity is what actually matters — Docker is just one way to run it
-  const pgCheck = runCheck("node", ["-e", `require("net").createConnection({host:"127.0.0.1",port:5433},()=>{process.exit(0)}).on("error",()=>{process.exit(1)})`]);
+  const pgCheck = runCheck("node", [
+    "-e",
+    `require("net").createConnection({host:${JSON.stringify(databaseHost)},port:${Number(databasePort)}},()=>{process.exit(0)}).on("error",()=>{process.exit(1)})`,
+  ]);
   checks.push({
     key: "postgres",
     ok: pgCheck.ok,
     message: pgCheck.ok
-      ? "PostgreSQL reachable on 127.0.0.1:5433"
-      : "PostgreSQL not reachable on 127.0.0.1:5433. Start it with 'npm run db:up' (Docker) or ensure your Postgres is running on port 5433.",
+      ? `PostgreSQL reachable on ${databaseHost}:${databasePort}`
+      : `PostgreSQL not reachable on ${databaseHost}:${databasePort}. Start it with 'npm run db:up' (Docker) or ensure your configured Postgres is running there.`,
     severity: "error",
   });
 
@@ -434,7 +447,8 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // Keep preload IPC available for the desktop bridge.
+      sandbox: false,
     },
   });
 

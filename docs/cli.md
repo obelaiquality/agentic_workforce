@@ -32,10 +32,17 @@ Connect a repo:
 npm run cli -- connect /absolute/path/to/repo
 ```
 
-Bootstrap an empty folder as a starter project:
+Bootstrap an empty folder as a blank managed project:
 
 ```bash
 npm run cli -- connect /absolute/path/to/empty-folder --bootstrap
+```
+
+Bootstrap an empty folder and immediately apply a starter:
+
+```bash
+npm run cli -- connect /absolute/path/to/empty-folder --bootstrap --starter neutral_baseline
+npm run cli -- connect /absolute/path/to/empty-folder --bootstrap --starter typescript_vite_react
 ```
 
 Review a plan:

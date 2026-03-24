@@ -37,7 +37,11 @@ export function PreflightGate({ children }: { children: React.ReactNode }) {
     return (state?.checks ?? []).filter((check) => !check.ok);
   }, [state?.checks]);
 
-  const hasIssues = failingChecks.length > 0;
+  const blockingChecks = useMemo<DesktopPreflightCheck[]>(() => {
+    return failingChecks.filter((check) => check.severity === "error");
+  }, [failingChecks]);
+
+  const hasIssues = blockingChecks.length > 0;
 
   return (
     <>
@@ -54,7 +58,7 @@ export function PreflightGate({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="p-4 space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
-              {failingChecks.map((check) => (
+              {blockingChecks.map((check) => (
                 <article
                   key={check.key}
                   className={`rounded-md border p-3 ${

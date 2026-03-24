@@ -379,8 +379,28 @@ export function ConsoleView({
 
   if (!projectId) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
-        Connect a repo to inspect execution, verification, and provider events.
+      <div className="rounded-xl border border-dashed border-white/10 p-6">
+        <div className="text-sm font-medium text-white">Connect a project to unlock the live console</div>
+        <div className="mt-2 text-sm text-zinc-400">
+          Once a project is active, this view streams real execution, verification, approval, indexing, and provider events.
+        </div>
+        <div className="mt-3 text-xs text-zinc-500">
+          Best next step: open Projects, connect or create a repo, then return here after you review or run a task from Work.
+        </div>
+      </div>
+    );
+  }
+
+  if (query.isError && !snapshotEvents?.length) {
+    return (
+      <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.08] p-6">
+        <div className="text-sm font-medium text-white">The console could not load project telemetry.</div>
+        <div className="mt-2 text-sm text-rose-100/90">
+          {query.error instanceof Error ? query.error.message : "Unknown console error."}
+        </div>
+        <div className="mt-3 text-xs text-rose-100/70">
+          Check that the local API is running, then retry from Work after a task produces activity.
+        </div>
       </div>
     );
   }
@@ -514,7 +534,14 @@ export function ConsoleView({
 
         <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
           {filtered.length === 0 ? (
-            <div className="text-zinc-700 text-center py-8">{query.isLoading ? "Loading event stream…" : "No real events yet for this project"}</div>
+            <div className="py-8 text-center">
+              <div className="text-sm text-zinc-300">{query.isLoading ? "Loading event stream…" : "No real events yet for this view"}</div>
+              <div className="mt-2 text-xs text-zinc-500">
+                {scope === "workflow"
+                  ? "Open a workflow from Work, then run or review it to populate focused telemetry here."
+                  : "Run a task from Work or change a runtime/approval setting to start populating the project stream."}
+              </div>
+            </div>
           ) : (
             filtered.map((event) => {
               const cfg = LEVEL_STYLES[event.level];

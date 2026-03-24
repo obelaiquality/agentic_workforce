@@ -1,5 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import prismaClientPkg from "@prisma/client";
 import { ensureSecretStoreKey, migrateLegacyProviderSecrets } from "./services/secretStore";
+
+const { PrismaClient } = prismaClientPkg;
 
 const DEFAULT_ONPREM_PLUGIN_ID = "qwen3.5-4b";
 const DEFAULT_ONPREM_MODEL = "mlx-community/Qwen3.5-4B-4bit";

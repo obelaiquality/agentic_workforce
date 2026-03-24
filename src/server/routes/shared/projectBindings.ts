@@ -1,4 +1,5 @@
 import path from "node:path";
+import { normalizeStarterMetadata } from "../../services/projectStarterCatalog";
 
 function asRecord(value: unknown) {
   return (value ?? {}) as Record<string, unknown>;
@@ -20,7 +21,7 @@ export function mapRepoToProjectBinding(
   },
   guidelineProfileVersion = 1
 ) {
-  const metadata = asRecord(repo.metadata);
+  const metadata = normalizeStarterMetadata(asRecord(repo.metadata));
   return {
     id: repo.id,
     displayName: repo.displayName,

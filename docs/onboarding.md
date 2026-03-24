@@ -10,6 +10,8 @@ Get one real success signal fast:
 
 The product is now centered on the command-center flow, not a separate backlog/admin flow.
 
+If you are still choosing a runtime or install path, read [docs/configuration.md](configuration.md) and [docs/known-limitations.md](known-limitations.md) first.
+
 ## 0-5 min: Boot the Product
 
 From the repository root:
@@ -50,9 +52,10 @@ If you want a fully local runtime path instead, use the advanced local-runtime g
 ### Fastest path: New project
 1. Open `Projects`
 2. Click `New Project`
-3. Choose an empty folder
-4. Keep the default template: `TypeScript App`
-5. Let the app initialize Git, create the managed worktree, generate a blueprint, and verify the initial state
+3. Choose `Blank Project`
+4. Pick an empty folder
+5. Let the app initialize Git, create the managed worktree, and activate the repo
+6. If you want structure immediately, click `Apply Starter` and choose `Neutral Baseline` or `TypeScript App`
 
 ### Existing repo path
 1. Open `Projects`
@@ -118,7 +121,7 @@ The console is no longer synthetic. If it is empty, it means nothing happened ye
 
 Recommended first tasks:
 
-1. `Scaffold a TypeScript app with tests and documentation`
+1. `Create the initial README and repo charter for this project`
 2. `Add a status badge component and test it. Update docs if needed.`
 3. `Change the hero headline and update the test`
 
@@ -145,6 +148,12 @@ The current flow is strongest on bounded, explicit changes with clear verificati
 - OpenAI escalation is optional
 - Qwen CLI multi-account failover is optional
 - Benchmarks and other internal tooling live behind `Settings > Advanced` with Labs enabled
+
+If any of those advanced paths are what you need, use the deeper guides instead of treating the first-run flow as broken:
+
+- [docs/runbooks/local-runtime.md](runbooks/local-runtime.md)
+- [docs/testing.md](testing.md)
+- [docs/demo.md](demo.md)
 
 ## Daily Operator Checklist
 
