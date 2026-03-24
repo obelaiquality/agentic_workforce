@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TaskSpotlight } from "../data/mockData";
+import type { TaskSpotlight } from "../lib/missionTypes";
 import { Panel, PanelHeader, Chip } from "./UI";
 import { ChevronRight, FileCode2, Info, ChevronDown, ChevronUp } from "lucide-react";
 import { format } from "date-fns";

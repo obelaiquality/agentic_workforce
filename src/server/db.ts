@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { ensureSecretStoreKey, migrateLegacyProviderSecrets } from "./services/secretStore";
 
 const DEFAULT_ONPREM_PLUGIN_ID = "qwen3.5-4b";
 const DEFAULT_ONPREM_MODEL = "mlx-community/Qwen3.5-4B-4bit";
@@ -116,6 +117,7 @@ async function rolloutQwen35FourBDefaults() {
 }
 
 export async function initDatabase() {
+  ensureSecretStoreKey();
   await prisma.$connect();
 
   await prisma.appSetting.upsert({
@@ -150,7 +152,6 @@ export async function initDatabase() {
       key: "onprem_qwen_config",
       value: {
         baseUrl: process.env.ONPREM_QWEN_BASE_URL || "http://127.0.0.1:8000/v1",
-        apiKey: process.env.ONPREM_QWEN_API_KEY || "",
         inferenceBackendId: process.env.ONPREM_QWEN_INFERENCE_BACKEND || "mlx-lm",
         pluginId: process.env.ONPREM_QWEN_PLUGIN || DEFAULT_ONPREM_PLUGIN_ID,
         model: process.env.ONPREM_QWEN_MODEL || DEFAULT_ONPREM_MODEL,
@@ -176,9 +177,8 @@ export async function initDatabase() {
     update: {},
     create: {
       key: "openai_compatible_config",
-      value: {
+        value: {
         baseUrl: process.env.OPENAI_COMPAT_BASE_URL || "http://127.0.0.1:11434/v1",
-        apiKey: process.env.OPENAI_COMPAT_API_KEY || "",
         model: process.env.OPENAI_COMPAT_MODEL || "gpt-4o-mini",
         timeoutMs: 120000,
         temperature: 0.2,
@@ -192,9 +192,8 @@ export async function initDatabase() {
     update: {},
     create: {
       key: "openai_responses_config",
-      value: {
+        value: {
         baseUrl: process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1",
-        apiKey: process.env.OPENAI_API_KEY || "",
         model: process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
         timeoutMs: Number(process.env.OPENAI_RESPONSES_TIMEOUT_MS || 120000),
         reasoningEffort: process.env.OPENAI_RESPONSES_REASONING_EFFORT || "medium",
@@ -438,4 +437,5 @@ export async function initDatabase() {
   });
 
   await rolloutQwen35FourBDefaults();
+  await migrateLegacyProviderSecrets(prisma);
 }

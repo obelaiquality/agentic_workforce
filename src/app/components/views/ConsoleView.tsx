@@ -1,9 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ChevronDown, ChevronRight, Filter } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
-import { getMissionConsoleV8, openMissionConsoleStreamV8 } from "../../lib/apiClient";
+import type { ApiEventStream } from "../../lib/apiClient";
+import { getMissionConsoleV8, openMissionConsoleStreamV8, requestDependencyBootstrapV9 } from "../../lib/apiClient";
 import { modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
@@ -21,6 +22,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   provider: "Providers",
   approval: "Approvals",
   indexing: "Indexing",
+  automation: "Automation",
 };
 
 const CATEGORY_STYLES: Record<
@@ -61,6 +63,13 @@ const CATEGORY_STYLES: Record<
     message: "text-emerald-50/95",
     dot: "bg-emerald-400",
     panel: "from-emerald-500/8",
+  },
+  automation: {
+    badge: "border-sky-500/20 bg-sky-500/10 text-sky-200",
+    rail: "bg-sky-400/70",
+    message: "text-sky-50/95",
+    dot: "bg-sky-400",
+    panel: "from-sky-500/8",
   },
 };
 
@@ -212,6 +221,11 @@ function detailEntries(payload: Record<string, unknown>) {
     }));
 }
 
+function payloadString(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 export function ConsoleView({
   projectId,
   snapshotEvents,
@@ -225,11 +239,13 @@ export function ConsoleView({
   workflowTitle?: string | null;
   workflowLogs?: WorkflowLog[];
 }) {
+  const queryClient = useQueryClient();
   const [categoryFilter, setCategoryFilter] = useState<"all" | ConsoleEvent["category"]>("all");
   const [followTail, setFollowTail] = useState(true);
   const [scope, setScope] = useState<"workflow" | "project">("project");
   const [liveEvents, setLiveEvents] = useState<ConsoleEvent[]>([]);
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -240,9 +256,28 @@ export function ConsoleView({
     staleTime: 3000,
   });
 
+  const toolInvokeMutation = useMutation({
+    mutationFn: requestDependencyBootstrapV9,
+    onSuccess: (response) => {
+      const decision = response.item.event.policyDecision;
+      if (decision === "approval_required") {
+        setActionMessage("Dependency bootstrap requires approval before it can run.");
+      } else if (decision === "denied") {
+        setActionMessage("Dependency bootstrap was denied by ticket policy.");
+      } else {
+        setActionMessage("Dependency bootstrap command queued.");
+      }
+      queryClient.invalidateQueries({ queryKey: ["mission-console-v8"] });
+    },
+    onError: (error) => {
+      setActionMessage(error instanceof Error ? error.message : "Failed to queue dependency bootstrap.");
+    },
+  });
+
   useEffect(() => {
     setLiveEvents([]);
     setExpandedDetails({});
+    setActionMessage(null);
   }, [projectId]);
 
   useEffect(() => {
@@ -256,7 +291,7 @@ export function ConsoleView({
   useEffect(() => {
     if (!projectId) return;
 
-    let source: EventSource | null = null;
+    let source: ApiEventStream | null = null;
     let cancelled = false;
 
     void openMissionConsoleStreamV8(projectId).then((eventSource) => {
@@ -370,7 +405,10 @@ export function ConsoleView({
             {workflowId ? (
               <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                 <button
-                  onClick={() => setScope("workflow")}
+                  onClick={() => {
+                    setScope("workflow");
+                    setFollowTail(false);
+                  }}
                   className={`rounded-lg px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
                     scope === "workflow"
                       ? "border border-cyan-400/20 bg-cyan-500/[0.12] text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]"
@@ -380,7 +418,10 @@ export function ConsoleView({
                   Workflow
                 </button>
                 <button
-                  onClick={() => setScope("project")}
+                  onClick={() => {
+                    setScope("project");
+                    setFollowTail(false);
+                  }}
                   className={`rounded-lg px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] transition-colors ${
                     scope === "project"
                       ? "border border-white/12 bg-white/[0.07] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
@@ -451,6 +492,10 @@ export function ConsoleView({
               </div>
             </div>
           ) : null}
+
+          {actionMessage ? (
+            <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] text-zinc-300">{actionMessage}</div>
+          ) : null}
         </div>
       </div>
 
@@ -478,6 +523,14 @@ export function ConsoleView({
               const summary = structured ? summarizeStructuredPayload(structured.payload) : [];
               const profileSummary = structured ? executionProfileSummary(structured.payload) : null;
               const expanded = Boolean(expandedDetails[event.id]);
+              const hasToolContext =
+                Boolean(payloadString(structured?.payload || {}, "run_id")) &&
+                Boolean(payloadString(structured?.payload || {}, "ticket_id"));
+              const canInstallDeps =
+                hasToolContext &&
+                (payloadString(structured?.payload || {}, "error_class") === "infra_missing_tool" ||
+                  payloadString(structured?.payload || {}, "error_class") === "infra_missing_dependency");
+              const canJumpToApprovals = payloadString(structured?.payload || {}, "policy_decision") === "approval_required";
               return (
                 <div
                   key={event.id}
@@ -585,6 +638,56 @@ export function ConsoleView({
                                 </div>
                               ))}
                             </div>
+                            {(canInstallDeps || canJumpToApprovals) && (
+                              <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-white/6 pt-2.5">
+                                {canInstallDeps ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!projectId) return;
+                                      const runId = payloadString(structured.payload, "run_id");
+                                      const ticketId = payloadString(structured.payload, "ticket_id");
+                                      const stage = payloadString(structured.payload, "stage");
+                                      if (!runId || !ticketId) {
+                                        setActionMessage("Missing tool context for dependency bootstrap.");
+                                        return;
+                                      }
+                                      toolInvokeMutation.mutate({
+                                        actor: "user",
+                                        run_id: runId,
+                                        repo_id: projectId,
+                                        ticket_id: ticketId,
+                                        stage:
+                                          stage === "scope" || stage === "build" || stage === "review" || stage === "escalate"
+                                            ? stage
+                                            : "review",
+                                      });
+                                    }}
+                                    disabled={toolInvokeMutation.isPending}
+                                    className="inline-flex items-center gap-1 rounded-md border border-cyan-500/24 bg-cyan-500/[0.12] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-cyan-100 transition hover:bg-cyan-500/[0.18] disabled:opacity-60"
+                                  >
+                                    {toolInvokeMutation.isPending ? <ProcessingIndicator kind="processing" active size="xs" tone="subtle" /> : null}
+                                    Install deps
+                                  </button>
+                                ) : null}
+                                {canJumpToApprovals ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCategoryFilter("approval")}
+                                    className="inline-flex items-center gap-1 rounded-md border border-amber-500/24 bg-amber-500/[0.12] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-amber-100 transition hover:bg-amber-500/[0.18]"
+                                  >
+                                    View approvals
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => setCategoryFilter("verification")}
+                                  className="inline-flex items-center gap-1 rounded-md border border-white/12 bg-white/[0.05] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-200 transition hover:bg-white/[0.08]"
+                                >
+                                  Verification scope
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ) : null}
                       </div>

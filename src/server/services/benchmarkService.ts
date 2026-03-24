@@ -16,6 +16,7 @@ import type {
 import { RepoService } from "./repoService";
 import { V2EventService } from "./v2EventService";
 import { ExecutionService } from "./executionService";
+import { buildVerificationCommandPlans } from "./verificationPolicy";
 import { applyEscalationPolicy } from "./providerOrchestrator";
 import { detectShell } from "./shellDetect";
 
@@ -646,7 +647,7 @@ export class BenchmarkService {
       repoId: runRow.repoId,
       worktreePath: runRow.worktreePath,
       executionAttemptId: attempt.id,
-      commands: task.requiredChecks.length ? task.requiredChecks : [project.verifyCommand],
+      commands: buildVerificationCommandPlans(task.requiredChecks.length ? task.requiredChecks : [project.verifyCommand]),
       docsRequired: task.requiredDocs,
       fullSuiteRun: task.category === "decompose" || task.category === "review",
     });

@@ -204,7 +204,7 @@ async function main() {
 
   spawned.push({ killed: false, kill: async () => { await electronApp.close(); } });
 
-  await waitForHttp(`${apiBaseUrl}/health?token=${apiToken}`, 120000);
+  await waitForHttp(`${apiBaseUrl}/health`, 120000);
 
   const page = await electronApp.firstWindow();
   await page.setViewportSize({ width: 1640, height: 980 });

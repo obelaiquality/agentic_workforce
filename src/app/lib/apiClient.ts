@@ -17,6 +17,7 @@ import type {
   BenchmarkRun,
   BenchmarkScorecard,
   BenchmarkTask,
+  ChannelEventRecord,
   ChatMessageDto,
   ChatSessionDto,
   ChallengeCandidate,
@@ -29,6 +30,7 @@ import type {
   ContextManifest,
   ContextPack,
   DomainEvent,
+  ExperimentalChannelsConfig,
   ExecutionAttempt,
   ExecutionProfileSettings,
   ExecutionRunSummary,
@@ -51,13 +53,18 @@ import type {
   RepoIndexSnapshot,
   RepoRegistration,
   RepoStateCapsule,
+  ScaffoldExecutionResult,
+  ScaffoldPlan,
   RetrievalTrace,
   RoutingDecision,
   ShareableRunReport,
+  SubagentActivityRecord,
   Ticket,
   TaskLifecycleStatus,
   TaskAllocation,
   TicketCommentThread,
+  TicketExecutionPolicy,
+  ToolInvocationEvent,
   V2CommandLogItem,
   V2PolicyPendingItem,
   V2TaskBoard,
@@ -73,11 +80,31 @@ import type {
   OnPremRoleRuntimeStatus,
   OnPremRoleRuntimeTestResult,
 } from "../../shared/contracts";
+import { getDesktopBridge } from "./desktopBridge";
 
 interface ApiConfig {
   baseUrl: string;
-  token: string;
 }
+
+export interface ApiEventStream {
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void;
+  close(): void;
+}
+
+type DesktopApiResponse = {
+  ok: boolean;
+  status: number;
+  body?: unknown;
+  text?: string;
+};
+
+type DesktopApiRequest = {
+  method?: string;
+  path: string;
+  query?: Record<string, string | number | boolean | null | undefined>;
+  body?: unknown;
+  headers?: Record<string, string>;
+};
 
 let cachedConfig: ApiConfig | null = null;
 
@@ -86,26 +113,67 @@ async function resolveApiConfig(): Promise<ApiConfig> {
     return cachedConfig;
   }
 
-  if (window.desktopBridge?.getApiConfig) {
-    cachedConfig = await window.desktopBridge.getApiConfig();
-    return cachedConfig;
-  }
-
   cachedConfig = {
     baseUrl: import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787",
-    token: import.meta.env.VITE_API_TOKEN || "",
   };
   return cachedConfig;
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const { baseUrl, token } = await resolveApiConfig();
+function withQuery(path: string, query?: Record<string, string | number | boolean | null | undefined>) {
+  if (!query || Object.keys(query).length === 0) {
+    return path;
+  }
+  const url = new URL(path, "http://local");
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+  return `${url.pathname}${url.search}`;
+}
 
-  const response = await fetch(`${baseUrl}${path}`, {
+function parseDesktopError(response: DesktopApiResponse) {
+  if (typeof response.body === "object" && response.body && "error" in (response.body as Record<string, unknown>)) {
+    const error = (response.body as Record<string, unknown>).error;
+    if (typeof error === "string" && error.trim()) {
+      return error;
+    }
+  }
+  if (typeof response.text === "string" && response.text.trim()) {
+    return response.text;
+  }
+  return `API request failed with ${response.status}`;
+}
+
+async function desktopApiRequest<T>(request: DesktopApiRequest): Promise<T> {
+  const desktopBridge = getDesktopBridge();
+  const response = await desktopBridge!.apiRequest({
+    ...request,
+    path: withQuery(request.path, request.query),
+  });
+
+  if (!response.ok) {
+    throw new Error(parseDesktopError(response));
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return response.body as T;
+}
+
+async function browserApiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const config = await resolveApiConfig();
+  const token = import.meta.env.VITE_API_TOKEN || "";
+  if (!token) {
+    throw new Error("VITE_API_TOKEN is required when running the web preview outside Electron.");
+  }
+
+  const response = await fetch(`${config.baseUrl}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
-      ...(token ? { "x-local-api-token": token } : {}),
+      "x-local-api-token": token,
       ...(init?.headers || {}),
     },
   });
@@ -120,6 +188,177 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   }
 
   return (await response.json()) as T;
+}
+
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const desktopBridge = getDesktopBridge();
+  if (desktopBridge?.apiRequest) {
+    return desktopApiRequest<T>({
+      method: init?.method,
+      path,
+      body:
+        typeof init?.body === "string"
+          ? JSON.parse(init.body)
+          : init?.body !== undefined
+          ? init.body
+          : undefined,
+      headers: init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined,
+    });
+  }
+  return browserApiRequest<T>(path, init);
+}
+
+function createStreamEvent(data: string) {
+  if (typeof MessageEvent !== "undefined") {
+    return new MessageEvent("message", { data });
+  }
+  return { data } as MessageEvent;
+}
+
+class LocalEventStream implements ApiEventStream {
+  private readonly listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  private readonly cleanupCallbacks: Array<() => void> = [];
+  private closed = false;
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    const bucket = this.listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
+    bucket.add(listener);
+    this.listeners.set(type, bucket);
+  }
+
+  onCleanup(callback: () => void) {
+    this.cleanupCallbacks.push(callback);
+  }
+
+  emit(type: string, data: string) {
+    if (this.closed) return;
+    const event = createStreamEvent(data);
+    for (const listener of this.listeners.get(type) ?? []) {
+      if (typeof listener === "function") {
+        listener(event);
+      } else {
+        listener.handleEvent(event);
+      }
+    }
+  }
+
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    while (this.cleanupCallbacks.length) {
+      const callback = this.cleanupCallbacks.pop();
+      callback?.();
+    }
+    this.listeners.clear();
+  }
+}
+
+async function openDesktopEventStream(path: string, query?: Record<string, string | number | boolean | null | undefined>) {
+  const desktopBridge = getDesktopBridge();
+  const stream = new LocalEventStream();
+  const { streamId } = await desktopBridge!.openStream({
+    path,
+    query,
+  });
+  const unsubscribe = desktopBridge!.onStreamEvent(streamId, ({ event, data }) => {
+    if (event === "__close__") {
+      stream.close();
+      return;
+    }
+    if (event === "__error__") {
+      stream.emit("error", data);
+      stream.close();
+      return;
+    }
+    stream.emit(event, data);
+  });
+  stream.onCleanup(() => {
+    unsubscribe();
+    void desktopBridge!.closeStream(streamId);
+  });
+  return stream;
+}
+
+async function openBrowserEventStream(path: string, query?: Record<string, string | number | boolean | null | undefined>) {
+  const stream = new LocalEventStream();
+  const controller = new AbortController();
+  stream.onCleanup(() => controller.abort());
+
+  const config = await resolveApiConfig();
+  const token = import.meta.env.VITE_API_TOKEN || "";
+  if (!token) {
+    throw new Error("VITE_API_TOKEN is required when running the web preview outside Electron.");
+  }
+
+  const url = withQuery(path, query);
+  const response = await fetch(`${config.baseUrl}${url}`, {
+    method: "GET",
+    headers: {
+      accept: "text/event-stream",
+      "x-local-api-token": token,
+    },
+    signal: controller.signal,
+  });
+
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    throw new Error(text || `Failed to open stream (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  void (async () => {
+    let buffer = "";
+    let eventName = "message";
+    let dataLines: string[] = [];
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line) {
+            if (dataLines.length > 0) {
+              stream.emit(eventName, dataLines.join("\n"));
+            }
+            eventName = "message";
+            dataLines = [];
+            continue;
+          }
+          if (line.startsWith("event:")) {
+            eventName = line.slice(6).trim() || "message";
+            continue;
+          }
+          if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trimStart());
+          }
+        }
+      }
+      if (dataLines.length > 0) {
+        stream.emit(eventName, dataLines.join("\n"));
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        stream.emit("error", error instanceof Error ? error.message : "Stream failed");
+      }
+    } finally {
+      stream.close();
+    }
+  })();
+
+  return stream;
+}
+
+async function openApiEventStream(path: string, query?: Record<string, string | number | boolean | null | undefined>) {
+  const desktopBridge = getDesktopBridge();
+  if (desktopBridge?.openStream) {
+    return openDesktopEventStream(path, query);
+  }
+  return openBrowserEventStream(path, query);
 }
 
 export async function listProviders() {
@@ -279,15 +518,7 @@ export async function sendMessageWithRole(
 }
 
 export async function openSessionStream(sessionId: string) {
-  const { baseUrl, token } = await resolveApiConfig();
-  const url = new URL(`${baseUrl}/api/v1/chat/sessions/${sessionId}/stream`);
-
-  if (token) {
-    url.searchParams.set("token", token);
-  }
-
-  // EventSource does not support custom headers, so token can be sent in query for local desktop only.
-  return new EventSource(url.toString());
+  return openApiEventStream(`/api/v1/chat/sessions/${sessionId}/stream`);
 }
 
 export async function listTickets(repoId?: string) {
@@ -649,14 +880,7 @@ export async function searchKnowledgeV2(query: string) {
 }
 
 export async function openEventStreamV2() {
-  const { baseUrl, token } = await resolveApiConfig();
-  const url = new URL(`${baseUrl}/api/v2/stream`);
-
-  if (token) {
-    url.searchParams.set("token", token);
-  }
-
-  return new EventSource(url.toString());
+  return openApiEventStream("/api/v2/stream");
 }
 
 export async function listApprovals() {
@@ -685,7 +909,8 @@ export async function getSettings() {
       };
       onPremQwen: {
         baseUrl: string;
-        apiKey: string;
+        hasApiKey: boolean;
+        apiKeySource: "stored" | "env" | "none";
         inferenceBackendId: string;
         pluginId: string;
         model: string;
@@ -697,7 +922,8 @@ export async function getSettings() {
       onPremQwenRoleRuntimes: Record<string, {
         enabled?: boolean;
         baseUrl?: string;
-        apiKey?: string;
+        hasApiKey?: boolean;
+        apiKeySource?: "stored" | "env" | "none";
         inferenceBackendId?: string;
         pluginId?: string;
         model?: string;
@@ -708,7 +934,8 @@ export async function getSettings() {
       }>;
       openAiCompatible: {
         baseUrl: string;
-        apiKey: string;
+        hasApiKey: boolean;
+        apiKeySource: "stored" | "env" | "none";
         model: string;
         timeoutMs: number;
         temperature: number;
@@ -716,7 +943,8 @@ export async function getSettings() {
       };
       openAiResponses: {
         baseUrl: string;
-        apiKey: string;
+        hasApiKey: boolean;
+        apiKeySource: "stored" | "env" | "none";
         model: string;
         timeoutMs: number;
         reasoningEffort: "low" | "medium" | "high";
@@ -759,6 +987,7 @@ export async function getSettings() {
           toolRewardScale: number;
         };
       };
+      experimentalChannels: ExperimentalChannelsConfig;
     };
   }>("/api/v1/settings");
 }
@@ -773,6 +1002,7 @@ export async function updateSettings(input: {
   onPremQwen?: {
     baseUrl?: string;
     apiKey?: string;
+    clearApiKey?: boolean;
     inferenceBackendId?: string;
     pluginId?: string;
     model?: string;
@@ -785,6 +1015,7 @@ export async function updateSettings(input: {
     enabled?: boolean;
     baseUrl?: string;
     apiKey?: string;
+    clearApiKey?: boolean;
     inferenceBackendId?: string;
     pluginId?: string;
     model?: string;
@@ -796,6 +1027,7 @@ export async function updateSettings(input: {
   openAiCompatible?: {
     baseUrl?: string;
     apiKey?: string;
+    clearApiKey?: boolean;
     model?: string;
     timeoutMs?: number;
     temperature?: number;
@@ -804,6 +1036,7 @@ export async function updateSettings(input: {
   openAiResponses?: {
     baseUrl?: string;
     apiKey?: string;
+    clearApiKey?: boolean;
     model?: string;
     timeoutMs?: number;
     reasoningEffort?: "low" | "medium" | "high";
@@ -845,11 +1078,23 @@ export async function updateSettings(input: {
       toolRewardScale?: number;
     };
   };
+  experimentalChannels?: Partial<Omit<ExperimentalChannelsConfig, "webhook" | "telegram" | "ciMonitoring">> & {
+    webhook?: Partial<ExperimentalChannelsConfig["webhook"]> & { clearSigningSecret?: boolean };
+    telegram?: Partial<ExperimentalChannelsConfig["telegram"]> & { clearSigningSecret?: boolean };
+    ciMonitoring?: Partial<ExperimentalChannelsConfig["ciMonitoring"]> & { clearSigningSecret?: boolean };
+  };
 }) {
   return apiRequest<{ ok: true }>("/api/v1/settings", {
     method: "PATCH",
     body: JSON.stringify(input),
   });
+}
+
+export async function listExperimentalChannelActivity(projectId?: string | null) {
+  const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  return apiRequest<{ items: { channels: ChannelEventRecord[]; subagents: SubagentActivityRecord[] } }>(
+    `/api/v1/experimental/channels/activity${suffix}`
+  );
 }
 
 export async function setRuntimeMode(input: {
@@ -1492,6 +1737,49 @@ export async function setMissionWorkflowExecutionProfileV8(input: {
   });
 }
 
+export async function getMissionTicketPermissionV9(ticketId: string) {
+  const params = new URLSearchParams({ ticketId });
+  return apiRequest<{ item: TicketExecutionPolicy }>(
+    `/api/v9/mission/ticket.permission?${params.toString()}`
+  );
+}
+
+export async function setMissionTicketPermissionV9(input: {
+  ticket_id: string;
+  mode: "balanced" | "strict";
+  actor?: string;
+  allow_install_commands?: boolean;
+  allow_network_commands?: boolean;
+  require_approval_for?: string[];
+}) {
+  return apiRequest<{ item: TicketExecutionPolicy }>("/api/v9/mission/ticket.permission", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listRunToolEventsV9(runId: string) {
+  return apiRequest<{ items: ToolInvocationEvent[] }>(
+    `/api/v9/mission/run/${encodeURIComponent(runId)}/tool-events`
+  );
+}
+
+export async function requestDependencyBootstrapV9(input: {
+  actor: string;
+  run_id: string;
+  repo_id: string;
+  ticket_id: string;
+  stage: "scope" | "build" | "review" | "escalate";
+}) {
+  return apiRequest<{ item: { event: ToolInvocationEvent; result: Record<string, unknown> | null } }>(
+    "/api/v9/mission/dependency.bootstrap",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  );
+}
+
 export async function getMissionCodebaseTreeV8(projectId: string) {
   return apiRequest<{ items: CodebaseTreeNode[] }>(`/api/v8/mission/codebase/tree?projectId=${encodeURIComponent(projectId)}`);
 }
@@ -1517,15 +1805,7 @@ export async function getMissionConsoleV8(projectId: string) {
 }
 
 export async function openMissionConsoleStreamV8(projectId?: string | null) {
-  const { baseUrl, token } = await resolveApiConfig();
-  const url = new URL(`${baseUrl}/api/v8/mission/console/stream`);
-  if (projectId) {
-    url.searchParams.set("projectId", projectId);
-  }
-  if (token) {
-    url.searchParams.set("token", token);
-  }
-  return new EventSource(url.toString());
+  return openApiEventStream("/api/v8/mission/console/stream", projectId ? { projectId } : undefined);
 }
 
 export async function getProjectBlueprintV8(projectId: string) {
@@ -1715,6 +1995,9 @@ export async function executeOverseerRouteV8(input: {
       maxRounds: number;
       roundsRun: number;
       completed: boolean;
+      approvalRequired?: boolean;
+      approvalId?: string | null;
+      rejected?: boolean;
       transitions: Array<{
         from: Ticket["status"];
         to: Ticket["status"];
@@ -1723,7 +2006,7 @@ export async function executeOverseerRouteV8(input: {
       }>;
     };
     shareReport: ShareableRunReport | null;
-  }>("/api/v8/mission/overseer/execute", {
+  }>("/api/v9/mission/execute", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -1734,8 +2017,24 @@ export async function decideMissionApprovalV8(input: {
   decision: "approved" | "rejected";
   reason?: string;
   decided_by?: string;
+  execute_approved_command?: boolean;
+  requeue_blocked_stage?: boolean;
 }) {
-  return apiRequest<{ item: ApprovalRequestDto }>("/api/v8/mission/approval/decide", {
+  return apiRequest<{
+    item: ApprovalRequestDto;
+    command_execution?: {
+      toolEventId: string;
+      policyDecision: "allowed" | "approval_required" | "denied";
+      exitCode: number | null;
+      summary: string;
+    } | null;
+    lifecycle_requeue?: {
+      ticketId: string;
+      from: string;
+      to: string;
+      reason: string;
+    } | null;
+  }>("/api/v8/mission/approval/decide", {
     method: "POST",
     body: JSON.stringify(input),
   });

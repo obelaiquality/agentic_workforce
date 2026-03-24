@@ -1,23 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, RefreshCw, ShieldAlert } from "lucide-react";
+import { getDesktopBridge, type DesktopPreflightCheck, type DesktopPreflightState } from "../lib/desktopBridge";
 
 const PREFLIGHT_DISMISSED_KEY = "mission-control-preflight-dismissed";
 
-interface PreflightCheck {
-  key: string;
-  ok: boolean;
-  message: string;
-  severity: "warning" | "error";
-}
-
-interface PreflightState {
-  checks: PreflightCheck[];
-  apiReady: boolean;
-  checkedAt: string;
-}
-
 export function PreflightGate({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<PreflightState | null>(null);
+  const [state, setState] = useState<DesktopPreflightState | null>(null);
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -27,13 +15,14 @@ export function PreflightGate({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
-    if (!window.desktopBridge?.getPreflight) {
+    const desktopBridge = getDesktopBridge();
+    if (!desktopBridge?.getPreflight) {
       return;
     }
 
     setLoading(true);
     try {
-      const preflight = await window.desktopBridge.getPreflight();
+      const preflight = await desktopBridge.getPreflight();
       setState(preflight);
     } finally {
       setLoading(false);
@@ -44,7 +33,7 @@ export function PreflightGate({ children }: { children: React.ReactNode }) {
     void load();
   }, [load]);
 
-  const failingChecks = useMemo(() => {
+  const failingChecks = useMemo<DesktopPreflightCheck[]>(() => {
     return (state?.checks ?? []).filter((check) => !check.ok);
   }, [state?.checks]);
 

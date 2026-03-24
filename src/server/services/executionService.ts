@@ -13,6 +13,9 @@ import { ProviderOrchestrator } from "./providerOrchestrator";
 import { RepoService } from "./repoService";
 import { CodeGraphService } from "./codeGraphService";
 import { detectShell } from "./shellDetect";
+import { CommandEngine } from "./commandEngine";
+import type { VerificationCommandPlan } from "./verificationPolicy";
+import { redactSensitiveText } from "./sensitiveRedaction";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -118,7 +121,7 @@ function hasInfraVerificationFailure(failures: string[]) {
   );
 }
 
-function resolveDependencyBootstrapCommand(worktreePath: string) {
+export function resolveDependencyBootstrapCommand(worktreePath: string) {
   const has = (name: string) => fs.existsSync(path.join(worktreePath, name));
   if (has("pnpm-lock.yaml")) return "pnpm install";
   if (has("yarn.lock")) return "yarn install";
@@ -1799,7 +1802,8 @@ export class ExecutionService {
     private readonly contextService: ContextService,
     private readonly providerOrchestrator: ProviderOrchestrator,
     private readonly repoService: RepoService,
-    private readonly codeGraphService: CodeGraphService
+    private readonly codeGraphService: CodeGraphService,
+    private readonly commandEngine?: CommandEngine
   ) {}
 
   private async collectModelOutput(input: {
@@ -3136,14 +3140,22 @@ export class ExecutionService {
     repoId: string;
     worktreePath: string;
     executionAttemptId?: string | null;
-    commands: string[];
+    commands: VerificationCommandPlan[];
     docsRequired?: string[];
     fullSuiteRun?: boolean;
     metadata?: Record<string, unknown>;
   }) {
+    if (!this.commandEngine) {
+      throw new Error("Command engine is required for verification execution.");
+    }
     const attempt = input.executionAttemptId
       ? await prisma.executionAttempt.findUnique({ where: { id: input.executionAttemptId } })
       : await prisma.executionAttempt.findFirst({ where: { runId: input.runId }, orderBy: { startedAt: "desc" } });
+    const runProjection = await prisma.runProjection.findUnique({
+      where: { runId: input.runId },
+      select: { ticketId: true },
+    });
+    const ticketIdForPolicy = runProjection?.ticketId || null;
 
     const failures: string[] = [];
     const artifacts: string[] = [];
@@ -3162,16 +3174,64 @@ export class ExecutionService {
       commandResults.length = 0;
 
       for (const command of input.commands) {
-        const result = runShell(command, input.worktreePath);
-        commandResults.push({ command, result });
-        impactedTests.push(command);
-        if (command.includes("lint") || command.includes("typecheck") || command.includes("build")) {
-          changedFileChecks.push(command);
+        const toolEventResult = ticketIdForPolicy
+          ? await this.commandEngine.invoke({
+              runId: input.runId,
+              repoId: input.repoId,
+              ticketId: ticketIdForPolicy,
+              stage: "review",
+              actor: input.actor,
+              worktreePath: input.worktreePath,
+              commandPlan: command.commandPlan,
+              toolType: "repo.verify",
+            })
+          : null;
+        const policyDecision = toolEventResult?.event.policyDecision || "allowed";
+        if (toolEventResult && !toolEventResult.result) {
+          const evidence = await prisma.benchmarkOutcomeEvidence.create({
+            data: {
+              runId: input.runId,
+              kind: "verify_policy_result",
+              payload: {
+                command: command.displayCommand,
+                policy_decision: policyDecision,
+                approval_id: toolEventResult.event.approvalId ?? null,
+                repair_attempt: repairAttempt,
+                repaired_files: repairedFiles,
+              },
+            },
+          });
+          artifacts.push(evidence.id);
+          if (policyDecision === "approval_required") {
+            failures.push(`approval_required:${command.displayCommand}`);
+            if (toolEventResult.event.approvalId) {
+              failures.push(`approval_request:${toolEventResult.event.approvalId}`);
+            }
+            infraFailureMessages.push(`Approval required to run "${command.displayCommand}".`);
+          } else {
+            failures.push(`policy_denied:${command.displayCommand}`);
+            infraFailureMessages.push(`Policy denied "${command.displayCommand}".`);
+          }
+          continue;
+        }
+
+        const result = toolEventResult?.result;
+        if (!result) {
+          throw new Error(`Verification command did not produce a result: ${command.displayCommand}`);
+        }
+        commandResults.push({ command: command.displayCommand, result });
+        impactedTests.push(command.displayCommand);
+        if (
+          command.displayCommand.includes("lint") ||
+          command.displayCommand.includes("typecheck") ||
+          command.displayCommand.includes("build")
+        ) {
+          changedFileChecks.push(command.displayCommand);
         }
         const kind =
-          command.includes("lint") || command.includes("typecheck")
+          command.displayCommand.includes("lint") || command.displayCommand.includes("typecheck")
             ? "lint_result"
-            : command.includes("build")
+            : command.displayCommand.includes("build")
             ? "build_result"
             : "test_result";
         const evidence = await prisma.benchmarkOutcomeEvidence.create({
@@ -3179,17 +3239,21 @@ export class ExecutionService {
             runId: input.runId,
             kind,
             payload: {
-              command,
+              command: command.displayCommand,
+              policy_decision: policyDecision,
+              approval_id: toolEventResult?.event.approvalId ?? null,
               repair_attempt: repairAttempt,
               repaired_files: repairedFiles,
               ...result,
+              stdout: redactSensitiveText(result.stdout || ""),
+              stderr: redactSensitiveText(result.stderr || ""),
             },
           },
         });
         artifacts.push(evidence.id);
         if (!result.ok) {
-          failures.push(`command_failed:${command}`);
-          const infraFailure = classifyInfraVerificationFailure(command, result);
+          failures.push(`command_failed:${command.displayCommand}`);
+          const infraFailure = classifyInfraVerificationFailure(command.displayCommand, result);
           if (infraFailure) {
             failures.push(infraFailure.code);
             infraFailureMessages.push(infraFailure.message);
@@ -3213,21 +3277,53 @@ export class ExecutionService {
     if (autoInstallEnabled && hasInfraVerificationFailure(failures)) {
       const installCommand = resolveDependencyBootstrapCommand(input.worktreePath);
       if (installCommand) {
-        const installResult = runShell(installCommand, input.worktreePath);
+        const installToolEventResult = ticketIdForPolicy
+          ? await this.commandEngine.invoke({
+              runId: input.runId,
+              repoId: input.repoId,
+              ticketId: ticketIdForPolicy,
+              stage: "review",
+              actor: input.actor,
+              worktreePath: input.worktreePath,
+              command: installCommand,
+              toolType: "repo.install",
+            })
+          : null;
+        const installPolicyDecision = installToolEventResult?.event.policyDecision || "allowed";
+        const installResult = installToolEventResult?.result;
+        if (!installResult) {
+          throw new Error(`Dependency bootstrap command did not produce a result: ${installCommand}`);
+        }
         const setupEvidence = await prisma.benchmarkOutcomeEvidence.create({
           data: {
             runId: input.runId,
             kind: "setup_result",
             payload: {
               command: installCommand,
+              policy_decision: installPolicyDecision,
+              approval_id: installToolEventResult?.event.approvalId ?? null,
               reason: "infra_failure_autofix",
               ...installResult,
+              stdout: redactSensitiveText(installResult.stdout || ""),
+              stderr: redactSensitiveText(installResult.stderr || ""),
             },
           },
         });
         artifacts.push(setupEvidence.id);
 
-        if (installResult.ok) {
+        const installBlockedByPolicy = Boolean(installToolEventResult && !installToolEventResult.result);
+        if (installBlockedByPolicy) {
+          if (installPolicyDecision === "approval_required") {
+            failures.push(`approval_required:${installCommand}`);
+            if (installToolEventResult.event.approvalId) {
+              failures.push(`approval_request:${installToolEventResult.event.approvalId}`);
+            }
+            infraFailureMessages.push(`Approval required to run "${installCommand}".`);
+          } else {
+            failures.push(`policy_denied:${installCommand}`);
+            infraFailureMessages.push(`Policy denied "${installCommand}".`);
+          }
+        } else if (installResult.ok) {
           repairedActions.push(`dependency_bootstrap:${installCommand}`);
           await runVerificationCommands(true);
         } else {
@@ -3348,7 +3444,7 @@ export class ExecutionService {
           remaining_risks: failures,
           repaired_files: repairedFiles,
           repaired_actions: repairedActions,
-          verification_commands: input.commands,
+          verification_commands: input.commands.map((item) => item.displayCommand),
           verification_reasons: asStringArray(input.metadata?.verification_reasons),
           enforced_rules: asStringArray(input.metadata?.enforced_rules),
         },
@@ -3367,7 +3463,7 @@ export class ExecutionService {
           remaining_risks: failures,
           repaired_files: repairedFiles,
           repaired_actions: repairedActions,
-          verification_commands: input.commands,
+          verification_commands: input.commands.map((item) => item.displayCommand),
           verification_reasons: asStringArray(input.metadata?.verification_reasons),
           enforced_rules: asStringArray(input.metadata?.enforced_rules),
         },

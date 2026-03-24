@@ -7,14 +7,14 @@ The product is now a desktop-first command center for coding work.
 The normal operator flow is:
 1. connect or create a project
 2. confirm the project blueprint
-3. issue an objective in `Live State`
+3. issue an objective in `Work`
 4. review the route
 5. execute in a managed worktree
 6. verify with real lint/test/build commands
 7. inspect code, logs, approvals, comments, and the final report
 
 The normal product surface is:
-- `Live State`
+- `Work`
 - `Codebase`
 - `Console`
 - `Projects`
@@ -83,14 +83,15 @@ Each successful or failed run produces a verification bundle describing:
 
 ## Frontend Composition
 
-### Live State
-`Live State` is the command center.
+### Work
+`Work` is the primary task surface.
 
 It contains:
-1. `Overseer Command` hero card
-2. workflow summary row
+1. `Describe the task` composer
+2. `Review the Plan` route panel
 3. four-lane kanban board
-4. right-side detail drawer
+4. outcome summary once a run completes
+5. optional right-side detail drawer on desktop
 
 The board is hierarchical:
 - top level: lane summaries
@@ -248,4 +249,3 @@ The source of truth remains:
 - `scripts/`
 - `rust/`
 - `docs/`
-

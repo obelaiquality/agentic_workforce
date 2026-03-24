@@ -328,7 +328,7 @@ async function main() {
     },
   });
 
-  await waitForHttp(`${apiBaseUrl}/health?token=${apiToken}`, 120000);
+  await waitForHttp(`${apiBaseUrl}/health`, 120000);
   await applyRuntimePreset();
 
   const page = await electronApp.firstWindow();

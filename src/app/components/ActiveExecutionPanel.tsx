@@ -1,4 +1,4 @@
-import { MissionTaskCard, TaskSpotlight } from "../data/mockData";
+import type { MissionTaskCard, TaskSpotlight } from "../lib/missionTypes";
 import { Panel, PanelHeader, Chip, Button } from "./UI";
 import { Activity, Cpu } from "lucide-react";
 

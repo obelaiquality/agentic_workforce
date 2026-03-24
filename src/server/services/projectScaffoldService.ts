@@ -4,7 +4,7 @@ import type { ProjectBlueprint, ScaffoldExecutionResult, ScaffoldPlan } from "..
 import { ExecutionService } from "./executionService";
 import { ProjectBlueprintService } from "./projectBlueprintService";
 import { RepoService } from "./repoService";
-import { buildVerificationPlan } from "./verificationPolicy";
+import { buildVerificationCommandPlans, buildVerificationPlan } from "./verificationPolicy";
 
 const DEFAULT_TEMPLATE = "typescript_vite_react" as const;
 const DEFAULT_OBJECTIVE = "Scaffold a TypeScript app with tests and documentation.";
@@ -41,7 +41,13 @@ function buildDefaultPlan(projectId: string, blueprint: ProjectBlueprint | null)
     ],
     requiredTests: ["src/App.test.tsx"],
     requiredDocs,
-    verificationCommands: unique(["npm install", "npm run lint", "npm test", "npm run build", ...verificationPlan.commands]),
+    verificationCommands: unique([
+      "npm install",
+      "npm run lint",
+      "npm test",
+      "npm run build",
+      ...verificationPlan.commands.map((item) => item.displayCommand),
+    ]),
   };
 }
 
@@ -135,7 +141,7 @@ export class ProjectScaffoldService {
       repoId: input.projectId,
       worktreePath,
       executionAttemptId: attempt.id,
-      commands: plan.verificationCommands,
+      commands: buildVerificationCommandPlans(plan.verificationCommands),
       docsRequired: plan.requiredDocs,
       fullSuiteRun: true,
       metadata: {

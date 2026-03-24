@@ -162,18 +162,24 @@ describe("mapConsoleCategory", () => {
     expect(mapConsoleCategory("context.pack.built")).toBe("indexing");
   });
 
+  it("maps automation events", () => {
+    expect(mapConsoleCategory("channel.received")).toBe("automation");
+    expect(mapConsoleCategory("subagent.spawned")).toBe("automation");
+  });
+
   it("defaults to provider for unrecognized types", () => {
     expect(mapConsoleCategory("model.inference")).toBe("provider");
     expect(mapConsoleCategory("unknown.event")).toBe("provider");
   });
 
   it("only returns valid categories", () => {
-    const validCategories = new Set(["execution", "verification", "provider", "approval", "indexing"]);
+    const validCategories = new Set(["execution", "verification", "provider", "approval", "indexing", "automation"]);
     const testTypes = [
       "execution.started",
       "verification.failed",
       "approval.requested",
       "repo.index.done",
+      "channel.received",
       "codegraph.sync",
       "context.pack.ready",
       "some.random.event",

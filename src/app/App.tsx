@@ -15,7 +15,7 @@ type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
 type LiveTab = "Execution" | "Agents" | "Patterns" | "Telemetry";
 
 const SIDEBAR_ITEMS: Array<{ key: SidebarSection; icon: React.ReactNode; label: string }> = [
-  { key: "live", icon: <Activity />, label: "Live State" },
+  { key: "live", icon: <Activity />, label: "Work" },
   { key: "codebase", icon: <Code2 />, label: "Codebase" },
   { key: "console", icon: <Terminal />, label: "Console" },
   { key: "projects", icon: <FolderGit2 />, label: "Projects" },
@@ -73,7 +73,7 @@ export default function App() {
     };
   }, [profileMenuOpen]);
 
-  const openSettingsTarget = (target: "providers" | "execution_profiles" | "accounts") => {
+  const openSettingsTarget = (target: "providers" | "execution_profiles") => {
     setActiveSection("settings");
     setSettingsFocusTarget(target);
     setProfileMenuOpen(false);
@@ -120,6 +120,17 @@ export default function App() {
     [mission.consoleLogs, selectedWorkflowId]
   );
   const codebaseWorkflowTitle = selectedWorkflowTicket?.title || mission.selectedTicket?.title || null;
+  const headerStatus = mission.appMode === "limited_preview"
+    ? { label: "Limited Preview", className: "border-amber-500/20 bg-amber-500/10 text-amber-100" }
+    : mission.appMode === "backend_unavailable"
+    ? { label: "Backend Unavailable", className: "border-rose-500/20 bg-rose-500/10 text-rose-100" }
+    : criticalCount > 0
+    ? { label: `${criticalCount} attention`, className: "border-amber-500/20 bg-amber-500/10 text-amber-100" }
+    : mission.liveState === "live"
+    ? { label: "Ready", className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-100" }
+    : mission.liveState === "loading"
+    ? { label: "Syncing", className: "border-cyan-500/20 bg-cyan-500/10 text-cyan-100" }
+    : { label: "Needs attention", className: "border-white/10 bg-white/[0.04] text-zinc-200" };
   return (
     <PreflightGate>
       <div className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
@@ -163,7 +174,7 @@ export default function App() {
                 {sidebarSection === "codebase"
                   ? "Codebase Explorer"
                   : sidebarSection === "console"
-                  ? "Agent Console"
+                  ? "Console"
                   : sidebarSection === "projects"
                   ? "Projects"
                   : "Settings"}
@@ -194,20 +205,15 @@ export default function App() {
               </span>
             </div>
 
-            {criticalCount > 0 ? (
-              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-mono">
-                {criticalCount} attention
-              </div>
-            ) : null}
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/50 border border-white/5 text-[10px] font-mono">
+            <div className={`hidden sm:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${headerStatus.className}`}>
               <ProcessingIndicator
                 kind="telemetry"
-                active={mission.liveState === "live"}
+                active={mission.liveState === "live" && mission.appMode === "desktop"}
                 size="xs"
                 tone="subtle"
                 className="border-0 bg-transparent p-0"
               />
-              <span className={mission.liveState === "live" ? "text-emerald-400" : "text-zinc-400"}>{mission.liveState.toUpperCase()}</span>
+              <span>{headerStatus.label}</span>
             </div>
             <div ref={profileMenuRef} className="relative shrink-0">
               <button
@@ -230,9 +236,8 @@ export default function App() {
                 <div className="absolute right-0 top-[calc(100%+8px)] z-50 min-w-[220px] rounded-2xl border border-white/10 bg-[#101013]/95 p-2 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur">
                   <div className="px-2 pb-2 pt-1 text-[10px] uppercase tracking-[0.18em] text-zinc-500">Quick settings</div>
                   {[
-                    { key: "providers" as const, label: "Providers", note: "Runtime mode and provider routing" },
-                    { key: "execution_profiles" as const, label: "Execution Profiles", note: "Scope, build, review, escalate" },
-                    { key: "accounts" as const, label: "Accounts", note: "OpenAI keys and Qwen accounts" },
+                    { key: "providers" as const, label: "Open Essentials", note: "Runtime mode, accounts, and approvals" },
+                    { key: "execution_profiles" as const, label: "Open Advanced", note: "Profiles, routing, runtimes, and Labs" },
                   ].map((item) => (
                     <button
                       key={item.key}
@@ -277,6 +282,17 @@ export default function App() {
 
           <main className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
             <div className="max-w-[1600px] mx-auto space-y-4">
+              {mission.appModeNotice ? (
+                <AppModeBanner
+                  title={mission.appModeNotice.title}
+                  message={mission.appModeNotice.message}
+                  detail={mission.appModeNotice.detail}
+                  mode={mission.appMode}
+                  onOpenProjects={mission.openProjects}
+                  onOpenSettings={() => openSettingsTarget("providers")}
+                />
+              ) : null}
+
               {sidebarSection === "live" && (
                 <>
                   <div className="flex md:hidden gap-1 bg-zinc-900/50 rounded-lg p-1 border border-white/5">
@@ -294,7 +310,7 @@ export default function App() {
                   </div>
 
                   {liveTab === "Execution" && (
-                    <CommandCenterView mission={mission} onOpenSettings={() => openSettingsTarget("execution_profiles")} />
+                    <CommandCenterView mission={mission} />
                   )}
 
                   {liveTab !== "Execution" && (
@@ -312,12 +328,12 @@ export default function App() {
                 <>
                   <SectionHeader
                     title="Codebase Explorer"
-                    description="Code graph files, impacted tests, and documentation pulled into the current context pack."
+                    description="Browse the managed worktree and jump straight to the files, tests, and docs tied to the current task."
                     iconSrc="/assets/focus-reticle.svg"
                   >
                     <StatusDot
                       color={mission.selectedRepo ? "amber" : "purple"}
-                      label={mission.selectedRepo ? "managed worktree" : "connect repo"}
+                      label={mission.selectedRepo ? "managed worktree" : "select a project"}
                     />
                   </SectionHeader>
                   <CodebaseView
@@ -334,8 +350,8 @@ export default function App() {
               {sidebarSection === "console" && (
                 <>
                   <SectionHeader
-                    title="Agent Console"
-                    description="Execution, approvals, provider events, and verification output in one live stream."
+                    title="Console"
+                    description="Follow execution, verification, approvals, and provider activity in one chronological stream."
                     iconSrc="/assets/telemetry-wave.svg"
                   >
                     <StatusDot color="emerald" label="real event stream" animate />
@@ -354,7 +370,7 @@ export default function App() {
                 <>
                   <SectionHeader
                     title="Projects"
-                    description="Connect a repo, reopen recent work, and keep the active project warm and ready."
+                    description="Connect a repo, reopen recent work, and manage the active project before you switch back to Work."
                     iconSrc="/assets/autonomous-kanban.svg"
                   >
                     <StatusDot color="cyan" label={`${mission.recentRepos.length} recent`} />
@@ -397,8 +413,8 @@ export default function App() {
               {sidebarSection === "settings" && (
                 <>
                   <SectionHeader
-                    title="Mission Settings"
-                    description="Providers, approvals, connected accounts, and developer Labs when enabled."
+                    title="Settings"
+                    description="Keep essentials simple, and move advanced runtime tuning behind a dedicated advanced view."
                     iconSrc="/assets/provider-switchboard.svg"
                   />
                   <SettingsControlView />
@@ -441,6 +457,57 @@ function SidebarItem({
       <span className="hidden lg:block text-xs font-medium tracking-wide truncate">{label}</span>
       {active ? <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r bg-purple-500" /> : null}
     </button>
+  );
+}
+
+function AppModeBanner({
+  title,
+  message,
+  detail,
+  mode,
+  onOpenProjects,
+  onOpenSettings,
+}: {
+  title: string;
+  message: string;
+  detail: string;
+  mode: "desktop" | "limited_preview" | "backend_unavailable";
+  onOpenProjects: () => void;
+  onOpenSettings: () => void;
+}) {
+  const toneClass =
+    mode === "backend_unavailable"
+      ? "border-rose-500/20 bg-rose-500/10"
+      : "border-amber-500/20 bg-amber-500/10";
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-1">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-200">{title}</div>
+          <div className="text-sm text-white">{message}</div>
+          <div className="text-xs text-zinc-300">{detail}</div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onOpenProjects}
+            className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-100 transition hover:bg-white/[0.06]"
+          >
+            Open Projects
+          </button>
+          {mode === "backend_unavailable" ? (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-100 transition hover:bg-white/[0.06]"
+            >
+              Open Essentials
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 

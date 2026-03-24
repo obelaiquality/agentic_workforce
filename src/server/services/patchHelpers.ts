@@ -67,6 +67,7 @@ export function mapConsoleCategory(type: string): ConsoleEvent["category"] {
   if (type.startsWith("execution.") || type.startsWith("task.")) return "execution";
   if (type.startsWith("verification.") || type.includes("verify")) return "verification";
   if (type.startsWith("approval.") || type.includes("approval")) return "approval";
+  if (type.startsWith("channel.") || type.startsWith("subagent.")) return "automation";
   if (type.startsWith("repo.index") || type.startsWith("codegraph") || type.includes("context.pack")) return "indexing";
   return "provider";
 }

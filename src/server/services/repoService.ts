@@ -90,7 +90,7 @@ function runGit(args: string[], cwd?: string) {
 function runGitWithIdentity(args: string[], cwd?: string) {
   return execFileSync(
     "git",
-    ["-c", "user.name=Next-Gen Agentic Coding", "-c", "user.email=agentic@local", ...args],
+    ["-c", "user.name=Agentic Workforce", "-c", "user.email=agentic@local", ...args],
     {
       cwd,
       encoding: "utf8",

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MissionStream } from "../data/mockData";
+import type { MissionStream } from "../lib/missionTypes";
 import { Panel, PanelHeader, Chip } from "./UI";
 import { ArrowRight } from "lucide-react";
 

@@ -1,8 +1,8 @@
-# Runbook: Local Runtime
+# Runbook: Local Runtime (Advanced)
 
 ## Goal
 
-Run the app with local on-prem Qwen inference and verify the default coding path.
+Run the app with a fully local OpenAI-compatible runtime instead of the recommended OpenAI-assisted quickstart.
 
 ## Default Runtime
 
@@ -35,14 +35,15 @@ curl -sS http://127.0.0.1:8000/v1/models
 Healthy signs:
 - `/health` returns success
 - `/v1/models` lists the active model
-- `Overseer` can answer `APP_READY_OK`
+- the runtime answers normal OpenAI-compatible model requests
 
 ## Configure the App
 
 1. Open `Settings`.
-2. Select provider `On-Prem Qwen`.
-3. Confirm base URL `http://127.0.0.1:8000/v1`.
-4. Keep `3B` as the default coding role unless you are explicitly testing another model.
+2. Stay in `Essentials`.
+3. Switch runtime mode back to `Local Qwen`.
+4. Confirm base URL `http://127.0.0.1:8000/v1`.
+5. Open `Advanced` only if you need dedicated role runtimes or execution profile changes.
 
 ## Backend Failover Ladder
 
@@ -73,6 +74,7 @@ Warnings:
 
 ## Practical Notes
 
-- `4B` is the default because it is the newer and stronger local coding rung for this setup.
+- `4B` is the default because it is the stronger local coding rung for this setup.
 - `0.8B` still exists as the `utility_fast` rung for lighter classification and support tasks.
 - If you want Google-backed quota failover instead of local inference, switch to the `Qwen CLI` provider in `Settings`.
+- Distillation and benchmark tooling are not required for the local operator path.

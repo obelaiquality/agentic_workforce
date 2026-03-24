@@ -22,6 +22,7 @@ import type {
   PromptCacheMetrics,
 } from "../../shared/contracts";
 import { getCandidateOrderForHardware, scoreBenchmark } from "./inferenceScoring";
+import { PROVIDER_SECRET_NAMES, resolveSecretValue } from "./secretStore";
 import { V2EventService } from "./v2EventService";
 
 const runtimeProcesses = new Map<OnPremInferenceBackendId, ChildProcessWithoutNullStreams>();
@@ -242,6 +243,11 @@ export class InferenceTuningService {
   private async getOnPremConfig() {
     const row = await prisma.appSetting.findUnique({ where: { key: "onprem_qwen_config" } });
     const value = (row?.value as Record<string, unknown> | null) || {};
+    const resolvedApiKey = await resolveSecretValue(
+      prisma,
+      PROVIDER_SECRET_NAMES.onPremQwenApiKey,
+      process.env.ONPREM_QWEN_API_KEY || "",
+    );
     const plugin = resolveOnPremQwenModelPlugin(typeof value.pluginId === "string" ? value.pluginId : undefined);
     const model =
       typeof value.model === "string" && value.model.trim().length > 0
@@ -250,7 +256,6 @@ export class InferenceTuningService {
     const timeoutMs = typeof value.timeoutMs === "number" ? Math.max(5000, value.timeoutMs) : 120000;
     const temperature = typeof value.temperature === "number" ? value.temperature : 0.15;
     const maxTokens = typeof value.maxTokens === "number" ? value.maxTokens : 1600;
-    const apiKey = typeof value.apiKey === "string" ? value.apiKey : "";
     const inferenceBackendId =
       typeof value.inferenceBackendId === "string" ? (value.inferenceBackendId as OnPremInferenceBackendId) : "mlx-lm";
     const baseUrl =
@@ -264,7 +269,7 @@ export class InferenceTuningService {
       timeoutMs,
       temperature,
       maxTokens,
-      apiKey,
+      apiKey: resolvedApiKey.value,
       inferenceBackendId,
       baseUrl,
     };

@@ -623,6 +623,63 @@ export interface MissionUiApprovalCard {
   reason: string | null;
 }
 
+export type ChannelSource = "webhook" | "telegram" | "ci_monitoring";
+
+export type ChannelTrustLevel = "trusted" | "restricted";
+
+export type SubagentRole = "repo_scout" | "planner" | "implementer" | "verifier" | "doc_updater";
+
+export interface ExperimentalChannelsConfig {
+  enabled: boolean;
+  senderAllowlist: string[];
+  defaultProjectId?: string | null;
+  defaultSessionId?: string | null;
+  allowRemoteApprovals: boolean;
+  allowUnattendedReadOnly: boolean;
+  webhook: {
+    enabled: boolean;
+    signingSecret: string;
+    hasSigningSecret?: boolean;
+  };
+  telegram: {
+    enabled: boolean;
+    signingSecret: string;
+    hasSigningSecret?: boolean;
+  };
+  ciMonitoring: {
+    enabled: boolean;
+    signingSecret: string;
+    hasSigningSecret?: boolean;
+  };
+}
+
+export interface ChannelEventRecord {
+  id: string;
+  source: ChannelSource;
+  senderId: string;
+  content: string;
+  trustLevel: ChannelTrustLevel;
+  projectId?: string | null;
+  ticketId?: string | null;
+  runId?: string | null;
+  sessionId?: string | null;
+  replySupported: boolean;
+  deliveredToSession: boolean;
+  createdAt: string;
+}
+
+export interface SubagentActivityRecord {
+  id: string;
+  role: SubagentRole;
+  status: "planned" | "queued" | "completed" | "blocked";
+  summary: string;
+  sourceEventId?: string | null;
+  projectId?: string | null;
+  ticketId?: string | null;
+  runId?: string | null;
+  createdAt: string;
+}
+
 export interface MissionActionCapabilities {
   canRefresh: boolean;
   canStop: boolean;
@@ -661,7 +718,7 @@ export interface CodeFileDiffPayload {
 export interface ConsoleEvent {
   id: string;
   projectId: string;
-  category: "execution" | "verification" | "provider" | "approval" | "indexing";
+  category: "execution" | "verification" | "provider" | "approval" | "indexing" | "automation";
   level: "info" | "warn" | "error" | "success" | "debug";
   message: string;
   createdAt: string;
@@ -775,6 +832,7 @@ export interface WorkflowTaskDetail {
       reasoningMode?: ReasoningMode;
     }>;
   } | null;
+  ticketExecutionPolicy?: TicketExecutionPolicy | null;
 }
 
 export interface MissionControlSnapshot {
@@ -858,6 +916,10 @@ export interface MissionControlSnapshot {
     source: string;
     taskId?: string;
   }>;
+  experimentalAutonomy?: {
+    channels: ChannelEventRecord[];
+    subagents: SubagentActivityRecord[];
+  };
   approvals: MissionUiApprovalCard[];
   guidelines: RepoGuidelineProfile | null;
   projectState: RepoStateCapsule | null;
@@ -1028,6 +1090,7 @@ export interface OutcomeEvidence {
     | "retrieval_trace"
     | "playwright_artifact"
     | "execution_attempt"
+    | "tool_invocation"
     | "verification_bundle"
     | "share_report";
   path: string | null;
@@ -1067,6 +1130,36 @@ export interface ExecutionProfile {
 export interface ExecutionProfileSettings {
   activeProfileId: string;
   profiles: ExecutionProfile[];
+}
+
+export type TicketPermissionMode = "balanced" | "strict" | "full_access";
+
+export interface TicketExecutionPolicy {
+  ticketId: string;
+  mode: TicketPermissionMode;
+  allowInstallCommands: boolean;
+  allowNetworkCommands: boolean;
+  requireApprovalFor: string[];
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface ToolInvocationEvent {
+  id: string;
+  runId: string;
+  ticketId: string;
+  stage: "scope" | "build" | "review" | "escalate";
+  toolType: "repo.read" | "repo.edit" | "repo.verify" | "repo.install" | "git.meta";
+  command: string;
+  args: string[];
+  cwd: string;
+  policyDecision: "allowed" | "approval_required" | "denied";
+  exitCode: number | null;
+  durationMs: number;
+  summary: string;
+  errorClass: "infra_missing_tool" | "infra_missing_dependency" | "timeout" | "command_failed" | "none";
+  approvalId?: string | null;
+  createdAt: string;
 }
 
 export interface V2TaskCard {

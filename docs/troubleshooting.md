@@ -1,65 +1,56 @@
 # Troubleshooting
 
-## Docker Hard Blocker
+## Postgres Unavailable
 
 Symptom:
-- Doctor reports Docker unavailable.
+- The app cannot reach PostgreSQL on `127.0.0.1:5433`.
 
 Fix:
-1. Start Docker Desktop.
-2. Re-run `npm run doctor`.
-3. Verify Postgres: `nc -z 127.0.0.1 5433`.
+1. Start Docker Desktop if you use the built-in local path.
+2. Run `npm run db:up`.
+3. Run `npx prisma db push`.
+4. Re-run `npm run doctor`.
+
+## Desktop App Opens But Backend Is Unavailable
+
+Symptom:
+- The UI shows a backend-unavailable or recovery state.
+
+Fix:
+1. Confirm Postgres is available.
+2. Start the API directly with `npm run dev:api` if the renderer is already running.
+3. Or restart the supported desktop path with `npm run start:desktop`.
+
+## Browser Preview Feels Broken
+
+Symptom:
+- Repo picking or local execution actions do not behave like the desktop app.
+
+Fix:
+1. Use the Electron desktop app for the full operator flow.
+2. Treat browser preview as a limited inspection surface only.
+
+## OpenAI Models Or Runtime Settings Look Wrong
+
+Symptom:
+- Settings cannot fetch OpenAI models or the selected runtime looks stale.
+
+Fix:
+1. Confirm `OPENAI_API_KEY` is set in `.env`.
+2. Open `Settings > Essentials` and re-save the key if needed.
+3. Use `Refresh models`.
+4. Re-run `npm run doctor` if local runtime or provider state looks inconsistent.
 
 ## Local Runtime Unreachable
 
 Symptom:
-- `onprem_runtime_8000` warning.
+- `onprem_runtime_8000` warning or local runtime requests fail.
 
 Fix:
-1. Start runtime server (`mlx-lm` or transformers fallback).
-2. Verify health endpoint.
-3. Confirm `Settings -> On-Prem Qwen` base URL matches.
-
-## Claude Teacher Fails
-
-Symptom:
-- Distill examples become `needs_edit` with teacher fallback metadata.
-
-Fix:
-1. Check `claude auth status`.
-2. Reduce `maxRequestsPerMinute`.
-3. Increase `retryBackoffMs`.
-4. Check quota/budget values in distill settings.
-
-## Training Run Failed
-
-Symptom:
-- Run status `failed`, reason `trainer_unavailable`.
-
-Fix:
-1. Install dependencies in your Python env:
-
-```bash
-python3 -m pip install --upgrade torch transformers datasets peft accelerate
-```
-
-2. Re-run `Start Training`.
-
-## Full Pass Preparation Fails
-
-Symptom:
-- `npm run distill:run:full -- --prepare-only` fails on readiness or approved-ratio gate.
-
-Fix:
-1. Run `npm run distill:doctor -- --strict`.
-2. Resolve blockers (`teacher_cli`, `teacher_auth`, `trainer_python_modules`).
-3. If using small sample count for smoke testing, lower the gate temporarily:
-
-```bash
-DISTILL_FULL_PASS_MIN_APPROVED_RATIO=0 npm run distill:run:full -- --prepare-only
-```
-
-4. Restore stricter ratio for real passes (`0.6` or higher).
+1. Start your chosen local runtime.
+2. Verify the health endpoint.
+3. Confirm the base URL in `Settings > Essentials` or `Settings > Advanced`.
+4. Use the advanced local runtime guide if you are intentionally running fully local.
 
 ## Playwright E2E Flakiness
 
@@ -80,3 +71,7 @@ Fix:
 1. Open `Settings -> Policy Simulation`.
 2. Run dry-run policy check for the same action class.
 3. Approve queued action if policy requires approval.
+
+## Advanced Or Internal Features
+
+Benchmarks and Labs are advanced/internal flows. They are intentionally not required for first-run success. If you are working on those paths, use the dedicated runbooks instead of the launch-facing docs.

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/obelaiquality/agentic_workforce/blob/main/SECURITY.md
+    about: Report vulnerabilities privately using the security policy.
+  - name: Support and setup help
+    url: https://github.com/obelaiquality/agentic_workforce/blob/main/SUPPORT.md
+    about: Read the support policy before filing setup or usage questions.

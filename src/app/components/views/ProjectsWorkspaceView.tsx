@@ -89,7 +89,7 @@ export function ProjectsWorkspaceView({
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <Panel>
-          <PanelHeader title="Connect Repo">
+          <PanelHeader title="Connect or Create">
             <Chip variant="subtle">Local-first</Chip>
           </PanelHeader>
           <div className="p-4 space-y-4">
@@ -99,9 +99,9 @@ export function ProjectsWorkspaceView({
                   <img src="/assets/focus-reticle.svg" alt="" className="h-5 w-5 opacity-85" aria-hidden="true" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-white">Plug in your own repo</div>
+                  <div className="text-sm font-medium text-white">Choose a repo or start a new project</div>
                   <div className="mt-1 text-xs text-zinc-400">
-                    Choose a local Git repo. The app works in a safe linked copy and keeps your original repo untouched.
+                    Project connection lives here. Once a project is active, switch back to Work to plan and run tasks.
                   </div>
                 </div>
               </div>
@@ -164,7 +164,7 @@ export function ProjectsWorkspaceView({
               <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-100">{repoPickerMessage}</div>
             ) : !hasDesktopPicker ? (
               <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3 text-xs text-zinc-400">
-                Repo picker is available in the desktop app. In browser preview, open a recent repo or use the desktop window.
+                Browser preview is limited. Use the desktop app for the repo picker and full local task execution.
               </div>
             ) : null}
 
@@ -214,24 +214,6 @@ export function ProjectsWorkspaceView({
                 GitHub App connection is the intended path here. Raw owner/repo entry stays hidden unless Developer Labs is enabled.
               </div>
             ) : null}
-
-            {recentRepoPaths.length ? (
-              <div>
-                <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500">Recent local folders</div>
-                <div className="space-y-2">
-                  {recentRepoPaths.slice(0, 5).map((item) => (
-                    <button
-                      key={item.path}
-                      onClick={() => openRecentPath(item.path, item.label)}
-                      className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-3 text-left hover:bg-white/[0.04]"
-                    >
-                      <div className="text-sm text-white truncate">{item.label}</div>
-                      <div className="text-xs text-zinc-500 truncate">{item.path}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
         </Panel>
 
@@ -249,7 +231,7 @@ export function ProjectsWorkspaceView({
                   </div>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-xs text-zinc-400">
-                  The project is warm and ready. Open it from the header switcher or ask the overseer for the next change.
+                  The project is active and ready. Go back to Work to describe the next task.
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -280,59 +262,87 @@ export function ProjectsWorkspaceView({
                 </div>
               </>
             ) : (
-              <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">No project is active yet.</div>
+              <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
+                Open or create a project here, then return to Work to start planning tasks.
+              </div>
             )}
           </div>
         </Panel>
       </div>
 
-      <ProjectBlueprintPanel
-        blueprint={blueprint}
-        hasActiveRepo={Boolean(activeRepo)}
-        isActing={isActing}
-        onUpdate={updateBlueprint}
-        onRegenerate={regenerateBlueprint}
-        compact={false}
-      />
-
       <Panel>
         <PanelHeader title="Recent Projects">
-          <Chip variant="subtle">{recentRepos.length}</Chip>
+          <Chip variant="subtle">{recentRepos.length || recentRepoPaths.length}</Chip>
         </PanelHeader>
-        <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-          {recentRepos.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">No connected projects yet.</div>
-          ) : (
-            recentRepos.map((repo) => (
-              <div key={repo.id} className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                <div>
-                  <div className="text-sm font-medium text-white truncate">{repo.displayName}</div>
-                  <div className="mt-1 text-xs text-zinc-500">{repo.branch || repo.defaultBranch || "main"}</div>
+        <div className="space-y-4 p-4">
+          {recentRepos.length ? (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {recentRepos.map((repo) => (
+                <div key={repo.id} className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <div>
+                    <div className="text-sm font-medium text-white truncate">{repo.displayName}</div>
+                    <div className="mt-1 text-xs text-zinc-500">{repo.branch || repo.defaultBranch || "main"}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Chip variant={repo.active ? "ok" : "subtle"} className="text-[10px]">
+                      {repo.active ? "active" : "ready"}
+                    </Chip>
+                    <span className="text-[10px] uppercase tracking-wide text-zinc-600">{repo.sourceKind.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => activateRepo(repo.id)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-500">Open</button>
+                    <button
+                      onClick={() => syncProject(repo.id)}
+                      disabled={Boolean(syncingRepoId)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-60"
+                    >
+                      {syncingRepoId === repo.id ? (
+                        <ProcessingIndicator kind="repo" active size="xs" tone="subtle" />
+                      ) : null}
+                      {syncingRepoId === repo.id ? "Syncing..." : repo.sourceKind === "github_app_bound" ? "Sync" : "Refresh"}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Chip variant={repo.active ? "ok" : "subtle"} className="text-[10px]">
-                    {repo.active ? "active" : "warm"}
-                  </Chip>
-                  <span className="text-[10px] uppercase tracking-wide text-zinc-600">{repo.sourceKind.replace(/_/g, " ")}</span>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => activateRepo(repo.id)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-500">Open</button>
+              ))}
+            </div>
+          ) : null}
+
+          {recentRepoPaths.length ? (
+            <div>
+              <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500">Recent local folders</div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {recentRepoPaths.slice(0, 6).map((item) => (
                   <button
-                    onClick={() => syncProject(repo.id)}
-                    disabled={Boolean(syncingRepoId)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-60"
+                    key={item.path}
+                    onClick={() => openRecentPath(item.path, item.label)}
+                    className="rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-3 text-left hover:bg-white/[0.04]"
                   >
-                    {syncingRepoId === repo.id ? (
-                      <ProcessingIndicator kind="repo" active size="xs" tone="subtle" />
-                    ) : null}
-                    {syncingRepoId === repo.id ? "Syncing..." : repo.sourceKind === "github_app_bound" ? "Sync" : "Refresh"}
+                    <div className="text-sm text-white truncate">{item.label}</div>
+                    <div className="text-xs text-zinc-500 truncate">{item.path}</div>
                   </button>
-                </div>
+                ))}
               </div>
-            ))
-          )}
+            </div>
+          ) : null}
+
+          {recentRepos.length === 0 && recentRepoPaths.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
+              Projects you open or create will appear here for quick access.
+            </div>
+          ) : null}
         </div>
       </Panel>
+
+      {(activeRepo || blueprint || pendingBootstrap) ? (
+        <ProjectBlueprintPanel
+          blueprint={blueprint}
+          hasActiveRepo={Boolean(activeRepo)}
+          isActing={isActing}
+          onUpdate={updateBlueprint}
+          onRegenerate={regenerateBlueprint}
+          compact={false}
+        />
+      ) : null}
     </div>
   );
 }

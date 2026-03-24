@@ -5,67 +5,45 @@
 Get one real success signal fast:
 - launch the desktop app
 - connect or create a repo
-- scaffold or run one bounded change
-- inspect the result in `Live State`, `Codebase`, and `Console`
+- run one bounded change
+- inspect the result in `Work`, `Codebase`, and `Console`
 
 The product is now centered on the command-center flow, not a separate backlog/admin flow.
 
 ## 0-5 min: Boot the Product
 
-From [/Users/neilslab/agentic_workforce](/Users/neilslab/agentic_workforce):
+From the repository root:
 
 ```bash
 npm install
-npm run start:desktop
+cp .env.example .env
+npm run db:up
+npx prisma db push
+npx prisma generate
+npm run dev:desktop
 ```
 
 Expected:
 - Electron window opens
 - local API is reachable on `127.0.0.1:8787`
-- `Live State` loads as the primary command center
+- `Work` loads as the primary task surface
 
-## 5-10 min: Verify the Default Local Runtime
+## 5-10 min: Configure The Recommended Runtime
 
-The default coding runtime is local `Qwen 3.5 4B`.
+The recommended public beta path is OpenAI-assisted.
 
-If it is not already running, start it in another terminal:
+1. Add `OPENAI_API_KEY` to your local `.env`.
+2. Open `Settings`.
+3. Stay in `Essentials` and switch runtime mode to `OpenAI API`.
+4. If you want the default recommended mapping, open `Advanced` and use `Apply recommended OpenAI roles`.
 
-```bash
-python3 -m pip install --upgrade mlx-lm
-python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000 --temp 0.15 --max-tokens 1600
-```
-
-Optional health check:
-
-```bash
-curl -sS http://127.0.0.1:8000/health
-```
-
-In the app:
-1. Open `Settings`
-2. Confirm provider `On-Prem Qwen`
-3. Confirm base URL `http://127.0.0.1:8000/v1`
-4. If you want a true local split:
-   - open `Settings > Providers > Local role runtimes`
-   - click `Apply recommended local split`
-   - click `Start enabled runtimes`
-   - use `Test` on `Fast`
-   - `Build` and `Review` continue to use the default local `4B` runtime on `http://127.0.0.1:8000/v1`
-5. Return to `Live State`
-
-Alternative fully cloud-driven path:
-1. Add `OPENAI_API_KEY` to your local `.env`
-2. Open `Settings`
-3. Switch runtime mode to `OpenAI API`
-4. Either:
-   - use `Apply Recommended OpenAI Roles`
-   - or set per-role models manually
-
-Current tested OpenAI role setup:
+Current tested role setup:
 - `Fast` -> `gpt-5-nano`
 - `Build` -> `gpt-5.3-codex`
 - `Review` -> `gpt-5.4`
 - `Escalate` -> `gpt-5.4`
+
+If you want a fully local runtime path instead, use the advanced local-runtime guide: [docs/runbooks/local-runtime.md](runbooks/local-runtime.md)
 
 ## 10-15 min: Create or Connect a Project
 
@@ -74,7 +52,7 @@ Current tested OpenAI role setup:
 2. Click `New Project`
 3. Choose an empty folder
 4. Keep the default template: `TypeScript App`
-5. Let the app initialize Git, create the managed worktree, generate a blueprint, scaffold the app, and verify it
+5. Let the app initialize Git, create the managed worktree, generate a blueprint, and verify the initial state
 
 ### Existing repo path
 1. Open `Projects`
@@ -85,17 +63,18 @@ Current tested OpenAI role setup:
 Expected:
 - project appears in the header switcher
 - `Projects` shows the active project and blueprint summary
-- `Live State` is now populated
+- `Work` is now ready for a task
 
 ## 15-20 min: Use the Command Center
 
-Return to `Live State`.
+Return to `Work`.
 
 The screen is organized into:
-- top `Overseer Command` card
-- workflow summary row
+- top `Describe the task` composer
+- `Review the Plan` route panel
 - four-lane workflow board
-- right-side detail drawer
+- final outcome/evidence summary when a run completes
+- optional right-side detail drawer on desktop
 
 Lanes:
 - `Backlog`
@@ -105,11 +84,17 @@ Lanes:
 
 What to try:
 1. Type a bounded objective in the command card
-2. Click `Review Route`
-3. Click `Execute`
+2. Click `Review plan`
+3. Click `Run task`
 4. Watch the workflow card move through the board
 5. Click a card to expand it inline
 6. Open the task detail drawer for logs, approvals, authored notes, and verification
+
+Reference screenshots:
+
+![Work empty state](screenshots/06-work-empty.png)
+![Projects redesign](screenshots/07-projects-redesign.png)
+![Settings essentials](screenshots/08-settings-essentials.png)
 
 ## 20-25 min: Inspect Real Outputs
 
@@ -137,7 +122,7 @@ Recommended first tasks:
 2. `Add a status badge component and test it. Update docs if needed.`
 3. `Change the hero headline and update the test`
 
-The current local 4B flow is strongest on bounded, explicit changes with clear verification.
+The current flow is strongest on bounded, explicit changes with clear verification.
 
 ## What is Real Today
 
@@ -159,13 +144,13 @@ The current local 4B flow is strongest on bounded, explicit changes with clear v
 - Browser preview is secondary and cannot use the native folder picker
 - OpenAI escalation is optional
 - Qwen CLI multi-account failover is optional
-- Benchmarks, distillation, and other internal tooling live behind `Settings > Labs`
+- Benchmarks and other internal tooling live behind `Settings > Advanced` with Labs enabled
 
 ## Daily Operator Checklist
 
 - launch with `npm run start:desktop`
 - confirm local runtime health
 - confirm the active project in the header
-- use `Live State` for workflow status and execution
+- use `Work` for task entry, route review, and workflow status
 - use `Codebase` and `Console` to inspect evidence
 - use the drawer for threaded notes, approvals, and verification detail

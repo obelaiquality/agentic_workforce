@@ -1,5 +1,11 @@
 import { prisma } from "../db";
-import type { Ticket, TicketCommentThread, TicketStatus } from "../../shared/contracts";
+import type {
+  Ticket,
+  TicketCommentThread,
+  TicketExecutionPolicy,
+  TicketPermissionMode,
+  TicketStatus,
+} from "../../shared/contracts";
 
 type CanonicalWorkflowLane = "backlog" | "in_progress" | "needs_review" | "completed";
 
@@ -134,12 +140,31 @@ async function resequenceTickets(
 }
 
 export class TicketService {
+  private buildDefaultExecutionPolicy(ticketId: string): TicketExecutionPolicy {
+    return {
+      ticketId,
+      mode: "balanced",
+      allowInstallCommands: false,
+      allowNetworkCommands: false,
+      requireApprovalFor: ["repo.install", "network", "destructive"],
+      updatedAt: new Date(0).toISOString(),
+      updatedBy: "system",
+    };
+  }
+
   async listTickets(repoId?: string) {
     const rows = await prisma.ticket.findMany({
       where: repoId ? { repoId } : undefined,
       orderBy: [{ laneOrder: "asc" }, { updatedAt: "desc" }],
     });
     return sortTickets(rows as unknown as TicketRow[]).map((row) => mapTicket(row));
+  }
+
+  async getTicket(ticketId: string) {
+    const row = (await prisma.ticket.findUnique({
+      where: { id: ticketId },
+    })) as unknown as TicketRow | null;
+    return row ? mapTicket(row) : null;
   }
 
   async getBoard(repoId?: string) {
@@ -561,5 +586,101 @@ export class TicketService {
       ticketId: input.ticketId,
       executionProfileId,
     };
+  }
+
+  async getTicketExecutionPolicy(ticketId: string): Promise<TicketExecutionPolicy> {
+    const event = await prisma.ticketEvent.findFirst({
+      where: {
+        ticketId,
+        type: "ticket.execution_policy_set",
+      },
+      orderBy: [{ createdAt: "desc" }],
+    });
+
+    if (!event) {
+      return this.buildDefaultExecutionPolicy(ticketId);
+    }
+
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const mode =
+      payload.mode === "strict" || payload.mode === "full_access" || payload.mode === "balanced"
+        ? payload.mode
+        : "balanced";
+    const requireApprovalFor = Array.isArray(payload.requireApprovalFor)
+      ? payload.requireApprovalFor.filter((item): item is string => typeof item === "string")
+      : ["repo.install", "network", "destructive"];
+
+    return {
+      ticketId,
+      mode,
+      allowInstallCommands: Boolean(payload.allowInstallCommands),
+      allowNetworkCommands: Boolean(payload.allowNetworkCommands),
+      requireApprovalFor,
+      updatedAt: event.createdAt.toISOString(),
+      updatedBy: typeof payload.updatedBy === "string" && payload.updatedBy.trim() ? payload.updatedBy : "user",
+    };
+  }
+
+  async setTicketExecutionPolicy(input: {
+    ticketId: string;
+    mode: TicketPermissionMode;
+    actor?: string | null;
+    allowInstallCommands?: boolean;
+    allowNetworkCommands?: boolean;
+    requireApprovalFor?: string[];
+  }): Promise<TicketExecutionPolicy> {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: input.ticketId },
+      select: { id: true },
+    });
+    if (!ticket) {
+      throw new Error(`Ticket not found: ${input.ticketId}`);
+    }
+    if (input.mode === "full_access") {
+      throw new Error("full_access is a legacy internal-only execution mode and cannot be set through public mission controls.");
+    }
+
+    const actor = input.actor?.trim() || "user";
+    const policy: TicketExecutionPolicy = {
+      ticketId: input.ticketId,
+      mode: input.mode,
+      allowInstallCommands:
+        typeof input.allowInstallCommands === "boolean"
+          ? input.allowInstallCommands
+          : false,
+      allowNetworkCommands:
+        typeof input.allowNetworkCommands === "boolean"
+          ? input.allowNetworkCommands
+          : false,
+      requireApprovalFor:
+        input.requireApprovalFor && input.requireApprovalFor.length
+          ? input.requireApprovalFor
+          : input.mode === "strict"
+          ? ["*"]
+          : ["repo.install", "network", "destructive"],
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor,
+    };
+
+    await prisma.ticketEvent.create({
+      data: {
+        ticketId: input.ticketId,
+        type: "ticket.execution_policy_set",
+        payload: policy,
+      },
+    });
+
+    await prisma.auditEvent.create({
+      data: {
+        actor,
+        eventType: "ticket.execution_policy_set",
+        payload: {
+          ticketId: input.ticketId,
+          policy,
+        },
+      },
+    });
+
+    return policy;
   }
 }

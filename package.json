@@ -1,10 +1,33 @@
 {
-  "name": "@figma/my-make-file",
+  "name": "agentic-workforce",
   "main": "electron/main.mjs",
-  "private": true,
+  "private": false,
   "version": "0.0.1",
-  "description": "Next-Gen Agentic Coding desktop app with Qwen CLI orchestration and provider-factory architecture.",
+  "description": "Local-first desktop coding agent for real repositories with verified execution and evidence-rich review.",
   "author": "Neilslab",
+  "license": "MIT",
+  "homepage": "https://github.com/obelaiquality/agentic_workforce",
+  "bugs": {
+    "url": "https://github.com/obelaiquality/agentic_workforce/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/obelaiquality/agentic_workforce.git"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "developer-tools",
+    "electron",
+    "local-first",
+    "openai-compatible"
+  ],
+  "bin": {
+    "agentic-workforce": "./scripts/agentic-cli.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "scripts": {
     "build": "vite build",
@@ -13,6 +36,12 @@
     "build:desktop": "npm run build && npm run build:server && npm run build:sidecar",
     "dev": "vite",
     "doctor": "node scripts/doctor.mjs",
+    "check:docs": "node scripts/check-doc-links.mjs",
+    "lint": "node scripts/lint-workspace.mjs",
+    "security:check": "node scripts/security-guardrails.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "validate": "npm run lint && npm run security:check && npm run typecheck && npm run check:docs && npm test && npm run build && npm run build:server",
+    "cli": "node scripts/agentic-cli.mjs",
     "knowledge:import:docx": "node scripts/knowledge/import_docx_refs.mjs",
     "benchmarks:api": "node scripts/benchmarks/run_api_regression.mjs",
     "distill:doctor": "node scripts/distill/doctor.mjs",
@@ -42,13 +71,9 @@
     "test:integration:agent-architecture": "vitest run src/server/services/agentArchitecture.integration.test.ts"
   },
   "dependencies": {
-    "@emotion/react": "11.14.0",
-    "@emotion/styled": "11.14.1",
     "@fastify/cors": "^10.0.1",
     "@grpc/grpc-js": "^1.12.6",
     "@grpc/proto-loader": "^0.7.13",
-    "@mui/icons-material": "7.3.5",
-    "@mui/material": "7.3.5",
     "@popperjs/core": "2.11.8",
     "@prisma/client": "^6.5.0",
     "@radix-ui/react-accordion": "1.2.3",
@@ -88,7 +113,6 @@
     "input-otp": "1.4.2",
     "lucide-react": "0.487.0",
     "mermaid": "^11.13.0",
-    "motion": "12.23.24",
     "next-themes": "0.4.6",
     "react-day-picker": "8.10.1",
     "react-dnd": "16.0.1",
@@ -98,7 +122,6 @@
     "react-popper": "2.3.0",
     "react-resizable-panels": "2.1.7",
     "react-responsive-masonry": "2.7.1",
-    "react-router": "7.13.0",
     "react-slick": "0.31.0",
     "recharts": "2.15.2",
     "remark-gfm": "^4.0.1",
@@ -113,11 +136,14 @@
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
     "@tailwindcss/vite": "4.1.12",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.13.10",
     "@vitejs/plugin-react": "4.7.0",
     "concurrently": "^9.1.2",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
+    "jsdom": "^29.0.1",
     "playwright-core": "^1.58.2",
     "prisma": "^6.5.0",
     "tailwindcss": "4.1.12",
@@ -146,7 +172,7 @@
   },
   "build": {
     "appId": "com.neilslab.agenticcoding",
-    "productName": "Next-Gen Agentic Coding",
+    "productName": "Agentic Workforce",
     "afterSign": "scripts/notarize.mjs",
     "asarUnpack": [
       "dist-sidecar/**/*",

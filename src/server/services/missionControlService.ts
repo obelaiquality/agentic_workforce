@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import type {
+  ChannelEventRecord,
   ChatMessageDto,
   ChatSessionDto,
   ConsoleEvent,
@@ -11,6 +12,7 @@ import type {
   RepoRegistration,
   RoutingDecision,
   ShareableRunReport,
+  SubagentActivityRecord,
   Ticket,
   VerificationBundle,
   V2CommandLogItem,
@@ -695,11 +697,45 @@ export class MissionControlService {
       : null;
     const runSummary = mapRunSummary(runProjection, persistedRoutingDecision);
 
-    const [workflowState, verification, shareReport] = await Promise.all([
+    const [workflowState, verification, shareReport, recentChannelAuditRows, recentSubagentRows] = await Promise.all([
       selectedTicket ? this.contextService.getWorkflowState(selectedTicket.id) : Promise.resolve(null),
       inferredRunId ? this.codeGraphService.getVerificationBundle(inferredRunId) : Promise.resolve(null),
       inferredRunId ? this.githubService.getShareReport(inferredRunId) : Promise.resolve(null as ShareableRunReport | null),
+      project
+        ? prisma.auditEvent.findMany({
+            where: {
+              eventType: "channel.event.received",
+              payload: {
+                path: ["projectId"],
+                equals: project.id,
+              },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 8,
+          })
+        : Promise.resolve([]),
+      project
+        ? prisma.runEvent.findMany({
+            where: {
+              kind: "subagent_activity",
+              payload: {
+                path: ["projectId"],
+                equals: project.id,
+              },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 12,
+          })
+        : Promise.resolve([]),
     ]);
+    const experimentalAutonomy = {
+      channels: recentChannelAuditRows
+        .map((row) => row.payload as ChannelEventRecord)
+        .filter((item) => item && typeof item.id === "string"),
+      subagents: recentSubagentRows
+        .map((row) => row.payload as SubagentActivityRecord)
+        .filter((item) => item && typeof item.id === "string"),
+    };
 
     const effectiveRoute = preliminaryRoute || (persistedRoutingDecision
       ? ({
@@ -864,6 +900,7 @@ export class MissionControlService {
       ),
       codebaseFiles: buildCodebaseFiles(changedFiles, contextPack, runSummary?.modelRole || null),
       consoleLogs: buildConsoleLogs(commands, relevantApprovals),
+      experimentalAutonomy,
       approvals: buildApprovals(relevantApprovals, selectedTicket?.id || null),
       guidelines,
       projectState,
@@ -887,9 +924,10 @@ export class MissionControlService {
     if (!ticket) {
       return null;
     }
-    const [workflowState, executionProfileOverrideId] = await Promise.all([
+    const [workflowState, executionProfileOverrideId, ticketExecutionPolicy] = await Promise.all([
       this.contextService.getWorkflowState(ticket.id),
       this.ticketService.getTicketExecutionProfileOverride(ticket.id),
+      this.ticketService.getTicketExecutionPolicy(ticket.id),
     ]);
     const ticketEvents = await prisma.ticketEvent.findMany({
       where: { ticketId: ticket.id },
@@ -1000,6 +1038,7 @@ export class MissionControlService {
               stages: executionProfileStages,
             }
           : null,
+      ticketExecutionPolicy,
     };
   }
 }

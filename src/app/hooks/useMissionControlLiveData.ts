@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ApiEventStream } from "../lib/apiClient";
 import {
   activateProjectV5,
   addTicketComment,
@@ -15,6 +16,7 @@ import {
   openSessionStream,
   reviewOverseerRouteV8,
   sendOverseerMessageV8,
+  setMissionTicketPermissionV9,
   setMissionWorkflowExecutionProfileV8,
   syncProjectV5,
   updateProjectBlueprintV8,
@@ -23,6 +25,23 @@ import {
   getProjectBlueprintV8,
   moveMissionWorkflowV8,
 } from "../lib/apiClient";
+import {
+  buildApprovalFollowup,
+  buildExecutionActionMessage,
+  buildExecutionFailureActionMessage,
+  normalizeApiErrorMessage,
+  type TicketLifecycleNotice,
+} from "../lib/missionFeedback";
+import type {
+  CodebaseFile,
+  ConsoleLog,
+  MissionChangeBrief,
+  MissionRunPhase,
+  MissionStream,
+  MissionTaskCard,
+  MissionTimelineEvent,
+  TaskSpotlight,
+} from "../lib/missionTypes";
 import { getRecentRepos, getVisibleRepos } from "../lib/projectVisibility";
 import { hasDesktopRepoPicker, listRecentRepoPaths, pickRepoDirectory, rememberRepoPath } from "../lib/desktopBridge";
 import { useUiStore } from "../store/uiStore";
@@ -36,16 +55,6 @@ import type {
   RepoRegistration,
   RoutingDecision,
 } from "../../shared/contracts";
-import type {
-  CodebaseFile,
-  ConsoleLog,
-  MissionChangeBrief,
-  MissionRunPhase,
-  MissionStream,
-  MissionTaskCard,
-  MissionTimelineEvent,
-  TaskSpotlight,
-} from "../data/mockData";
 
 const ROLE_LABELS: Record<ModelRole, string> = {
   utility_fast: "Fast",
@@ -154,6 +163,50 @@ function resolveTicketForObjective(input: {
   return sameTicket ? selectedTicketId : undefined;
 }
 
+type AppMode = "desktop" | "limited_preview" | "backend_unavailable";
+
+type AppModeNotice = {
+  title: string;
+  message: string;
+  detail: string;
+};
+
+function summarizeAppError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "The local API is unavailable.";
+  }
+
+  const normalized = normalizeApiErrorMessage(error.message);
+  if (/Failed to fetch|NetworkError|fetch failed/i.test(normalized)) {
+    return "The local API is unavailable.";
+  }
+  if (/connect|refused|ECONNREFUSED|ENOTFOUND/i.test(normalized)) {
+    return "The app cannot reach its local services.";
+  }
+  return normalized;
+}
+
+function resolveAppModeNotice(input: { appMode: AppMode; error: unknown }) {
+  const { appMode, error } = input;
+  if (appMode === "limited_preview") {
+    return {
+      title: "Browser preview is limited",
+      message: "Repo picking, preflight checks, and full local execution require the Electron desktop app.",
+      detail: "Use the desktop app for the real operator flow. In browser preview you can inspect layout, recent projects, and settings, but local repo actions stay limited.",
+    } satisfies AppModeNotice;
+  }
+
+  if (appMode === "backend_unavailable") {
+    return {
+      title: "Backend unavailable",
+      message: summarizeAppError(error),
+      detail: "Start PostgreSQL on localhost:5433, then run `npm run start:desktop` for the full app or `npm run dev:api` if you are already running the renderer.",
+    } satisfies AppModeNotice;
+  }
+
+  return null;
+}
+
 export function useMissionControlLiveData() {
   const queryClient = useQueryClient();
   const selectedSessionId = useUiStore((state) => state.selectedSessionId);
@@ -176,6 +229,7 @@ export function useMissionControlLiveData() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pendingBlueprintSuccessMessage, setPendingBlueprintSuccessMessage] = useState<string | null>(null);
   const [pendingExecutionProfileId, setPendingExecutionProfileId] = useState<string | null>(null);
+  const [ticketLifecycleNotices, setTicketLifecycleNotices] = useState<Record<string, TicketLifecycleNotice>>({});
   const [repoPickerMessage, setRepoPickerMessage] = useState<string | null>(null);
   const [githubOwner, setGithubOwner] = useState("");
   const [githubRepo, setGithubRepo] = useState("");
@@ -211,6 +265,7 @@ export function useMissionControlLiveData() {
   });
 
   const snapshot = snapshotQuery.data?.item ?? null;
+  const hasDesktopPicker = hasDesktopRepoPicker();
   const executionProfiles = settingsQuery.data?.items.executionProfiles ?? DEFAULT_EXECUTION_PROFILES;
   const projectProfileId = blueprintPreview?.providerPolicy.executionProfileId ?? snapshot?.blueprint?.providerPolicy.executionProfileId ?? null;
   const resolvedExecutionProfileId =
@@ -308,7 +363,7 @@ export function useMissionControlLiveData() {
       return;
     }
 
-    let source: EventSource | null = null;
+    let source: ApiEventStream | null = null;
     let cancelled = false;
 
     void openSessionStream(resolvedSessionId).then((eventSource) => {
@@ -619,50 +674,17 @@ export function useMissionControlLiveData() {
       if (result.blueprint) {
         setBlueprintPreview(result.blueprint);
       }
-      if (result.lifecycle?.completed) {
-        setActionMessage(
-          `Execution and auto-review completed (${result.lifecycle.roundsRun}/${result.lifecycle.maxRounds} review rounds). Ticket moved to Completed.`
-        );
-      } else if (result.verification?.pass) {
-        setActionMessage("Execution verified. Ticket moved through review.");
-      } else if (result.lifecycle?.roundsRun) {
-        setActionMessage(
-          `Execution needs follow-up after ${result.lifecycle.roundsRun} auto-review rounds. Ticket moved back to In Progress.`
-        );
-      } else {
-        const infraFailure = result.verification?.failures?.find(
-          (failure) =>
-            failure.startsWith("infra_missing_tool:") ||
-            failure.startsWith("infra_missing_dependency:") ||
-            failure.startsWith("infra_command_timeout:") ||
-            failure.startsWith("setup_failed:")
-        );
-        if (infraFailure) {
-          const [, command] = infraFailure.split(":");
-          const reason = infraFailure.startsWith("infra_missing_tool:")
-            ? "missing tool/dependency"
-            : infraFailure.startsWith("infra_missing_dependency:")
-            ? "missing dependency"
-            : infraFailure.startsWith("infra_command_timeout:")
-            ? "verification timeout"
-            : "dependency bootstrap failed";
-          setActionMessage(
-            `Execution blocked by environment (${reason}) on "${command || "verification command"}". Ticket remains in progress.`
-          );
-        } else {
-          setActionMessage("Execution finished. Ticket remains in progress for follow-up.");
-        }
-      }
+      setActionMessage(
+        buildExecutionActionMessage({
+          lifecycle: result.lifecycle,
+          verification: result.verification,
+        })
+      );
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
     },
     onError: (error) => {
       if (error instanceof Error) {
-        const lower = error.message.toLowerCase();
-        if (lower.includes("generic patch generation timed out") || lower.includes("timed out")) {
-          setActionMessage("Execution timed out while generating patch.");
-          return;
-        }
-        setActionMessage(`Execution failed: ${error.message}`);
+        setActionMessage(buildExecutionFailureActionMessage(error.message));
         return;
       }
       setActionMessage("Execution failed.");
@@ -694,9 +716,23 @@ export function useMissionControlLiveData() {
         decision,
         decided_by: "user",
       }),
-    onSuccess: () => {
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
-      setActionMessage("Approval updated.");
+      const followup = buildApprovalFollowup({
+        decision: variables.decision,
+        requeue: result.lifecycle_requeue,
+        commandExecution: result.command_execution,
+        fallbackTicketId: selectedTicketId,
+      });
+
+      if (followup.ticketId && followup.notice) {
+        setTicketLifecycleNotices((prev) => ({
+          ...prev,
+          [followup.ticketId]: followup.notice,
+        }));
+      }
+
+      setActionMessage(followup.actionMessage);
     },
   });
 
@@ -744,6 +780,27 @@ export function useMissionControlLiveData() {
       const profileName =
         executionProfiles.profiles.find((item) => item.id === variables.executionProfileId)?.name || null;
       setActionMessage(profileName ? `Ticket override set to ${profileName}.` : "Ticket override cleared.");
+    },
+  });
+
+  const setTicketPermissionMutation = useMutation({
+    mutationFn: ({
+      taskId,
+      mode,
+    }: {
+      taskId: string;
+      mode: "balanced" | "strict";
+    }) =>
+      setMissionTicketPermissionV9({
+        ticket_id: taskId,
+        mode,
+        actor: "user",
+      }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      queryClient.invalidateQueries({ queryKey: ["command-workflow-task-detail"] });
+      const modeLabel = variables.mode === "strict" ? "Strict" : "Balanced";
+      setActionMessage(`Ticket permissions set to ${modeLabel}.`);
     },
   });
 
@@ -872,6 +929,9 @@ export function useMissionControlLiveData() {
   const pendingApprovals = (snapshot?.approvals ?? []).map(toPendingApproval);
   const runSummary = snapshot?.runSummary || null;
   const verification = snapshot?.verification || null;
+  const backendError = snapshotQuery.error ?? settingsQuery.error ?? null;
+  const appMode: AppMode = !hasDesktopPicker ? "limited_preview" : backendError ? "backend_unavailable" : "desktop";
+  const appModeNotice = resolveAppModeNotice({ appMode, error: backendError });
   const messages = useMemo(() => {
     const rows = snapshot?.overseer.messages ?? [];
     if (!streamText) return rows;
@@ -921,6 +981,7 @@ export function useMissionControlLiveData() {
     blueprint: blueprintPreview,
     workflowPillars: snapshot?.workflowPillars ?? [],
     workflowCards: snapshot?.workflowCards ?? [],
+    ticketLifecycleNotices,
     changeBriefs: (snapshot?.changeBriefs ?? []) as MissionChangeBrief[],
     streams: (snapshot?.streams ?? []) as MissionStream[],
     timeline: (snapshot?.timeline ?? []) as MissionTimelineEvent[],
@@ -929,6 +990,7 @@ export function useMissionControlLiveData() {
     codebaseFiles: (snapshot?.codebaseFiles ?? []) as CodebaseFile[],
     consoleLogs: (snapshot?.consoleLogs ?? []) as ConsoleLog[],
     consoleEvents: (snapshot?.consoleEvents ?? []) as import("../../shared/contracts").ConsoleEvent[],
+    experimentalAutonomy: snapshot?.experimentalAutonomy ?? { channels: [], subagents: [] },
     pendingApprovals,
     liveState: !selectedRepo ? "disconnected" : snapshotQuery.isLoading ? "loading" : snapshotQuery.isError ? "degraded" : "live",
     lastUpdatedAt: snapshot?.lastUpdatedAt || selectedRepo?.updatedAt || null,
@@ -947,6 +1009,8 @@ export function useMissionControlLiveData() {
         ? updateBlueprintMutation.error.message
         : setTicketExecutionProfileMutation.error instanceof Error
         ? setTicketExecutionProfileMutation.error.message
+        : setTicketPermissionMutation.error instanceof Error
+        ? setTicketPermissionMutation.error.message
         : snapshotQuery.error instanceof Error
         ? snapshotQuery.error.message
         : null,
@@ -960,6 +1024,8 @@ export function useMissionControlLiveData() {
     projectState: snapshot?.projectState ?? null,
     codeGraphStatus: snapshot?.codeGraphStatus ?? null,
     shareReport: snapshot?.shareReport ?? null,
+    appMode,
+    appModeNotice,
     actionCapabilities: snapshot?.actionCapabilities ?? {
       canRefresh: true,
       canStop: false,
@@ -972,7 +1038,7 @@ export function useMissionControlLiveData() {
     setGithubOwner,
     githubRepo,
     setGithubRepo,
-    hasDesktopPicker: hasDesktopRepoPicker(),
+    hasDesktopPicker,
     hasAnyProjects: recentRepos.length > 0,
     newProjectTemplate,
     setNewProjectTemplate,
@@ -989,7 +1055,8 @@ export function useMissionControlLiveData() {
       regenerateBlueprintMutation.isPending ||
       moveWorkflowMutation.isPending ||
       addTaskCommentMutation.isPending ||
-      setTicketExecutionProfileMutation.isPending,
+      setTicketExecutionProfileMutation.isPending ||
+      setTicketPermissionMutation.isPending,
     chooseLocalRepo,
     startNewProject,
     pendingBootstrap,
@@ -1058,8 +1125,11 @@ export function useMissionControlLiveData() {
       addTaskCommentMutation.mutate({ taskId, body, parentCommentId }),
     setTicketExecutionProfile: (taskId: string, executionProfileId?: string | null) =>
       setTicketExecutionProfileMutation.mutate({ taskId, executionProfileId }),
+    setTicketPermissionMode: (taskId: string, mode: "balanced" | "strict") =>
+      setTicketPermissionMutation.mutate({ taskId, mode }),
     isCommenting: addTaskCommentMutation.isPending,
     isUpdatingTicketExecutionProfile: setTicketExecutionProfileMutation.isPending,
+    isUpdatingTicketPermissionMode: setTicketPermissionMutation.isPending,
     isUpdatingExecutionProfile: Boolean(pendingExecutionProfileId) || updateBlueprintMutation.isPending,
     isReviewing: reviewRouteMutation.isPending,
     isExecuting: executeMutation.isPending,

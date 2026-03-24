@@ -1,15 +1,28 @@
 import type { ProjectBlueprint, RepoGuidelineProfile } from "../../shared/contracts";
+import { buildCommandPlan, type CommandPlan } from "./commandSpecs";
 
 function unique(items: string[]) {
   return Array.from(new Set(items.filter(Boolean)));
 }
 
+export interface VerificationCommandPlan {
+  displayCommand: string;
+  commandPlan: CommandPlan;
+}
+
 export interface VerificationPlanResolved {
-  commands: string[];
+  commands: VerificationCommandPlan[];
   docsRequired: string[];
   fullSuiteRun: boolean;
   reasons: string[];
   enforcedRules: string[];
+}
+
+export function buildVerificationCommandPlans(commands: string[]) {
+  return unique(commands).map((command) => ({
+    displayCommand: command,
+    commandPlan: buildCommandPlan(command),
+  }));
 }
 
 export function buildVerificationPlan(input: {
@@ -44,7 +57,7 @@ export function buildVerificationPlan(input: {
   ]);
 
   return {
-    commands,
+    commands: buildVerificationCommandPlans(commands),
     docsRequired: unique(input.blueprint?.documentationPolicy.requiredDocPaths || []),
     fullSuiteRun: input.blueprint?.testingPolicy.fullSuitePolicy === "always",
     reasons,

@@ -13,6 +13,7 @@ import type {
 } from "../../shared/contracts";
 import { resolveOnPremQwenModelPlugin } from "./modelPlugins";
 import { resolveOnPremInferenceBackend } from "./inferenceBackends";
+import { PROVIDER_SECRET_NAMES, resolveSecretValue } from "../services/secretStore";
 
 interface OpenAiLikeConfig {
   baseUrl: string;
@@ -153,18 +154,26 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
   protected async resolveConfig(): Promise<OpenAiLikeConfig> {
     const row = await prisma.appSetting.findUnique({ where: { key: this.settingKey } });
     const value = (row?.value as Record<string, unknown> | null) || {};
+    const secretName =
+      this.id === "onprem-qwen"
+        ? PROVIDER_SECRET_NAMES.onPremQwenApiKey
+        : PROVIDER_SECRET_NAMES.openAiCompatibleApiKey;
+    const resolvedApiKey = await resolveSecretValue(
+      prisma,
+      secretName,
+      this.defaults.apiKey ?? "",
+    );
 
     const baseUrl = normalizeBaseUrl(
       toStringOrNull(value.baseUrl) || this.defaults.baseUrl
     );
 
-    const apiKey = toStringOrNull(value.apiKey) ?? this.defaults.apiKey;
     const pluginId = toStringOrNull(value.pluginId) ?? this.defaults.pluginId;
     const inferenceBackendId = toStringOrNull(value.inferenceBackendId) ?? this.defaults.inferenceBackendId;
 
     return {
       baseUrl,
-      apiKey,
+      apiKey: resolvedApiKey.value || this.defaults.apiKey,
       model: toStringOrNull(value.model) || this.defaults.model,
       timeoutMs: Math.max(5000, toNumber(value.timeoutMs, this.defaults.timeoutMs)),
       temperature: Math.min(1.5, Math.max(0, toNumber(value.temperature, this.defaults.temperature))),
@@ -435,9 +444,6 @@ function parseRoleScopedOnPremRuntime(value: unknown): RoleScopedOnPremRuntime |
   if (typeof record.baseUrl === "string" && record.baseUrl.trim()) {
     runtime.baseUrl = normalizeBaseUrl(record.baseUrl);
   }
-  if (typeof record.apiKey === "string") {
-    runtime.apiKey = record.apiKey.trim();
-  }
   if (typeof record.model === "string" && record.model.trim()) {
     runtime.model = record.model.trim();
   }
@@ -537,7 +543,18 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
     const row = await prisma.appSetting.findUnique({
       where: { key: "onprem_qwen_role_runtime_configs" },
     });
-    return resolveRoleScopedOnPremConfig(baseConfig, row?.value ?? {}, context?.modelRole);
+    const scopedConfig = resolveRoleScopedOnPremConfig(baseConfig, row?.value ?? {}, context?.modelRole);
+    if (!context?.modelRole) {
+      return scopedConfig;
+    }
+    const runtimeSecret = await resolveSecretValue(
+      prisma,
+      PROVIDER_SECRET_NAMES.onPremRoleRuntimeApiKey(context.modelRole),
+    );
+    return {
+      ...scopedConfig,
+      apiKey: runtimeSecret.value || scopedConfig.apiKey,
+    };
   }
 
   protected override async buildRequestBody(input: ProviderSendInput, options?: { stream?: boolean }) {

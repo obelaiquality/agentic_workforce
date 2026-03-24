@@ -9,6 +9,7 @@ import type {
   ProviderSession,
   ProviderStreamEvent,
 } from "../../shared/contracts";
+import { PROVIDER_SECRET_NAMES, resolveSecretValue } from "../services/secretStore";
 
 interface OpenAiResponsesConfig {
   baseUrl: string;
@@ -169,10 +170,15 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
   private async resolveConfig(): Promise<OpenAiResponsesConfig> {
     const row = await prisma.appSetting.findUnique({ where: { key: "openai_responses_config" } });
     const value = (row?.value as Record<string, unknown> | null) || {};
+    const resolvedApiKey = await resolveSecretValue(
+      prisma,
+      PROVIDER_SECRET_NAMES.openAiResponsesApiKey,
+      process.env.OPENAI_API_KEY,
+    );
 
     return {
       baseUrl: normalizeBaseUrl(toStringOrNull(value.baseUrl) || process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1"),
-      apiKey: toStringOrNull(value.apiKey) || toStringOrNull(process.env.OPENAI_API_KEY),
+      apiKey: resolvedApiKey.value || toStringOrNull(process.env.OPENAI_API_KEY),
       model: toStringOrNull(value.model) || process.env.OPENAI_RESPONSES_MODEL || "gpt-5-nano",
       timeoutMs: Math.max(5000, toNumber(value.timeoutMs, Number(process.env.OPENAI_RESPONSES_TIMEOUT_MS || 120000))),
       reasoningEffort: ((toStringOrNull(value.reasoningEffort) || process.env.OPENAI_RESPONSES_REASONING_EFFORT || "medium") as OpenAiResponsesConfig["reasoningEffort"]),

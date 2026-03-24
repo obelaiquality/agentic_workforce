@@ -7,6 +7,7 @@ import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import { getQwenCliConfig, resolveQwenProfileHome } from "../providers/qwenCliConfig";
 import { ProviderOrchestrator } from "./providerOrchestrator";
+import { redactSensitiveText, redactStringArray } from "./sensitiveRedaction";
 import type { QwenAccountAuthSession } from "../../shared/contracts";
 
 const GLOBAL_QWEN_DIR = path.join(os.homedir(), ".qwen");
@@ -47,7 +48,7 @@ async function pathExists(target: string) {
 }
 
 function trimLog(log: string[]) {
-  return log.slice(-20);
+  return redactStringArray(log.slice(-20));
 }
 
 export class QwenAccountSetupService {
@@ -194,7 +195,7 @@ export class QwenAccountSetupService {
     const append = (chunk: string) => {
       const lines = chunk
         .split(/\r?\n/)
-        .map((line) => line.trim())
+        .map((line) => redactSensitiveText(line.trim()))
         .filter(Boolean)
         .slice(-5);
       if (lines.length) {

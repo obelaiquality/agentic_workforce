@@ -59,8 +59,8 @@ const LANE_META: Array<{
     description: "Queued for agent assignment.",
     dotClass: "bg-cyan-400",
     chipClass: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
-    columnClass: "border-cyan-500/18 bg-[linear-gradient(180deg,rgba(34,211,238,0.07),rgba(12,12,16,0.94))]",
-    cardAccent: "border-cyan-500/18 shadow-[0_0_0_1px_rgba(34,211,238,0.03)]",
+    columnClass: "border-cyan-500/12 bg-[linear-gradient(180deg,rgba(34,211,238,0.04),rgba(12,12,16,0.96))]",
+    cardAccent: "border-cyan-500/14 shadow-[0_0_0_1px_rgba(34,211,238,0.02)]",
   },
   {
     key: "in_progress",
@@ -68,8 +68,8 @@ const LANE_META: Array<{
     description: "Active workflows and execution lanes.",
     dotClass: "bg-fuchsia-400",
     chipClass: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20",
-    columnClass: "border-fuchsia-500/18 bg-[linear-gradient(180deg,rgba(217,70,239,0.08),rgba(12,12,16,0.94))]",
-    cardAccent: "border-fuchsia-500/20 shadow-[0_0_0_1px_rgba(217,70,239,0.04)]",
+    columnClass: "border-fuchsia-500/12 bg-[linear-gradient(180deg,rgba(217,70,239,0.05),rgba(12,12,16,0.96))]",
+    cardAccent: "border-fuchsia-500/14 shadow-[0_0_0_1px_rgba(217,70,239,0.03)]",
   },
   {
     key: "needs_review",
@@ -77,8 +77,8 @@ const LANE_META: Array<{
     description: "Ready for review or verification follow-up.",
     dotClass: "bg-violet-400",
     chipClass: "bg-violet-500/10 text-violet-300 border-violet-500/20",
-    columnClass: "border-violet-500/18 bg-[linear-gradient(180deg,rgba(139,92,246,0.08),rgba(12,12,16,0.94))]",
-    cardAccent: "border-violet-500/18 shadow-[0_0_0_1px_rgba(139,92,246,0.04)]",
+    columnClass: "border-violet-500/12 bg-[linear-gradient(180deg,rgba(139,92,246,0.05),rgba(12,12,16,0.96))]",
+    cardAccent: "border-violet-500/14 shadow-[0_0_0_1px_rgba(139,92,246,0.03)]",
   },
   {
     key: "completed",
@@ -86,8 +86,8 @@ const LANE_META: Array<{
     description: "Closed workflows with verified output.",
     dotClass: "bg-emerald-400",
     chipClass: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
-    columnClass: "border-emerald-500/18 bg-[linear-gradient(180deg,rgba(16,185,129,0.08),rgba(12,12,16,0.94))]",
-    cardAccent: "border-emerald-500/18 shadow-[0_0_0_1px_rgba(16,185,129,0.04)]",
+    columnClass: "border-emerald-500/12 bg-[linear-gradient(180deg,rgba(16,185,129,0.05),rgba(12,12,16,0.96))]",
+    cardAccent: "border-emerald-500/14 shadow-[0_0_0_1px_rgba(16,185,129,0.03)]",
   },
 ];
 
@@ -157,16 +157,27 @@ function metricTone(status: WorkflowLaneKey) {
   }
 }
 
+function lifecycleNoticeToneClass(tone: "info" | "success" | "warn") {
+  switch (tone) {
+    case "success":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-100";
+    case "warn":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-100";
+    default:
+      return "border-cyan-500/20 bg-cyan-500/10 text-cyan-100";
+  }
+}
+
 function laneSurfaceClass(lane: WorkflowLaneKey) {
   switch (lane) {
     case "completed":
-      return "bg-[linear-gradient(180deg,rgba(16,185,129,0.08),rgba(17,17,22,0.96)_28%)]";
+      return "bg-[linear-gradient(180deg,rgba(16,185,129,0.05),rgba(17,17,22,0.98)_28%)]";
     case "needs_review":
-      return "bg-[linear-gradient(180deg,rgba(139,92,246,0.10),rgba(17,17,22,0.96)_28%)]";
+      return "bg-[linear-gradient(180deg,rgba(139,92,246,0.06),rgba(17,17,22,0.98)_28%)]";
     case "in_progress":
-      return "bg-[linear-gradient(180deg,rgba(217,70,239,0.10),rgba(17,17,22,0.96)_30%)]";
+      return "bg-[linear-gradient(180deg,rgba(217,70,239,0.06),rgba(17,17,22,0.98)_30%)]";
     default:
-      return "bg-[linear-gradient(180deg,rgba(34,211,238,0.08),rgba(17,17,22,0.96)_28%)]";
+      return "bg-[linear-gradient(180deg,rgba(34,211,238,0.05),rgba(17,17,22,0.98)_28%)]";
   }
 }
 
@@ -315,7 +326,7 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
         if ((left.laneOrder ?? 0) !== (right.laneOrder ?? 0)) {
           return (left.laneOrder ?? 0) - (right.laneOrder ?? 0);
         }
-        return new Date(right.lastUpdatedAt).getTime() - new Date(left.lastUpdatedAt).getTime();
+        return left.workflowId.localeCompare(right.workflowId);
       }),
     }));
   }, [groupedWorkflows]);
@@ -382,27 +393,28 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
           </div>
         ) : null}
 
-        <OverseerCommandCard
-          mission={mission}
-          attentionCount={attentionCount}
-          onOpenProjects={mission.openProjects}
-          onOpenSettings={() => setActiveSection("settings")}
-          onOpenConsole={() => setActiveSection("console")}
-          onOpenCodebaseScope={(scope) => {
-            setCodebaseScope(scope);
-            setActiveSection("codebase");
-          }}
-          onOpenApprovals={openApprovalContext}
-        />
+	                {mission.selectedRepo ? (
+	                  <>
+            <OverseerCommandCard
+              mission={mission}
+              attentionCount={attentionCount}
+              onOpenCodebaseScope={(scope) => {
+                setCodebaseScope(scope);
+                setActiveSection("codebase");
+              }}
+              onOpenApprovals={openApprovalContext}
+            />
 
-        {mission.selectedRepo ? (
-          <>
+            <RouteReviewPanel mission={mission} onOpenSettings={() => setActiveSection("settings")} onOpenConsole={() => setActiveSection("console")} />
+
+            <AutonomyActivityPanel mission={mission} onOpenSettings={() => setActiveSection("settings")} />
+
             <Panel className="border-white/8">
               <PanelHeader
                 title={
                   <span className="inline-flex items-center gap-2">
                     <img src="/assets/autonomous-kanban.svg" alt="" className="h-4 w-4 opacity-80" aria-hidden="true" />
-                    <span>Agent Workflows</span>
+                    <span>Task Board</span>
                   </span>
                 }
               >
@@ -455,6 +467,7 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                           }}
                           onAddTaskComment={mission.addTaskComment}
                           isCommenting={mission.isCommenting}
+                          ticketLifecycleNotices={mission.ticketLifecycleNotices ?? {}}
                         />
                       ))}
                     </div>
@@ -483,6 +496,7 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                             }
                             onAddTaskComment={mission.addTaskComment}
                             isCommenting={mission.isCommenting}
+                            lifecycleNotice={mission.ticketLifecycleNotices?.[item.workflowId] ?? null}
                             subtle={false}
                           />
                         ))
@@ -502,15 +516,14 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
             ) : null}
           </>
         ) : (
-          <ConnectSurface
+          <WorkEmptyState
             recentProjects={mission.recentRepos}
             recentRepoPaths={mission.recentRepoPaths}
             activateRepo={mission.activateRepo}
             openRecentPath={mission.connectRecentPath}
-            chooseLocalRepo={mission.chooseLocalRepo}
             openProjects={mission.openProjects}
-            hasDesktopPicker={mission.hasDesktopPicker}
-            repoPickerMessage={mission.repoPickerMessage}
+            appMode={mission.appMode}
+            appModeNotice={mission.appModeNotice}
           />
         )}
       </div>
@@ -537,185 +550,64 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
 function OverseerCommandCard({
   mission,
   attentionCount,
-  onOpenProjects,
-  onOpenSettings,
-  onOpenConsole,
   onOpenCodebaseScope,
   onOpenApprovals,
 }: {
   mission: MissionData;
   attentionCount: number;
-  onOpenProjects: () => void;
-  onOpenSettings: () => void;
-  onOpenConsole: () => void;
   onOpenCodebaseScope: (scope: "context" | "tests" | "docs") => void;
   onOpenApprovals: () => void;
 }) {
-  const [showDetails, setShowDetails] = useState(false);
   const route = mission.route;
   const contextPack = mission.contextPack;
   const hasInput = Boolean(mission.input.trim());
   const hasRouteContext = Boolean(route && contextPack);
   const selectedTicketStatus = mission.selectedTicket?.status ?? null;
-  const currentStage = mission.isExecuting
-    ? "build"
-    : mission.isReviewing
-    ? "scope"
-    : selectedTicketStatus === "done"
-    ? "complete"
-    : selectedTicketStatus === "review"
-    ? "review"
-    : hasRouteContext
-    ? "build"
-    : "scope";
-  const routeConfidence = route
-    ? Math.round(((mission.route?.metadata?.confidence as number | undefined) || contextPack?.confidence || 0.68) * 100)
-    : Math.round((contextPack?.confidence || 0.38) * 100);
-  const routeStatus = mission.isExecuting
-    ? "Running execution pipeline..."
-    : mission.isReviewing
-    ? "Scoping objective and context..."
-    : route && contextPack
-    ? "Route ready for execution."
-    : contextPack
-    ? "Context pack ready for route review"
-    : "Awaiting context pack";
   const primaryAction =
     !mission.selectedRepo || !hasInput || mission.isExecuting || mission.isReviewing || !hasRouteContext
       ? mission.reviewRoute
       : mission.executeRoute;
   const primaryLabel = mission.isExecuting
-    ? "Starting..."
+    ? "Running..."
     : mission.isReviewing
-    ? "Scoping..."
+    ? "Reviewing..."
     : !hasRouteContext
-    ? "Scope Ticket"
-    : selectedTicketStatus === "review"
-    ? "Resume Review"
-    : selectedTicketStatus === "in_progress"
-    ? "Continue Work"
-    : "Start Work";
-  const stageHint =
-    currentStage === "scope"
-      ? "We’ll create a backlog ticket from this objective using the project blueprint."
-      : currentStage === "build"
-      ? "Route scoped. Start work to move the ticket into active execution."
-      : currentStage === "review"
-      ? "Execution needs review follow-up before the workflow can close."
-      : "Verification passed and the workflow is ready to close out.";
-  const lifecycleSummary = mission.selectedExecutionProfile
-    ? (["scope", "build", "review", "escalate"] as const)
-        .map((stage) => `${stage}: ${mission.roleLabels[mission.selectedExecutionProfileStages[stage]]}`)
-        .join(" · ")
-    : "Lifecycle profile pending";
-  const isPatchTimeout =
-    (mission.actionMessage || "").toLowerCase().includes("timed out while generating patch") ||
-    (mission.actionMessage || "").toLowerCase().includes("generic patch generation timed out");
+    ? "Review plan"
+    : "Run task";
 
   return (
     <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
       <div className="space-y-3.5 px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
-                <img src="/assets/hypercube.svg" alt="" className="h-3.5 w-3.5 opacity-80" aria-hidden="true" />
-                Overseer Command
-              </div>
-              <h2 className="text-[1.22rem] font-semibold tracking-tight text-white lg:text-[1.28rem]">
-                {mission.selectedRepo ? "Issue one command, then drill into the workflow." : "Plug in your own repo"}
-              </h2>
-              <p className="max-w-xl text-sm leading-5 text-zinc-400">
-                {mission.selectedRepo
-                  ? "Start in chat. We scope your objective into a backlog ticket, then execution drives lifecycle transitions automatically."
-                  : "Choose a local Git repo or connect GitHub. The app works in a linked copy and keeps your original repository untouched."}
-              </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
+              <img src="/assets/hypercube.svg" alt="" className="h-3.5 w-3.5 opacity-80" aria-hidden="true" />
+              Work
             </div>
-            <div className="flex max-w-[420px] flex-wrap items-center justify-end gap-2">
-              {mission.selectedRepo ? (
-                <>
-                  <Chip variant="subtle" className="max-w-[220px] truncate text-[10px]" title={mission.selectedRepo.displayName}>
-                    {mission.selectedRepo.displayName}
-                  </Chip>
-                  <Chip variant="subtle" className="text-[10px]">
-                    {mission.selectedRepo.branch || mission.selectedRepo.defaultBranch || "main"}
-                  </Chip>
-                  <Chip variant={attentionCount ? "warn" : "ok"} className="text-[10px]">
-                    {attentionCount ? `${attentionCount} attention` : mission.liveState}
-                  </Chip>
-                </>
-              ) : (
-                <Chip variant="subtle" className="text-[10px]">
-                  Local-first
-                </Chip>
-              )}
-            </div>
+            <h2 className="text-[1.22rem] font-semibold tracking-tight text-white lg:text-[1.28rem]">Describe the task</h2>
+            <p className="max-w-2xl text-sm leading-5 text-zinc-400">
+              Explain the change you want. We will review the plan, run the task, verify the result, and keep the board updated.
+            </p>
           </div>
-
-          {mission.selectedRepo ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400">
-              <span className="inline-flex items-center gap-2">
-                {mission.isExecuting || mission.isReviewing ? (
-                  <ProcessingIndicator
-                    kind={mission.isExecuting ? "processing" : "thinking"}
-                    active
-                    size="xs"
-                    tone="subtle"
-                  />
-                ) : null}
-                {routeStatus}
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowDetails((value) => !value)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
-              >
-                Details
-                {showDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              </button>
-            </div>
-          ) : null}
-
-          {mission.selectedRepo && showDetails ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[11px] text-zinc-300">
-              <div className="flex flex-wrap items-center gap-2">
-                <Chip variant="subtle" className="text-[10px]">
-                  {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Route pending"}
-                </Chip>
-                <Chip variant="subtle" className="text-[10px]">
-                  {mission.selectedExecutionProfile ? `Profile · ${mission.selectedExecutionProfile.name}` : "Profile pending"}
-                </Chip>
-                <Chip variant="subtle" className="text-[10px]">
-                  {routeConfidence}% confidence
-                </Chip>
-                <Chip variant="subtle" className="text-[10px]">
-                  Stage · {currentStage}
-                </Chip>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-zinc-400">
-                <span>{stageHint}</span>
-                <button
-                  type="button"
-                  onClick={onOpenSettings}
-                  className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
-                >
-                  Lifecycle Models
-                </button>
-              </div>
-              <div className="mt-1.5 text-zinc-500">{lifecycleSummary}</div>
-            </div>
-          ) : null}
+          <div className="flex max-w-[420px] flex-wrap items-center justify-end gap-2">
+            <Chip variant="subtle" className="max-w-[220px] truncate text-[10px]" title={mission.selectedRepo.displayName}>
+              {mission.selectedRepo.displayName}
+            </Chip>
+            <Chip variant="subtle" className="text-[10px]">
+              {mission.selectedRepo.branch || mission.selectedRepo.defaultBranch || "main"}
+            </Chip>
+            <Chip variant={attentionCount ? "warn" : "ok"} className="text-[10px]">
+              {attentionCount ? `${attentionCount} attention` : "project ready"}
+            </Chip>
+          </div>
+        </div>
 
           <div className="overflow-hidden rounded-[22px] border border-white/10 bg-[#161618] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
             <textarea
               value={mission.input}
               onChange={(event) => mission.setInput(event.target.value)}
-              disabled={!mission.selectedRepo}
-              placeholder={
-                mission.selectedRepo
-                  ? "Describe the next change. Example: Add CSV export to the client list and verify the tests."
-                  : "Connect a repo to start issuing objectives from the command center."
-              }
+              placeholder="Describe the next change."
               className="min-h-[128px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-7 text-zinc-100 outline-none placeholder:text-zinc-600 disabled:cursor-not-allowed"
             />
 
@@ -746,123 +638,422 @@ function OverseerCommandCard({
                       label={`${mission.pendingApprovals.length} approvals`}
                       onClick={onOpenApprovals}
                       disabled={!mission.pendingApprovals.length}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={mission.chooseLocalRepo}
-                      disabled={mission.isActing}
-                      className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
-                    >
-                      <FolderGit2 className="h-4 w-4" />
-                      Choose Local Repo
-                    </button>
-                    <button
-                      onClick={onOpenProjects}
-                      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08]"
-                    >
-                      <Github className="h-4 w-4" />
-                      Connect GitHub Repo
-                    </button>
-                    <button
-                      onClick={onOpenProjects}
-                      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08]"
-                    >
-                      <FolderClock className="h-4 w-4" />
-                      Open Recent
-                    </button>
-                  </>
-                )}
-              </div>
+	                    />
+	                  </>
+	                ) : null}
+	              </div>
 
-              {mission.selectedRepo ? (
-                <div className="ml-auto flex min-w-[300px] flex-wrap items-center justify-end gap-2">
-                  <select
-                    value={mission.selectedExecutionProfileId}
-                    onChange={(event) => mission.setExecutionProfile(event.target.value)}
-                    disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
-                    className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed"
-                  >
-                    {mission.executionProfiles.profiles.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </option>
-                    ))}
-                  </select>
-                  {mission.isUpdatingExecutionProfile ? (
-                    <div className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-2 text-[10px] uppercase tracking-[0.16em] text-cyan-200">
-                      <ProcessingIndicator kind="processing" active size="xs" tone="accent" />
-                      Updating profile
-                    </div>
-                  ) : null}
-                  <button
-                    onClick={primaryAction}
-                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
-                  >
-                    {mission.isExecuting || mission.isReviewing ? (
-                      <ProcessingIndicator kind={mission.isExecuting ? "processing" : "thinking"} active size="xs" tone="accent" />
-                    ) : (
-                      <Play className="h-3.5 w-3.5" />
-                    )}
-                    {primaryLabel}
-                  </button>
-                  {hasRouteContext ? (
-                    <button
-                      onClick={mission.reviewRoute}
-                      disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
-                    >
-                      <FileSearch className="h-3.5 w-3.5" />
-                      Re-scope
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              <div className="ml-auto flex min-w-[300px] flex-wrap items-center justify-end gap-2">
+                <select
+                  value={mission.selectedExecutionProfileId}
+                  onChange={(event) => mission.setExecutionProfile(event.target.value)}
+                  disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
+                  className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed"
+                >
+                  {mission.executionProfiles.profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                {mission.isUpdatingExecutionProfile ? (
+                  <div className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-2 text-[10px] uppercase tracking-[0.16em] text-cyan-200">
+                    <ProcessingIndicator kind="processing" active size="xs" tone="accent" />
+                    Updating profile
+                  </div>
+                ) : null}
+                <button
+                  onClick={primaryAction}
+                  disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50"
+                >
+                  {mission.isExecuting || mission.isReviewing ? (
+                    <ProcessingIndicator kind={mission.isExecuting ? "processing" : "thinking"} active size="xs" tone="accent" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" />
+                  )}
+                  {primaryLabel}
+                </button>
+                <button
+                  onClick={mission.reviewRoute}
+                  disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50"
+                >
+                  <FileSearch className="h-3.5 w-3.5" />
+                  Review plan
+                </button>
+              </div>
             </div>
           </div>
-
-          {mission.actionMessage ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-xs text-zinc-300">
-              <div>{mission.actionMessage}</div>
-              {isPatchTimeout ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={mission.executeRoute}
-                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                    className="rounded-lg border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-200 transition hover:bg-cyan-500/14 disabled:opacity-50"
-                  >
-                    Retry
-                  </button>
-                  <button
-                    type="button"
-                    onClick={mission.reviewRoute}
-                    disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                    className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-50"
-                  >
-                    Retry Smaller Scope
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onOpenConsole}
-                    className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
-                  >
-                    Open Console
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {mission.repoPickerMessage ? (
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
-              {mission.repoPickerMessage}
-            </div>
-          ) : null}
       </div>
     </Panel>
+  );
+}
+
+function RouteReviewPanel({
+  mission,
+  onOpenSettings,
+  onOpenConsole,
+}: {
+  mission: MissionData;
+  onOpenSettings: () => void;
+  onOpenConsole: () => void;
+}) {
+  const route = mission.route;
+  const contextPack = mission.contextPack;
+  const hasRouteContext = Boolean(route && contextPack);
+  const selectedTicketStatus = mission.selectedTicket?.status ?? null;
+  const currentStage = mission.isExecuting
+    ? "build"
+    : mission.isReviewing
+    ? "scope"
+    : selectedTicketStatus === "done"
+    ? "complete"
+    : selectedTicketStatus === "review"
+    ? "review"
+    : hasRouteContext
+    ? "build"
+    : "scope";
+  const routeConfidence = route
+    ? Math.round(((route.metadata?.confidence as number | undefined) || contextPack?.confidence || 0.68) * 100)
+    : Math.round((contextPack?.confidence || 0.38) * 100);
+  const routeStatus = mission.isExecuting
+    ? "Task is running."
+    : mission.isReviewing
+    ? "Reviewing the plan."
+    : route && contextPack
+    ? "Plan is ready to run."
+    : contextPack
+    ? "Context is ready."
+    : "Review the plan to generate context and a route.";
+  const stageHint =
+    currentStage === "scope"
+      ? "We turn your request into a scoped backlog task before any code changes run."
+      : currentStage === "build"
+      ? "The plan is scoped. Run task to move the workflow into active execution."
+      : currentStage === "review"
+      ? "Execution needs follow-up before it can close cleanly."
+      : "Verification passed and the task is ready to close.";
+  const lifecycleSummary = mission.selectedExecutionProfile
+    ? `${mission.selectedExecutionProfile.name} maps the Scope, Build, Review, and Escalate stages.`
+    : "Choose an execution profile in Settings if you need a different lifecycle."
+  const isPatchTimeout =
+    (mission.actionMessage || "").toLowerCase().includes("timed out while generating patch") ||
+    (mission.actionMessage || "").toLowerCase().includes("generic patch generation timed out");
+
+  return (
+    <Panel className="border-white/8 bg-[#101114]">
+      <PanelHeader title="Review the Plan">
+        <Chip variant="subtle" className="text-[10px]">
+          {hasRouteContext ? "ready to run" : "planning"}
+        </Chip>
+      </PanelHeader>
+      <div className="space-y-3 p-4">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-300">
+          <span className="inline-flex items-center gap-2">
+            {(mission.isExecuting || mission.isReviewing) ? (
+              <ProcessingIndicator kind={mission.isExecuting ? "processing" : "thinking"} active size="xs" tone="subtle" />
+            ) : null}
+            {routeStatus}
+          </span>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip variant="subtle" className="text-[10px]">
+                {route ? `${executionModeLabel(route.executionMode)} · ${modelRoleLabel(route.modelRole)}` : "Route pending"}
+              </Chip>
+              <Chip variant="subtle" className="text-[10px]">
+                {mission.selectedExecutionProfile ? mission.selectedExecutionProfile.name : "Profile pending"}
+              </Chip>
+              <Chip variant="subtle" className="text-[10px]">
+                {routeConfidence}% confidence
+              </Chip>
+            </div>
+            <div className="mt-3 text-sm text-white">{stageHint}</div>
+            <div className="mt-2 text-xs text-zinc-500">{lifecycleSummary}</div>
+            {contextPack ? (
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-zinc-400">
+                <span>{contextPack.files.length} files</span>
+                <span>·</span>
+                <span>{contextPack.tests.length} tests</span>
+                <span>·</span>
+                <span>{contextPack.docs.length} docs</span>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-start gap-2 lg:flex-col">
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-200 transition hover:bg-white/[0.08]"
+            >
+              Open Advanced
+            </button>
+            <button
+              type="button"
+              onClick={onOpenConsole}
+              className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-200 transition hover:bg-white/[0.08]"
+            >
+              Open Console
+            </button>
+          </div>
+        </div>
+
+        {mission.actionMessage ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-zinc-300">
+            <div>{mission.actionMessage}</div>
+            {isPatchTimeout ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={mission.executeRoute}
+                  disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
+                  className="rounded-lg border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-200 transition hover:bg-cyan-500/14 disabled:opacity-50"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={mission.reviewRoute}
+                  disabled={mission.isActing || !mission.input.trim() || !mission.selectedRepo}
+                  className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-50"
+                >
+                  Retry smaller scope
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+function AutonomyActivityPanel({
+  mission,
+  onOpenSettings,
+}: {
+  mission: MissionData;
+  onOpenSettings: () => void;
+}) {
+  const channels = mission.experimentalAutonomy?.channels ?? [];
+  const subagents = mission.experimentalAutonomy?.subagents ?? [];
+  const hasActivity = channels.length > 0 || subagents.length > 0;
+
+  return (
+    <Panel className="border-white/8 bg-[#101114]">
+      <PanelHeader title="Channels and Subagents">
+        <div className="flex items-center gap-2">
+          <Chip variant={hasActivity ? "warn" : "subtle"} className="text-[10px]">
+            {hasActivity ? "experimental activity" : "experimental idle"}
+          </Chip>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.08]"
+          >
+            Configure
+          </button>
+        </div>
+      </PanelHeader>
+      <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="space-y-2 rounded-2xl border border-white/8 bg-black/20 p-4">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+            <MessageSquareText className="h-3.5 w-3.5" />
+            Inbound Channels
+          </div>
+          {channels.slice(0, 4).map((event) => (
+            <div key={event.id} className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm text-white">{event.source}</div>
+                <Chip variant={event.trustLevel === "trusted" ? "ok" : "warn"} className="text-[10px]">
+                  {event.trustLevel}
+                </Chip>
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                {event.senderId} · {formatDistanceToNow(new Date(event.createdAt), { addSuffix: true })}
+              </div>
+              <div className="mt-2 line-clamp-2 text-sm text-zinc-300">{event.content}</div>
+            </div>
+          ))}
+          {!channels.length ? (
+            <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-zinc-500">
+              No inbound channel activity yet. Enable webhook, Telegram, or CI monitoring in Advanced settings to start feeding live mission events.
+            </div>
+          ) : null}
+        </div>
+
+        <div className="space-y-2 rounded-2xl border border-white/8 bg-black/20 p-4">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+            <Bot className="h-3.5 w-3.5" />
+            Planned Subagents
+          </div>
+          {subagents.slice(0, 6).map((activity) => (
+            <div key={activity.id} className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm text-white">{activity.role.replace(/_/g, " ")}</div>
+                <Chip variant={activity.status === "completed" ? "ok" : activity.status === "failed" ? "stop" : "subtle"} className="text-[10px]">
+                  {activity.status}
+                </Chip>
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                {formatDistanceToNow(new Date(activity.createdAt), { addSuffix: true })}
+              </div>
+              <div className="mt-2 text-sm text-zinc-300">{activity.summary}</div>
+            </div>
+          ))}
+          {!subagents.length ? (
+            <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-zinc-500">
+              No subagent plans recorded yet. Experimental autonomy stays ticket-scoped and read-only by default.
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function WorkEmptyState({
+  recentProjects,
+  recentRepoPaths,
+  activateRepo,
+  openRecentPath,
+  openProjects,
+  appMode,
+  appModeNotice,
+}: {
+  recentProjects: MissionData["recentRepos"];
+  recentRepoPaths: MissionData["recentRepoPaths"];
+  activateRepo: MissionData["activateRepo"];
+  openRecentPath: MissionData["connectRecentPath"];
+  openProjects: MissionData["openProjects"];
+  appMode: MissionData["appMode"];
+  appModeNotice: MissionData["appModeNotice"];
+}) {
+  const hasRecent = recentProjects.length > 0 || recentRepoPaths.length > 0;
+
+  return (
+    <div className="space-y-4">
+      <Panel className="border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),#111113]">
+        <div className="space-y-4 px-5 py-5">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
+              <img src="/assets/hypercube.svg" alt="" className="h-3.5 w-3.5 opacity-80" aria-hidden="true" />
+              Work
+            </div>
+            <h2 className="text-[1.24rem] font-semibold tracking-tight text-white">Choose a project before you start a task</h2>
+            <p className="max-w-2xl text-sm leading-6 text-zinc-400">
+              Project connection and setup now live in Projects. Once a project is active, this workspace becomes your clean task surface for planning, running, and reviewing work.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={openProjects}
+              className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] transition hover:bg-cyan-500"
+            >
+              <FolderGit2 className="h-4 w-4" />
+              Open Projects
+            </button>
+            {recentProjects[0] ? (
+              <button
+                type="button"
+                onClick={() => activateRepo(recentProjects[0].id)}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08]"
+              >
+                <ArrowRight className="h-4 w-4" />
+                Reopen {recentProjects[0].displayName}
+              </button>
+            ) : recentRepoPaths[0] ? (
+              <button
+                type="button"
+                onClick={() => openRecentPath(recentRepoPaths[0].path, recentRepoPaths[0].label)}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08]"
+              >
+                <FolderClock className="h-4 w-4" />
+                Open recent folder
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </Panel>
+
+      {appModeNotice ? (
+        <Panel className="border-white/8 bg-[#101114]">
+          <PanelHeader title={appMode === "backend_unavailable" ? "Recovery" : "Limited mode"} />
+          <div className="space-y-2 p-4">
+            <div className="text-sm text-white">{appModeNotice.message}</div>
+            <div className="text-xs leading-5 text-zinc-400">{appModeNotice.detail}</div>
+          </div>
+        </Panel>
+      ) : null}
+
+      <Panel className="border-white/8">
+        <PanelHeader title="Recent Projects">
+          <Chip variant="subtle" className="text-[10px]">
+            {recentProjects.length || recentRepoPaths.length}
+          </Chip>
+        </PanelHeader>
+        <div className="space-y-3 p-4">
+          {recentProjects.length ? (
+            recentProjects.slice(0, 4).map((repo) => (
+              <button
+                key={repo.id}
+                onClick={() => activateRepo(repo.id)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-left transition hover:bg-white/[0.04]"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-white">{repo.displayName}</div>
+                  <div className="truncate text-xs text-zinc-500">{repo.branch || repo.defaultBranch || "main"}</div>
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-500" />
+              </button>
+            ))
+          ) : recentRepoPaths.length ? (
+            recentRepoPaths.slice(0, 4).map((item) => (
+              <button
+                key={item.path}
+                onClick={() => openRecentPath(item.path, item.label)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-left transition hover:bg-white/[0.04]"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-white">{item.label}</div>
+                  <div className="truncate text-xs text-zinc-500">{item.path}</div>
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-500" />
+              </button>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-white/8 px-4 py-8 text-center text-sm text-zinc-500">
+              Projects you open will appear here for quick access.
+            </div>
+          )}
+        </div>
+      </Panel>
+
+      {!hasRecent ? (
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+          <ProofCard
+            icon={<Sparkles className="h-4 w-4 text-violet-400" />}
+            title="Plan"
+            body="Work focuses on describing a task clearly before any code runs."
+          />
+          <ProofCard
+            icon={<TestTube2 className="h-4 w-4 text-cyan-300" />}
+            title="Verify"
+            body="Every run stays tied to tests, docs, and project policy."
+          />
+          <ProofCard
+            icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}
+            title="Prove"
+            body="Results end with evidence and a report, not only model output."
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -879,6 +1070,7 @@ function WorkflowLane({
   onMoveWorkflow,
   onAddTaskComment,
   isCommenting,
+  ticketLifecycleNotices,
 }: {
   lane: {
     key: WorkflowLaneKey;
@@ -898,6 +1090,7 @@ function WorkflowLane({
   onMoveWorkflow: (item: WorkflowCardItem, nextLane: WorkflowLaneKey, beforeWorkflowId?: string | null) => void;
   onAddTaskComment: (taskId: string, body: string, parentCommentId?: string | null) => void;
   isCommenting: boolean;
+  ticketLifecycleNotices: Record<string, { message: string; tone: "info" | "success" | "warn"; at: string }>;
 }) {
   const meta = laneMetaFor(lane.key);
   const [{ isOver, canDrop }, dropRef] = useDrop(
@@ -924,7 +1117,7 @@ function WorkflowLane({
       className={cn(
         "overflow-hidden rounded-[24px] border transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
         meta.columnClass,
-        emphasized ? "opacity-100" : "opacity-58",
+        emphasized ? "opacity-100" : "opacity-82",
         isOver && canDrop ? "ring-1 ring-cyan-300/30 border-cyan-300/30 shadow-[0_0_20px_rgba(34,211,238,0.07)]" : ""
       )}
     >
@@ -943,7 +1136,7 @@ function WorkflowLane({
 
       <div className="min-h-[332px] space-y-3 p-4">
         {lane.items.length === 0 ? (
-          <div className="rounded-[22px] border border-dashed border-white/8 bg-black/10 px-4 py-12 text-center text-sm text-zinc-600">
+          <div className="rounded-[22px] border border-dashed border-white/6 bg-black/10 px-4 py-10 text-center text-sm text-zinc-600">
             Nothing active in this lane.
           </div>
         ) : (
@@ -964,6 +1157,7 @@ function WorkflowLane({
               onMove={(nextLane, beforeWorkflowId) => onMoveWorkflow(item, nextLane, beforeWorkflowId)}
               onAddTaskComment={onAddTaskComment}
               isCommenting={isCommenting}
+              lifecycleNotice={ticketLifecycleNotices[item.workflowId] ?? null}
               subtle={!emphasized}
             />
           ))
@@ -988,6 +1182,7 @@ function WorkflowCard({
   onMove,
   onAddTaskComment,
   isCommenting,
+  lifecycleNotice,
   subtle,
 }: {
   item: WorkflowCardItem;
@@ -1004,6 +1199,7 @@ function WorkflowCard({
   onMove: (nextLane: WorkflowLaneKey, beforeWorkflowId?: string | null) => void;
   onAddTaskComment: (taskId: string, body: string, parentCommentId?: string | null) => void;
   isCommenting: boolean;
+  lifecycleNotice?: { message: string; tone: "info" | "success" | "warn"; at: string } | null;
   subtle: boolean;
 }) {
   const setActiveSection = useUiStore((state) => state.setActiveSection);
@@ -1091,9 +1287,9 @@ function WorkflowCard({
         "overflow-hidden rounded-[24px] border transition-all",
         laneSurfaceClass(lane),
         meta.cardAccent,
-        active ? "ring-1 ring-white/12 shadow-[0_0_20px_rgba(255,255,255,0.05)]" : "hover:border-white/14 hover:shadow-[0_0_16px_rgba(255,255,255,0.03)]",
+        active ? "ring-1 ring-cyan-300/35 border-cyan-300/28 shadow-[0_0_22px_rgba(34,211,238,0.08)]" : "hover:border-white/14 hover:shadow-[0_0_16px_rgba(255,255,255,0.03)]",
         item.isBlocked ? "border-amber-400/30 shadow-[0_0_0_1px_rgba(245,158,11,0.08),0_0_18px_rgba(245,158,11,0.06)]" : "",
-        subtle ? "opacity-90" : "opacity-100",
+        subtle ? "opacity-94" : "opacity-100",
         isDragging ? "opacity-55" : "",
         isCardOver && canDropOnCard ? "ring-1 ring-cyan-300/35 border-cyan-300/30 shadow-[0_0_20px_rgba(34,211,238,0.08)]" : ""
       )}
@@ -1191,6 +1387,23 @@ function WorkflowCard({
               )}
               <span>{formatDistanceToNow(new Date(item.lastUpdatedAt), { addSuffix: true })}</span>
             </div>
+
+            {lifecycleNotice ? (
+              <div
+                className={cn(
+                  "mt-2.5 flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px]",
+                  lifecycleNoticeToneClass(lifecycleNotice.tone)
+                )}
+              >
+                <ProcessingIndicator
+                  kind={
+                    lifecycleNotice.tone === "success" ? "verifying" : lifecycleNotice.tone === "warn" ? "provider" : "processing"
+                  }
+                  size="xs"
+                />
+                <span className="line-clamp-2">{lifecycleNotice.message}</span>
+              </div>
+            ) : null}
 
             {lane === "in_progress" ? (
               <div className="mt-3">
@@ -1614,10 +1827,10 @@ function CommandContextDrawer({
                       Ticket override controls the next scope/build/review cycle. Run snapshot shows the last resolved lifecycle.
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={taskDetail.executionProfileOverrideId ?? "__project__"}
-                      onChange={(event) =>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={taskDetail.executionProfileOverrideId ?? "__project__"}
+                    onChange={(event) =>
                         selectedWorkflowId
                           ? mission.setTicketExecutionProfile(
                               selectedWorkflowId,
@@ -1627,24 +1840,60 @@ function CommandContextDrawer({
                       }
                       disabled={!selectedWorkflowId || mission.isUpdatingTicketExecutionProfile}
                       className="min-w-[150px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <option value="__project__">
-                        Project default ({mission.selectedExecutionProfile?.name ?? "Default"})
-                      </option>
-                      {mission.executionProfiles.profiles.map((profile) => (
+                  >
+                    <option value="__project__">
+                      Project default ({mission.selectedExecutionProfile?.name ?? "Default"})
+                    </option>
+                    {mission.executionProfiles.profiles.map((profile) => (
                         <option key={`${selectedWorkflow?.workflowId}-${profile.id}`} value={profile.id}>
                           {profile.name}
                         </option>
                       ))}
-                    </select>
-                    <Chip variant="subtle" className="text-[10px]">
-                      {taskDetail.executionProfileSnapshot?.profileName || mission.selectedExecutionProfile?.name || "Project default"}
-                    </Chip>
-                  </div>
+                  </select>
+                  <Chip variant="subtle" className="text-[10px]">
+                    {taskDetail.executionProfileSnapshot?.profileName || mission.selectedExecutionProfile?.name || "Project default"}
+                  </Chip>
                 </div>
-                {taskDetail.executionProfileSnapshot ? (
-                  <div className="mt-3 space-y-2">
-                    {taskDetail.executionProfileSnapshot.stages.map((stage) => (
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Ticket permission</div>
+                <select
+                  value={taskDetail.ticketExecutionPolicy?.mode === "full_access" ? "__legacy_full_access" : taskDetail.ticketExecutionPolicy?.mode || "balanced"}
+                  onChange={(event) =>
+                    selectedWorkflowId
+                      ? mission.setTicketPermissionMode(
+                          selectedWorkflowId,
+                          event.target.value as "balanced" | "strict"
+                        )
+                      : undefined
+                  }
+                  disabled={!selectedWorkflowId || mission.isUpdatingTicketPermissionMode}
+                  className="min-w-[138px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {taskDetail.ticketExecutionPolicy?.mode === "full_access" ? (
+                    <option value="__legacy_full_access" disabled>
+                      Legacy Full Access (downgrade only)
+                    </option>
+                  ) : null}
+                  <option value="balanced">Balanced</option>
+                  <option value="strict">Strict</option>
+                </select>
+                <Chip variant="subtle" className="text-[10px]">
+                  {taskDetail.ticketExecutionPolicy?.mode === "full_access"
+                    ? "legacy unrestricted mode"
+                    : taskDetail.ticketExecutionPolicy?.mode === "strict"
+                    ? "approval per command"
+                    : "approval for risky ops"}
+                </Chip>
+              </div>
+              {taskDetail.ticketExecutionPolicy?.mode === "full_access" ? (
+                <div className="mt-2 rounded-[14px] border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                  This ticket is using a legacy internal-only permission mode. You can downgrade it to Balanced or Strict, but you cannot re-enable Full Access from the standard mission UI.
+                </div>
+              ) : null}
+              {taskDetail.executionProfileSnapshot ? (
+                <div className="mt-3 space-y-2">
+                  {taskDetail.executionProfileSnapshot.stages.map((stage) => (
                       <div
                         key={`${taskDetail.executionProfileSnapshot?.profileId}-${stage.stage}`}
                         className="flex items-center justify-between gap-3 rounded-[14px] border border-white/6 bg-white/[0.02] px-3 py-2"
@@ -2030,102 +2279,6 @@ function CommentThreadNode({
         </div>
       ) : null}
     </div>
-  );
-}
-
-function ConnectSurface({
-  recentProjects,
-  recentRepoPaths,
-  activateRepo,
-  openRecentPath,
-  chooseLocalRepo,
-  openProjects,
-  hasDesktopPicker,
-  repoPickerMessage,
-}: {
-  recentProjects: MissionData["recentRepos"];
-  recentRepoPaths: MissionData["recentRepoPaths"];
-  activateRepo: MissionData["activateRepo"];
-  openRecentPath: MissionData["connectRecentPath"];
-  chooseLocalRepo: MissionData["chooseLocalRepo"];
-  openProjects: MissionData["openProjects"];
-  hasDesktopPicker: boolean;
-  repoPickerMessage: string | null;
-}) {
-  return (
-    <>
-      <Panel className="border-white/8">
-        <PanelHeader title="Recent Projects">
-          <Chip variant="subtle" className="text-[10px]">
-            {recentProjects.length || recentRepoPaths.length}
-          </Chip>
-        </PanelHeader>
-        <div className="p-4 space-y-3">
-          {recentProjects.length ? (
-            recentProjects.slice(0, 4).map((repo) => (
-              <button
-                key={repo.id}
-                onClick={() => activateRepo(repo.id)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-left hover:bg-white/[0.04]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-white">{repo.displayName}</div>
-                  <div className="truncate text-xs text-zinc-500">{repo.branch || repo.defaultBranch || "main"}</div>
-                </div>
-                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-500" />
-              </button>
-            ))
-          ) : recentRepoPaths.length ? (
-            recentRepoPaths.slice(0, 4).map((item) => (
-              <button
-                key={item.path}
-                onClick={() => openRecentPath(item.path, item.label)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-left hover:bg-white/[0.04]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-white">{item.label}</div>
-                  <div className="truncate text-xs text-zinc-500">{item.path}</div>
-                </div>
-                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-500" />
-              </button>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/8 px-4 py-8 text-center text-sm text-zinc-500">
-              No recent repos yet. Connect one local repo and it will appear here.
-            </div>
-          )}
-        </div>
-      </Panel>
-
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <ProofCard
-          icon={<Sparkles className="h-4 w-4 text-violet-400" />}
-          title="Route"
-          body="Start with one command. The Overseer picks the route and keeps the parent context intact."
-        />
-        <ProofCard
-          icon={<TestTube2 className="h-4 w-4 text-cyan-300" />}
-          title="Verify"
-          body="Verification stays tied to tests, docs, and project policy instead of generic agent output."
-        />
-        <ProofCard
-          icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}
-          title="Prove"
-          body="Runs end with evidence and a report, not claims."
-        />
-      </div>
-
-      {repoPickerMessage && !hasDesktopPicker ? (
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-zinc-400">
-          {repoPickerMessage}
-          <button onClick={openProjects} className="ml-2 text-cyan-300 hover:text-cyan-200">
-            Open Projects
-          </button>
-        </div>
-      ) : null}
-
-      <button onClick={chooseLocalRepo} className="hidden" aria-hidden="true" />
-    </>
   );
 }
 

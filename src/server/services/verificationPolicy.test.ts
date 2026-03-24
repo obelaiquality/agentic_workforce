@@ -73,6 +73,10 @@ function makeGuidelines(overrides?: Partial<RepoGuidelineProfile>): RepoGuidelin
   };
 }
 
+function displayCommands(plan: ReturnType<typeof buildVerificationPlan>) {
+  return plan.commands.map((command) => command.displayCommand);
+}
+
 describe("buildVerificationPlan", () => {
   it("includes lint, test, and build commands from guidelines", () => {
     const plan = buildVerificationPlan({
@@ -80,9 +84,10 @@ describe("buildVerificationPlan", () => {
       guidelines: makeGuidelines(),
     });
 
-    expect(plan.commands).toContain("npm run lint");
-    expect(plan.commands).toContain("npm test");
-    expect(plan.commands).toContain("npm run build");
+    const commands = displayCommands(plan);
+    expect(commands).toContain("npm run lint");
+    expect(commands).toContain("npm test");
+    expect(commands).toContain("npm run build");
   });
 
   it("includes npm install when includeInstall is true", () => {
@@ -92,7 +97,7 @@ describe("buildVerificationPlan", () => {
       includeInstall: true,
     });
 
-    expect(plan.commands[0]).toBe("npm install");
+    expect(plan.commands[0]?.displayCommand).toBe("npm install");
   });
 
   it("does not include npm install by default", () => {
@@ -101,7 +106,7 @@ describe("buildVerificationPlan", () => {
       guidelines: makeGuidelines(),
     });
 
-    expect(plan.commands).not.toContain("npm install");
+    expect(displayCommands(plan)).not.toContain("npm install");
   });
 
   it("returns docs from blueprint documentation policy", () => {
@@ -152,7 +157,7 @@ describe("buildVerificationPlan", () => {
       guidelines: null,
     });
 
-    expect(plan.commands).toEqual([]);
+    expect(displayCommands(plan)).toEqual([]);
     expect(plan.docsRequired).toEqual([]);
     expect(plan.fullSuiteRun).toBe(false);
   });
@@ -184,7 +189,7 @@ describe("buildVerificationPlan", () => {
       }),
     });
 
-    const testCount = plan.commands.filter((cmd) => cmd === "npm test").length;
+    const testCount = displayCommands(plan).filter((cmd) => cmd === "npm test").length;
     expect(testCount).toBe(1);
   });
 
@@ -237,7 +242,7 @@ describe("buildVerificationPlan", () => {
       guidelines,
     });
 
-    expect(planAfter.commands).toContain("npm test");
+    expect(displayCommands(planAfter)).toContain("npm test");
     expect(planAfter.fullSuiteRun).toBe(true);
     expect(planBefore.fullSuiteRun).toBe(false);
     expect(planAfter.docsRequired).toContain("README.md");

@@ -52,6 +52,7 @@ export function ProcessingIndicator({
   className?: string;
   alt?: string;
 }) {
+  const assetSrc = ASSET_BY_KIND[kind] ?? ASSET_BY_KIND.processing;
   return (
     <span
       className={cn(
@@ -63,7 +64,7 @@ export function ProcessingIndicator({
       aria-hidden={alt ? undefined : true}
     >
       <img
-        src={ASSET_BY_KIND[kind]}
+        src={assetSrc}
         alt={alt || ""}
         className={cn(
           SIZE_CLASS[size],

@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
 import useEmblaCarousel from "embla-carousel-react";
-import { MissionChangeBrief } from "../data/mockData";
-import { Chip, Panel, PanelHeader, Button } from "./UI";
+import type { MissionChangeBrief } from "../lib/missionTypes";
+import { Chip, Panel, PanelHeader } from "./UI";
 import { FileCode2, Clock, Cpu, ChevronLeft, ChevronRight, Zap } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
-export function ChangeBriefStrip({ briefs, onSelectTask }: { briefs: MissionChangeBrief[], onSelectTask: (id: string) => void }) {
+export function ChangeBriefStrip({ briefs, onSelectTask }: { briefs: MissionChangeBrief[]; onSelectTask: (id: string) => void }) {
   const [emblaRef, emblaApi] = useEmblaCarousel({
     loop: true,
     align: "start",

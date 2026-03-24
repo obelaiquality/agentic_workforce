@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 
@@ -23,9 +23,12 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL || "http://localhost:5173";
 const defaultDatabaseUrl =
   process.env.DATABASE_URL || "postgresql://agentic:agentic@localhost:5433/agentic_workforce?schema=public";
 const qwenCommand = process.env.QWEN_COMMAND || "qwen";
+const secretKeyFileName = "secretbox.key.enc";
 
 /** @type {import("node:child_process").ChildProcess | null} */
 let apiProcess = null;
+/** @type {Map<string, AbortController>} */
+const activeStreams = new Map();
 
 /** @type {{ checks: Array<{ key: string; ok: boolean; message: string; severity: "warning" | "error" }>; apiReady: boolean; checkedAt: string; }} */
 let preflightStatus = {
@@ -185,16 +188,158 @@ function gatherPreflightChecks() {
   return checks;
 }
 
+function secretKeyPath() {
+  return path.join(app.getPath("userData"), secretKeyFileName);
+}
+
+function isValidSecretKey(raw) {
+  if (typeof raw !== "string") {
+    return false;
+  }
+  const trimmed = raw.trim();
+  if (/^[a-f0-9]{64}$/i.test(trimmed)) {
+    return true;
+  }
+  try {
+    return Buffer.from(trimmed, "base64").length === 32;
+  } catch {
+    return false;
+  }
+}
+
+function loadOrCreateSecretStoreKey() {
+  const envOverride = process.env.APP_SECRETBOX_KEY;
+  if (isValidSecretKey(envOverride)) {
+    return envOverride.trim();
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn("safeStorage is unavailable; encrypted local secret storage will remain disabled.");
+    return null;
+  }
+
+  const filePath = secretKeyPath();
+
+  try {
+    if (fs.existsSync(filePath)) {
+      const encrypted = fs.readFileSync(filePath);
+      const stored = safeStorage.decryptString(encrypted).trim();
+      if (isValidSecretKey(stored)) {
+        return stored;
+      }
+      console.warn("Ignoring malformed stored APP_SECRETBOX_KEY material.");
+    }
+  } catch (error) {
+    console.warn("Failed to read encrypted secret-store key.", error);
+  }
+
+  try {
+    const generated = crypto.randomBytes(32).toString("base64");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, safeStorage.encryptString(generated));
+    return generated;
+  } catch (error) {
+    console.warn("Failed to persist encrypted secret-store key.", error);
+    return null;
+  }
+}
+
+function buildApiUrl(requestPath, query) {
+  const url = new URL(requestPath, apiBaseUrl);
+  if (query && typeof query === "object") {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url;
+}
+
+function sendStreamEvent(webContents, streamId, event, data = "") {
+  if (webContents.isDestroyed()) {
+    return;
+  }
+  webContents.send("desktop:stream-event", {
+    streamId,
+    event,
+    data,
+  });
+}
+
+async function streamSseToRenderer(webContents, streamId, response, controller) {
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => "");
+    sendStreamEvent(webContents, streamId, "__error__", text || `Failed to open stream (${response.status})`);
+    sendStreamEvent(webContents, streamId, "__close__");
+    activeStreams.delete(streamId);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventName = "message";
+  let dataLines = [];
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line) {
+          if (dataLines.length > 0) {
+            sendStreamEvent(webContents, streamId, eventName, dataLines.join("\n"));
+          }
+          eventName = "message";
+          dataLines = [];
+          continue;
+        }
+
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim() || "message";
+          continue;
+        }
+
+        if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+    }
+
+    if (dataLines.length > 0) {
+      sendStreamEvent(webContents, streamId, eventName, dataLines.join("\n"));
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      sendStreamEvent(webContents, streamId, "__error__", error instanceof Error ? error.message : "Stream failed");
+    }
+  } finally {
+    activeStreams.delete(streamId);
+    sendStreamEvent(webContents, streamId, "__close__");
+  }
+}
+
 function startApiProcess() {
   const sidecarBinaryName = process.platform === "win32" ? "agentic-sidecar.exe" : "agentic-sidecar";
   const sidecarBinaryPath = isDev
     ? ""
     : path.join(process.resourcesPath, "app.asar.unpacked", "dist-sidecar", sidecarBinaryName);
+  const secretStoreKey = loadOrCreateSecretStoreKey();
 
   const env = {
     ...process.env,
     API_PORT: String(apiPort),
     API_TOKEN: apiToken,
+    ...(secretStoreKey ? { APP_SECRETBOX_KEY: secretStoreKey } : {}),
     DATABASE_URL: defaultDatabaseUrl,
     ELECTRON_RUN_AS_NODE: "1",
     APP_PACKAGED: isDev ? "false" : "true",
@@ -236,6 +381,48 @@ async function waitForApi(maxRetries = 60, delayMs = 250) {
   return false;
 }
 
+function isTrustedWindowUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (isDev) {
+      return parsed.origin === new URL(devServerUrl).origin;
+    }
+
+    const appIndexUrl = pathToFileURL(path.join(projectRoot, "dist/index.html")).toString();
+    return parsed.protocol === "file:" && url.startsWith(appIndexUrl.replace("index.html", ""));
+  } catch {
+    return false;
+  }
+}
+
+function maybeOpenExternal(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      void shell.openExternal(url);
+    }
+  } catch {
+    // Ignore malformed URLs.
+  }
+}
+
+function hardenWindowNavigation(window) {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isTrustedWindowUrl(url)) {
+      maybeOpenExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    if (isTrustedWindowUrl(url)) {
+      return;
+    }
+    event.preventDefault();
+    maybeOpenExternal(url);
+  });
+}
+
 async function createMainWindow() {
   const window = new BrowserWindow({
     width: 1640,
@@ -247,9 +434,11 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
+
+  hardenWindowNavigation(window);
 
   if (isDev) {
     await window.loadURL(devServerUrl);
@@ -290,11 +479,83 @@ app.whenReady().then(async () => {
     ],
   };
 
-  ipcMain.handle("desktop:get-api-config", async () => ({
-    baseUrl: apiBaseUrl,
-    token: apiToken,
-    apiReady,
-  }));
+  ipcMain.handle("desktop:api-request", async (_event, request) => {
+    const method = typeof request?.method === "string" && request.method.trim() ? request.method.toUpperCase() : "GET";
+    const response = await fetch(buildApiUrl(request?.path || "/", request?.query), {
+      method,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "x-local-api-token": apiToken,
+        ...(request?.headers && typeof request.headers === "object" ? request.headers : {}),
+      },
+      body: method === "GET" || method === "HEAD" || request?.body === undefined ? undefined : JSON.stringify(request.body),
+    });
+
+    const text = await response.text();
+    const contentType = response.headers.get("content-type") || "";
+    let body;
+    if (text && contentType.includes("application/json")) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = undefined;
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      body,
+      text: contentType.includes("application/json") ? undefined : text,
+    };
+  });
+
+  ipcMain.handle("desktop:open-stream", async (event, request) => {
+    const streamId = crypto.randomUUID();
+    const controller = new AbortController();
+    activeStreams.set(streamId, controller);
+
+    void fetch(buildApiUrl(request?.path || "/", request?.query), {
+      method: "GET",
+      headers: {
+        accept: "text/event-stream",
+        "x-local-api-token": apiToken,
+      },
+      signal: controller.signal,
+    })
+      .then((response) => streamSseToRenderer(event.sender, streamId, response, controller))
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          sendStreamEvent(event.sender, streamId, "__error__", error instanceof Error ? error.message : "Stream failed");
+          sendStreamEvent(event.sender, streamId, "__close__");
+        }
+        activeStreams.delete(streamId);
+      });
+
+    return { streamId };
+  });
+
+  ipcMain.handle("desktop:close-stream", async (_event, streamId) => {
+    const controller = activeStreams.get(streamId);
+    if (controller) {
+      controller.abort();
+      activeStreams.delete(streamId);
+    }
+  });
+
+  ipcMain.handle("desktop:open-external", async (_event, targetUrl) => {
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { ok: false };
+      }
+      await shell.openExternal(parsed.toString());
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
 
   ipcMain.handle("desktop:get-preflight", async () => preflightStatus);
   ipcMain.handle("desktop:pick-repo-directory", async () => {
@@ -338,6 +599,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  for (const controller of activeStreams.values()) {
+    controller.abort();
+  }
+  activeStreams.clear();
   if (apiProcess) {
     apiProcess.kill("SIGTERM");
   }

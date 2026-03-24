@@ -3,7 +3,25 @@ export {};
 declare global {
   interface Window {
     desktopBridge?: {
-      getApiConfig: () => Promise<{ baseUrl: string; token: string; apiReady?: boolean }>;
+      apiRequest?: (request: {
+        method?: string;
+        path: string;
+        query?: Record<string, string | number | boolean | null | undefined>;
+        body?: unknown;
+        headers?: Record<string, string>;
+      }) => Promise<{
+        ok: boolean;
+        status: number;
+        body?: unknown;
+        text?: string;
+      }>;
+      openStream?: (request: {
+        path: string;
+        query?: Record<string, string | number | boolean | null | undefined>;
+      }) => Promise<{ streamId: string }>;
+      onStreamEvent?: (streamId: string, handler: (event: { event: string; data: string }) => void) => () => void;
+      closeStream?: (streamId: string) => Promise<void>;
+      openExternal?: (url: string) => Promise<{ ok: boolean }>;
       getPreflight: () => Promise<{
         checks: Array<{ key: string; ok: boolean; message: string; severity: "warning" | "error" }>;
         apiReady: boolean;

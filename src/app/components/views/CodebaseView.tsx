@@ -5,6 +5,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { CodebaseTreeNode } from "../../../shared/contracts";
 import { getMissionCodeFileDiffV8, getMissionCodeFileV8, getMissionCodebaseTreeV8 } from "../../lib/apiClient";
+import { getDesktopBridge, openDesktopExternal } from "../../lib/desktopBridge";
+import { sanitizeSvgMarkup } from "../../lib/sanitizeSvgMarkup";
 import { useUiStore } from "../../store/uiStore";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 
@@ -289,7 +291,7 @@ function MermaidDiagram({ chart, idSeed }: { chart: string; idSeed: string }) {
   return (
     <div
       className="overflow-x-auto rounded-xl border border-white/10 bg-black/20 p-3 [&_svg]:h-auto [&_svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: svg }}
+      dangerouslySetInnerHTML={{ __html: sanitizeSvgMarkup(svg) }}
     />
   );
 }
@@ -1430,12 +1432,26 @@ export function CodebaseView({
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
-                              a: ({ node: _node, ...props }) => (
+                              a: ({ node: _node, href, onClick, ...props }) => (
                                 <a
                                   {...props}
+                                  href={href}
                                   target="_blank"
                                   rel="noreferrer noopener"
                                   className="underline decoration-cyan-500/40 underline-offset-2 hover:text-cyan-100"
+                                  onClick={(event) => {
+                                    onClick?.(event);
+                                    if (event.defaultPrevented) {
+                                      return;
+                                    }
+                                    if (!getDesktopBridge()?.openExternal) {
+                                      return;
+                                    }
+                                    event.preventDefault();
+                                    if (typeof href === "string" && /^https?:\/\//i.test(href)) {
+                                      void openDesktopExternal(href);
+                                    }
+                                  }}
                                 />
                               ),
                               code: ({ node: _node, className, children, ...props }) => {

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MissionRunPhase, MissionTimelineEvent } from "../data/mockData";
+import type { MissionRunPhase, MissionTimelineEvent } from "../lib/missionTypes";
 import { Chip, Panel, PanelHeader } from "./UI";
 import { Clock3, Activity, ChevronDown, ChevronUp } from "lucide-react";
 import { format } from "date-fns";
