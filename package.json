@@ -6,6 +6,13 @@
   "description": "Local-first desktop coding agent for real repositories with verified execution and evidence-rich review.",
   "author": "Neilslab",
   "license": "MIT",
+  "files": [
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json",
+    "scripts/agentic-cli.mjs"
+  ],
   "homepage": "https://github.com/obelaiquality/agentic_workforce",
   "bugs": {
     "url": "https://github.com/obelaiquality/agentic_workforce/issues"
@@ -37,7 +44,10 @@
     "dev": "vite",
     "doctor": "node scripts/doctor.mjs",
     "check:docs": "node scripts/check-doc-links.mjs",
+    "generate:icons": "python3 scripts/generate_release_icons.py",
     "lint": "node scripts/lint-workspace.mjs",
+    "prepublishOnly": "node scripts/prevent-npm-publish.mjs",
+    "release:checksums": "node scripts/generate-release-checksums.mjs",
     "security:check": "node scripts/security-guardrails.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "validate": "npm run lint && npm run security:check && npm run typecheck && npm run check:docs && npm test && npm run build && npm run build:server",
@@ -55,6 +65,7 @@
     "dist:desktop": "npm run build:desktop && electron-builder",
     "test": "vitest run",
     "test:e2e:desktop-acceptance": "node scripts/playwright/run_electron_desktop_acceptance.mjs",
+    "test:e2e:desktop-packaged-launch": "node scripts/playwright/run_packaged_desktop_launch_probe.mjs",
     "test:e2e:desktop-stable": "node scripts/playwright/run_desktop_stable.mjs",
     "test:e2e:desktop-packaged-smoke": "node scripts/playwright/run_packaged_desktop_smoke.mjs",
     "test:e2e:local-attach-existing": "node scripts/playwright/run_local_attach_existing_repo.mjs",
@@ -181,6 +192,7 @@
     "appId": "com.neilslab.agenticcoding",
     "productName": "Agentic Workforce",
     "afterSign": "scripts/notarize.mjs",
+    "icon": "build-resources/icon.png",
     "asarUnpack": [
       "dist-sidecar/**/*",
       "node_modules/.prisma/**/*",
@@ -200,6 +212,7 @@
       "output": "release"
     },
     "mac": {
+      "icon": "build-resources/icon.icns",
       "target": [
         "dmg",
         "zip"
@@ -211,17 +224,22 @@
       "entitlementsInherit": "build-resources/entitlements.mac.plist"
     },
     "win": {
+      "icon": "build-resources/icon.ico",
       "target": [
         "nsis",
         "zip"
       ]
     },
     "linux": {
+      "icon": "build-resources/icon.png",
       "target": [
         "AppImage",
         "deb"
       ],
-      "category": "Development"
+      "category": "Development",
+      "maintainer": "Neilslab",
+      "synopsis": "Desktop coding agent for local repositories",
+      "description": "Agentic Workforce is a desktop coding agent for real local repositories with managed execution, verification, and evidence-rich review."
     }
   }
 }

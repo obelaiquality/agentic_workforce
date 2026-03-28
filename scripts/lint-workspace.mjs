@@ -14,6 +14,7 @@ const requiredFiles = [
   "SECURITY.md",
   "SUPPORT.md",
   "CHANGELOG.md",
+  "docs/release-notes-template.md",
   ".nvmrc",
   ".env.example",
   ".env.advanced.example",
@@ -21,6 +22,9 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/config.yml",
   ".github/workflows/ci.yml",
   ".github/workflows/desktop-release.yml",
+  "build-resources/icon.icns",
+  "build-resources/icon.ico",
+  "build-resources/icon.png",
 ];
 
 const publicDocs = [
@@ -128,6 +132,21 @@ async function main() {
   } else {
     hasFailures = true;
     logFail("package.json is missing the `agentic-workforce` CLI binary.");
+  }
+
+  if (packageJson.scripts?.prepublishOnly === "node scripts/prevent-npm-publish.mjs") {
+    logPass("package.json blocks accidental npm publication");
+  } else {
+    hasFailures = true;
+    logFail("package.json must block accidental npm publication from the repo root.");
+  }
+
+  const publishedFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
+  if (publishedFiles.length > 0 && !publishedFiles.includes(".github/workflows/ci.yml")) {
+    logPass("package.json keeps a narrow npm files allowlist");
+  } else {
+    hasFailures = true;
+    logFail("package.json should define a narrow npm `files` allowlist.");
   }
 
   const envExample = await readFile(".env.example");

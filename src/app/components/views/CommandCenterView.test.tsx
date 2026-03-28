@@ -125,9 +125,26 @@ describe("CommandCenterView", () => {
     expect(taskHeading.compareDocumentPosition(reviewHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(reviewHeading.compareDocumentPosition(boardHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(boardHeading.compareDocumentPosition(outcomeHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("How this works")).toBeInTheDocument();
-    expect(screen.getByText("Good first prompts")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add a status badge component with tests" })).toBeInTheDocument();
+    expect(screen.queryByText("How this works")).not.toBeInTheDocument();
+    expect(screen.queryByText("Prompt starters")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe the next change.")).toBeInTheDocument();
+  });
+
+  it("removes persistent onboarding helpers from the active project composer", () => {
+    render(
+      <CommandCenterView
+        mission={makeMission({
+          selectedRepo: { id: "repo-1", displayName: "Agentic Workforce", branch: "main", defaultBranch: "main" },
+          input: "",
+          route: null,
+        }) as never}
+      />
+    );
+
+    expect(screen.queryByText("How this works")).not.toBeInTheDocument();
+    expect(screen.queryByText("Prompt starters")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add a status badge component with tests" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rename the hero headline and update the test" })).not.toBeInTheDocument();
   });
 
   it("shows a stable blank-project layout without duplicate review-plan actions", () => {
@@ -143,9 +160,9 @@ describe("CommandCenterView", () => {
       />
     );
 
-    expect(screen.getByText("This repo is still blank. Describe what you want to build, and we will help shape the initial structure before implementation starts.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create the initial README and repo charter for this project" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Plan the architecture for a new Python CLI from scratch" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe what you want to build.")).toBeInTheDocument();
+    expect(screen.queryByText("How this works")).not.toBeInTheDocument();
+    expect(screen.queryByText("Prompt starters")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Review plan" })).toHaveLength(1);
   });
 });

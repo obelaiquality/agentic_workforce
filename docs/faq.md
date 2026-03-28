@@ -36,6 +36,6 @@ Use a bounded request with a clear verification target, for example:
 
 No. The CLI is a useful companion to the same local API, but the desktop app remains the primary supported operator surface.
 
-## Are Labs and channels stable?
+## How should I treat Labs, channels, benchmarks, and distillation?
 
-No. Labs, distillation, benchmarks, and experimental channels are explicitly secondary and may change without long-term compatibility guarantees.
+They are supported specialized workflows with dedicated runbooks and a higher setup burden than the default desktop path. Use the support matrix and release notes to understand current coverage before relying on them in production.

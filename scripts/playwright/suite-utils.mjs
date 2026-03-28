@@ -7,8 +7,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { loadLocalEnv, resolveE2eRuntimePreset } from "./env-utils.mjs";
 
 export const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+loadLocalEnv(rootDir);
 
 export function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
@@ -37,13 +39,7 @@ export function hasArg(argv, flag) {
 }
 
 export function resolveRuntimePreset(defaultPreset = "default") {
-  if (process.env.E2E_RUNTIME_PRESET?.trim()) {
-    return process.env.E2E_RUNTIME_PRESET.trim();
-  }
-  if (process.env.OPENAI_API_KEY?.trim()) {
-    return "openai_all";
-  }
-  return defaultPreset;
+  return resolveE2eRuntimePreset(defaultPreset);
 }
 
 export function assertRuntimePrereqs(runtimePreset) {

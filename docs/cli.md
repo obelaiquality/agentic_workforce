@@ -1,6 +1,6 @@
 # CLI Companion
 
-The CLI is a beta terminal companion to the same local API used by the desktop app.
+The CLI is a terminal companion to the same local API used by the desktop app.
 
 It is intentionally narrow:
 

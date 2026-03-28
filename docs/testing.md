@@ -92,7 +92,7 @@ That directory contains snapshots, screenshots, API assertion payloads, setup/re
 
 ## Packaged Desktop Smoke
 
-Use this before cutting or validating a packaged release:
+Use this before cutting or validating a packaged release on Linux or any environment with the full source prerequisites available:
 
 ```bash
 npm run pack:desktop
@@ -100,6 +100,16 @@ npm run test:e2e:desktop-packaged-smoke
 ```
 
 This is a launch/create/connect smoke for packaged app output, not a full release acceptance matrix.
+
+## Packaged Desktop Launch Probe
+
+Use this for cross-platform packaged launch verification when the environment can prove artifact startup but not the full create/connect flow:
+
+```bash
+npm run test:e2e:desktop-packaged-launch
+```
+
+This probe launches the packaged desktop executable, captures a screenshot, and records basic artifact proof without depending on the full Linux service setup used by the packaged smoke flow.
 
 ## Demo Media
 

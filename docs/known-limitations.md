@@ -1,6 +1,6 @@
 # Known Limitations
 
-This repo is usable today, but it is still a beta product. These limits are intentional and should be clear to users up front.
+These constraints are current product boundaries and should be clear to operators up front.
 
 ## Desktop vs Browser Preview
 
@@ -11,7 +11,7 @@ This repo is usable today, but it is still a beta product. These limits are inte
 ## Runtime Setup
 
 - The fastest path today still assumes local Postgres plus either OpenAI or a working local OpenAI-compatible runtime.
-- Fully local runtime setup is supported, but it is still a more advanced operator path than the OpenAI-backed source flow.
+- Fully local runtime setup is supported, but it requires more operator setup than the OpenAI-backed source flow.
 - Some failover and teacher/distillation paths depend on external CLIs or extra local services.
 
 ## Experimental Surfaces
@@ -22,8 +22,8 @@ This repo is usable today, but it is still a beta product. These limits are inte
 
 ## Packaging And Releases
 
-- Packaged binaries are beta quality.
-- Release packaging exists, but cross-platform parity is still evolving.
+- Signed desktop binaries ship through GitHub Releases.
+- Cross-platform packaging is part of the release contract and is validated per platform before publication.
 - Larger demo video assets are not committed to git history and should be attached to releases or external docs instead.
 
 ## CI And E2E
@@ -34,5 +34,5 @@ This repo is usable today, but it is still a beta product. These limits are inte
 
 ## Open Source Expectations
 
-- The repo is public and installable, but some features are still intentionally flagged as advanced or internal.
+- The repo is public and installable, but some workflows still require more infrastructure than the default desktop path.
 - Contributors should use the documented paths in [docs/testing.md](testing.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) rather than guessing which scripts are required.

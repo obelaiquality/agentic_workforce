@@ -39,12 +39,12 @@ Fix:
 1. Confirm `OPENAI_API_KEY` is set in `.env`.
 2. Open `Settings > Essentials` and re-save the key if needed.
 3. Use `Refresh models`.
-4. Re-run `npm run doctor` if local runtime or provider state looks inconsistent.
+4. Re-run `npm run doctor -- --mode local-runtime` if local runtime or provider state looks inconsistent.
 
 ## Local Runtime Unreachable
 
 Symptom:
-- `onprem_runtime_8000` warning or local runtime requests fail.
+- `runtime_port_8000` warning or local runtime requests fail.
 
 Fix:
 1. Start your chosen local runtime.
@@ -72,6 +72,6 @@ Fix:
 2. Run dry-run policy check for the same action class.
 3. Approve queued action if policy requires approval.
 
-## Advanced Or Internal Features
+## Specialized Features
 
-Benchmarks and Labs are advanced/internal flows. They are intentionally not required for first-run success. If you are working on those paths, use the dedicated runbooks instead of the launch-facing docs.
+Benchmarks, Labs, training workflows, and channels are specialized workflows. They are intentionally not required for first-run success. If you are working on those paths, use the dedicated runbooks instead of the launch-facing docs.

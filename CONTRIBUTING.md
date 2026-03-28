@@ -39,13 +39,20 @@ If your change touches Electron packaging or desktop startup, also run:
 npm run build:desktop
 ```
 
-If your change touches end-user flows, docs, or onboarding, also run:
+If your change touches end-user flows, docs, onboarding, or release plumbing, also run:
 
 ```bash
 npm run test:e2e:desktop-stable
 ```
 
-If your change touches advanced flows, follow-up execution, browser preview, or CLI workflows, use the nightly/manual suite as appropriate:
+If your change touches packaged releases, also run:
+
+```bash
+npm run pack:desktop
+npm run test:e2e:desktop-packaged-smoke
+```
+
+If your change touches follow-up execution, browser preview, CLI workflows, or specialized workflows, use the nightly/manual suite as appropriate:
 
 ```bash
 npm run test:e2e:nightly
@@ -62,8 +69,9 @@ npm run test:e2e:nightly
 
 - Desktop is the primary supported operator path.
 - Browser preview behavior should not be treated as feature parity.
-- Experimental autonomy, benchmarks, and distillation must stay opt-in and clearly labeled.
+- Benchmarks, Labs, distillation, and autonomy flows must stay clearly labeled and documented.
 - Security-sensitive changes should preserve local trust boundaries and write-only handling for secrets.
+- GitHub Releases are the canonical desktop distribution path. Do not re-enable repo-root npm publication without introducing a dedicated publishable package.
 
 ## Architecture And Test Map
 
@@ -78,6 +86,7 @@ npm run test:e2e:nightly
 - Stable desktop acceptance: `npm run test:e2e:desktop-stable`
 - Nightly/manual advanced coverage: `npm run test:e2e:nightly`
 - Packaged release smoke: `npm run test:e2e:desktop-packaged-smoke`
+- Cross-platform packaged launch proof in release CI: `npm run test:e2e:desktop-packaged-launch`
 
 ## Fixtures And Screenshots
 

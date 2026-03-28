@@ -23,9 +23,12 @@ import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron } from "playwright-core";
+import { loadLocalEnv, resolveE2eRuntimePreset } from "./env-utils.mjs";
 
 const root = "/Users/neilslab/agentic_workforce";
+loadLocalEnv(root);
 const scenarioArg = process.argv.find((_, i, arr) => arr[i - 1] === "--scenario") || "status-badge";
+const runtimePreset = resolveE2eRuntimePreset("openai_all");
 
 const SCENARIOS = {
   "status-badge": {
@@ -154,6 +157,16 @@ async function apiPost(resource, body) {
   return response.json();
 }
 
+async function apiPatch(resource, body) {
+  const response = await fetch(`${apiBaseUrl}${resource}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", "x-local-api-token": apiToken },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`PATCH ${resource} failed: ${response.status} ${await response.text()}`);
+  return response.json();
+}
+
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
 function flattenTree(nodes) {
@@ -180,9 +193,59 @@ async function clickWorkflowAction(page, label) {
   return true;
 }
 
+async function applyRuntimePreset() {
+  if (runtimePreset !== "openai_all") return;
+  await apiPost("/api/v1/settings/runtime-mode", {
+    mode: "openai_api",
+    openAiModel: "gpt-5-nano",
+  });
+  await apiPatch("/api/v1/settings", {
+    modelRoles: {
+      utility_fast: {
+        role: "utility_fast",
+        providerId: "openai-responses",
+        pluginId: null,
+        model: "gpt-5-nano",
+        temperature: 0,
+        maxTokens: 900,
+        reasoningMode: "off",
+      },
+      coder_default: {
+        role: "coder_default",
+        providerId: "openai-responses",
+        pluginId: null,
+        model: "gpt-5.3-codex",
+        temperature: 0.1,
+        maxTokens: 1800,
+        reasoningMode: "off",
+      },
+      review_deep: {
+        role: "review_deep",
+        providerId: "openai-responses",
+        pluginId: null,
+        model: "gpt-5.4",
+        temperature: 0.05,
+        maxTokens: 2200,
+        reasoningMode: "on",
+      },
+      overseer_escalation: {
+        role: "overseer_escalation",
+        providerId: "openai-responses",
+        pluginId: null,
+        model: "gpt-5.4",
+        temperature: 0.05,
+        maxTokens: 2400,
+        reasoningMode: "on",
+      },
+    },
+  });
+}
+
 async function main() {
-  const modelHealth = await fetch("http://127.0.0.1:8000/health").then((r) => r.ok).catch(() => false);
-  assert(modelHealth, "Local model runtime is not healthy on 127.0.0.1:8000");
+  if (runtimePreset !== "openai_all") {
+    const modelHealth = await fetch("http://127.0.0.1:8000/health").then((r) => r.ok).catch(() => false);
+    assert(modelHealth, "Local model runtime is not healthy on 127.0.0.1:8000");
+  }
 
   log(`output: ${outputDir}`);
   log(`repo: ${tempRepoDir}`);
@@ -214,13 +277,14 @@ async function main() {
   spawned.push({ killed: false, kill: async () => { await electronApp.close(); } });
 
   await waitForHttp(`${apiBaseUrl}/health`, 120000);
+  await applyRuntimePreset();
 
   const page = await electronApp.firstWindow();
   await page.setViewportSize({ width: 1640, height: 980 });
   await page.waitForLoadState("domcontentloaded");
 
   try {
-    await page.getByRole("button", { name: "Live State" }).waitFor({ timeout: 120000 });
+    await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 120000 });
   } catch (error) {
     await fsp.writeFile(path.join(outputDir, "startup-url.txt"), page.url(), "utf8");
     await fsp.writeFile(path.join(outputDir, "startup-html.html"), await page.content(), "utf8");
@@ -232,6 +296,7 @@ async function main() {
   if (await continueAnyway.isVisible().catch(() => false)) {
     await continueAnyway.click({ force: true });
   }
+  await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 30000 });
 
   await page.screenshot({ path: path.join(outputDir, "01-shell.png"), fullPage: true });
 
@@ -239,6 +304,8 @@ async function main() {
   await page.getByRole("button", { name: "Projects" }).click();
   await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 30000 });
   await page.locator("button").filter({ hasText: /^New Project$/ }).first().click({ force: true });
+  await page.getByRole("dialog").waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: /Create a managed Git repo with no stack assumptions/i }).click();
 
   const activeRepo = await waitFor(async () => {
     const payload = await apiGet("/api/v4/repos");
@@ -250,6 +317,10 @@ async function main() {
   }, 240000, "bootstrapped active repo");
 
   const managedWorktree = path.join(activeRepo.managedWorktreeRoot, "active");
+  await page.getByRole("button", { name: /Apply Starter/i }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: /Apply Starter/i }).click();
+  await page.getByRole("dialog").waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: /TypeScript App/i }).click();
 
   // --- Wait for scaffold report ---
   let scaffoldReport = await waitFor(async () => {
@@ -411,6 +482,30 @@ async function main() {
     if (!String(report.summary || "").toLowerCase().includes("verified")) return null;
     return report;
   }, 120000, `${scenario.label} follow-up verification report`).catch(() => null);
+
+  if (!followupReport) {
+    followupReport = await waitFor(async () => {
+      const treePayload = await apiGet(`/api/v8/mission/codebase/tree?projectId=${activeRepo.id}`);
+      const codeTree = Array.isArray(treePayload.items) ? treePayload.items : [];
+      const artifactPathFromTree = flattenTree(codeTree).find(
+        (item) => item.kind === "file" && scenario.expectedFilePattern.test(item.path)
+      )?.path;
+      if (!artifactPathFromTree) {
+        return null;
+      }
+      const artifactSource = await apiGet(
+        `/api/v8/mission/codebase/file?projectId=${activeRepo.id}&path=${encodeURIComponent(artifactPathFromTree)}`
+      );
+      const content = String(artifactSource.item?.content || "");
+      if (!scenario.expectedContentPattern.test(content)) {
+        return null;
+      }
+      return {
+        summary: "Verified from follow-up artifacts.",
+        changedFiles: [artifactPathFromTree],
+      };
+    }, 60000, `${scenario.label} follow-up source updates`).catch(() => null);
+  }
 
   if (!followupReport) {
     const latestAttempt = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);

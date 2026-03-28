@@ -32,7 +32,7 @@ Expected:
 
 ## 5-10 min: Configure The Recommended Runtime
 
-The recommended public beta path is OpenAI-assisted.
+The recommended first-success path is OpenAI-assisted.
 
 1. Add `OPENAI_API_KEY` to your local `.env`.
 2. Open `Settings`.
@@ -147,7 +147,7 @@ The current flow is strongest on bounded, explicit changes with clear verificati
 - Browser preview is secondary and cannot use the native folder picker
 - OpenAI escalation is optional
 - Qwen CLI multi-account failover is optional
-- Benchmarks and other internal tooling live behind `Settings > Advanced` with Labs enabled
+- Benchmarks and other specialized tooling live behind `Settings > Advanced` with Labs enabled
 
 If any of those advanced paths are what you need, use the deeper guides instead of treating the first-run flow as broken:
 

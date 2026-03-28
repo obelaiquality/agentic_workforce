@@ -7,8 +7,34 @@ on:
       - "v*"
 
 jobs:
+  release-prereqs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required release secrets
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in OPENAI_API_KEY CSC_LINK CSC_KEY_PASSWORD WIN_CSC_LINK WIN_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required release secrets: ${missing[*]}"
+            exit 1
+          fi
+
   validate:
     runs-on: ubuntu-latest
+    needs: release-prereqs
     services:
       postgres:
         image: postgres:16
@@ -52,6 +78,9 @@ jobs:
       - name: Lint workspace
         run: npm run lint
 
+      - name: Security guardrails
+        run: npm run security:check
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -64,9 +93,11 @@ jobs:
       - name: Build server
         run: npm run build:server
 
-  packaged-smoke-linux:
-    needs: validate
+  stable-desktop-e2e:
     runs-on: ubuntu-latest
+    needs:
+      - release-prereqs
+      - validate
     services:
       postgres:
         image: postgres:16
@@ -83,8 +114,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://agentic:agentic@127.0.0.1:5433/agentic_workforce?schema=public
-      API_PORT: "8787"
-      API_TOKEN: release-smoke-token
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,9 +124,6 @@ jobs:
         with:
           node-version: 20
           cache: npm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Electron runtime dependencies
         run: |
@@ -112,31 +139,40 @@ jobs:
       - name: Push Prisma schema
         run: npx prisma db push
 
-      - name: Pack desktop app
-        run: npm run pack:desktop
+      - name: Run stable desktop E2E
+        run: xvfb-run -a npm run test:e2e:desktop-stable
 
-      - name: Run packaged desktop smoke
-        run: xvfb-run -a npm run test:e2e:desktop-packaged-smoke
-
-      - name: Upload packaged smoke artifacts on failure
+      - name: Upload Playwright artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-linux
+          name: playwright-desktop-stable
           path: output/playwright/**
           if-no-files-found: ignore
 
-  build-and-package:
+  package-desktop:
     needs:
+      - release-prereqs
       - validate
-      - packaged-smoke-linux
+      - stable-desktop-e2e
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
-
     runs-on: ${{ matrix.os }}
-
+    env:
+      DATABASE_URL: postgresql://agentic:agentic@127.0.0.1:5433/agentic_workforce?schema=public
+      API_PORT: "8787"
+      API_TOKEN: release-smoke-token
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      RELEASE_STRICT_SIGNING: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -150,22 +186,83 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Electron runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libasound2t64
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Build web + server bundles
-        run: npm run build:desktop
+      - name: Generate Prisma client
+        run: npx prisma generate
 
-      - name: Package desktop app
+      - name: Push Prisma schema
+        if: runner.os == 'Linux'
+        run: npx prisma db push
+
+      - name: Pack desktop app
+        run: npm run pack:desktop
+
+      - name: Run packaged smoke on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e:desktop-packaged-smoke
+
+      - name: Run packaged smoke on macOS
+        if: runner.os == 'macOS'
+        run: npm run test:e2e:desktop-packaged-launch
+
+      - name: Run packaged smoke on Windows
+        if: runner.os == 'Windows'
+        run: npm run test:e2e:desktop-packaged-launch
+
+      - name: Build signed release artifacts
         run: npm run dist:desktop -- --publish never
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify macOS signature
+        if: runner.os == 'macOS'
+        run: |
+          APP_PATH="$(find release -maxdepth 3 -name 'Agentic Workforce.app' -print -quit)"
+          test -n "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Verify Windows signatures
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifacts = Get-ChildItem -Path release -Include *.exe -Recurse
+          if (-not $artifacts) {
+            throw "No Windows executables found under release/"
+          }
+          $unsigned = @()
+          foreach ($artifact in $artifacts) {
+            $signature = Get-AuthenticodeSignature -FilePath $artifact.FullName
+            if ($signature.Status -ne "Valid") {
+              $unsigned += "$($artifact.FullName): $($signature.Status)"
+            }
+          }
+          if ($unsigned.Count -gt 0) {
+            throw "Unsigned or invalid Windows artifacts:`n$($unsigned -join \"`n\")"
+          }
+
+      - name: Review Linux package metadata
+        if: runner.os == 'Linux'
+        run: |
+          DEB_PATH="$(find release -name '*.deb' -print -quit)"
+          test -n "$DEB_PATH"
+          dpkg-deb -I "$DEB_PATH" | tee /tmp/deb-control.txt
+          grep -q '^ Package: agentic-workforce' /tmp/deb-control.txt
+          grep -q '^ Maintainer: Neilslab' /tmp/deb-control.txt
+          grep -q '^ Description: Agentic Workforce' /tmp/deb-control.txt
+
+      - name: Upload packaged smoke artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-smoke-${{ matrix.os }}
+          path: output/playwright/**
+          if-no-files-found: ignore
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
@@ -176,18 +273,30 @@ jobs:
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-and-package
+    needs: package-desktop
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-bundle
 
+      - name: Generate SHA256 checksums
+        run: node scripts/generate-release-checksums.mjs release-bundle release-bundle/SHA256SUMS.txt
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: docs/release-notes-template.md
           files: release-bundle/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,7 +3,7 @@
 [![CI](https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml/badge.svg)](https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/obelaiquality/agentic_workforce?display_name=tag&label=latest%20release)](https://github.com/obelaiquality/agentic_workforce/releases)
 [![License](https://img.shields.io/github/license/obelaiquality/agentic_workforce)](LICENSE)
-[![Desktop beta](https://img.shields.io/badge/desktop-beta-06b6d4)](docs/install.md)
+[![Desktop 1.0](https://img.shields.io/badge/desktop-1.0-0f766e)](docs/install.md)
 
 Agentic Workforce is a desktop-first coding agent for real local repositories. It connects to a repo, scopes a bounded task, executes in a managed worktree, verifies the result, and keeps the route, evidence, and logs visible in one operator UI. If you want the easiest first success, start with the desktop app and the OpenAI-backed source path.
 
@@ -13,15 +13,15 @@ Agentic Workforce is a desktop-first coding agent for real local repositories. I
 
 | Path | Best for | What you need |
 | --- | --- | --- |
-| Binary | Beta testers who want the shortest install | A packaged release plus the runtime prerequisites called out in the release notes |
+| Binary | Operators who want the shortest install | A signed GitHub Release plus the runtime prerequisites called out in the release notes |
 | Source + OpenAI | First-time source users | Node 20+, PostgreSQL, Docker recommended, `OPENAI_API_KEY` |
 | Source + local runtime | Fully local operators | Node 20+, PostgreSQL, local OpenAI-compatible runtime, optional Rust for packaging |
 
-More detail: [Install](docs/install.md) · [Configuration](docs/configuration.md) · [Known limitations](docs/known-limitations.md)
+More detail: [Install](docs/install.md) · [Support matrix](docs/support-matrix.md) · [Configuration](docs/configuration.md) · [Known limitations](docs/known-limitations.md)
 
 ## Fastest First Success
 
-The recommended source path is desktop + OpenAI.
+The recommended source path is desktop + OpenAI. GitHub Releases are the canonical artifact source for packaged desktop builds; the repo root is not published as an npm package.
 
 ```bash
 npm install
@@ -56,12 +56,12 @@ Recommended first prompts:
 - CLI companion for connect, plan, run, and report flows against the same local API
 - Stable source validation via `npm run validate`
 
-## What Is Advanced
+## Specialized Workflows
 
 - Browser preview: useful for inspection and light settings work, not full operator parity
-- Fully local runtime and multi-runtime failover: supported, but still an advanced setup path
-- Benchmarks, Labs, and experimental channels: opt-in and not part of the first-run story
-- Packaged binary release flow: beta quality and still evolving
+- Fully local runtime and multi-runtime failover: supported, but it requires extra operator setup
+- Benchmarks, Labs, training workflows, and channels: supported as specialized workflows with dedicated runbooks
+- Packaged desktop releases ship through GitHub Releases with per-platform notes, signatures, and checksums
 
 Read this before filing a bug about missing functionality: [Known limitations](docs/known-limitations.md)
 
@@ -69,6 +69,7 @@ Read this before filing a bug about missing functionality: [Known limitations](d
 
 - Demo guide, transcript, and media pipeline: [docs/demo.md](docs/demo.md)
 - Install paths and support matrix: [docs/install.md](docs/install.md)
+- Surface-by-surface support commitments: [docs/support-matrix.md](docs/support-matrix.md)
 - First-run onboarding: [docs/onboarding.md](docs/onboarding.md)
 - Environment and runtime configuration: [docs/configuration.md](docs/configuration.md)
 - FAQ: [docs/faq.md](docs/faq.md)
@@ -78,6 +79,7 @@ Read this before filing a bug about missing functionality: [Known limitations](d
 - Architecture overview: [docs/architecture.md](docs/architecture.md)
 - Guided demo fixture repo: [docs/demo-react-dashboard.md](docs/demo-react-dashboard.md)
 - Release checklist: [docs/release-checklist.md](docs/release-checklist.md)
+- Release notes template: [docs/release-notes-template.md](docs/release-notes-template.md)
 
 ## Testing
 

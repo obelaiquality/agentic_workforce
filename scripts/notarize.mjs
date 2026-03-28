@@ -2,6 +2,7 @@ import { notarize } from "@electron/notarize";
 
 export default async function notarizing(context) {
   const { electronPlatformName, appOutDir, packager } = context;
+  const strictSigning = process.env.RELEASE_STRICT_SIGNING === "1";
 
   if (electronPlatformName !== "darwin") {
     return;
@@ -12,6 +13,9 @@ export default async function notarizing(context) {
   const teamId = process.env.APPLE_TEAM_ID;
 
   if (!appleId || !appleIdPassword || !teamId) {
+    if (strictSigning) {
+      throw new Error("Tagged releases require APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID for notarization.");
+    }
     console.log("Notarization skipped: missing APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID");
     return;
   }

@@ -28,6 +28,7 @@ const steps = [
     kind: "node",
     script: "scripts/playwright/run_followup_scenario.mjs",
     args: ["--scenario", "progress-bar"],
+    retries: 1,
     enabled: Boolean(process.env.OPENAI_API_KEY?.trim()),
     skipReason: "OPENAI_API_KEY is not configured for nightly OpenAI-backed follow-up scenarios.",
   },
@@ -36,6 +37,7 @@ const steps = [
     kind: "node",
     script: "scripts/playwright/run_followup_scenario.mjs",
     args: ["--scenario", "utility-module"],
+    retries: 1,
     enabled: Boolean(process.env.OPENAI_API_KEY?.trim()),
     skipReason: "OPENAI_API_KEY is not configured for nightly OpenAI-backed follow-up scenarios.",
   },
@@ -44,6 +46,7 @@ const steps = [
     kind: "node",
     script: "scripts/playwright/run_followup_scenario.mjs",
     args: ["--scenario", "rename-component"],
+    retries: 1,
     enabled: Boolean(process.env.OPENAI_API_KEY?.trim()),
     skipReason: "OPENAI_API_KEY is not configured for nightly OpenAI-backed follow-up scenarios.",
   },
@@ -52,6 +55,7 @@ const steps = [
     kind: "node",
     script: "scripts/playwright/run_followup_scenario.mjs",
     args: ["--scenario", "api-stop"],
+    retries: 1,
     enabled: Boolean(process.env.OPENAI_API_KEY?.trim()),
     skipReason: "OPENAI_API_KEY is not configured for nightly OpenAI-backed follow-up scenarios.",
   },
@@ -82,44 +86,66 @@ for (const step of steps) {
   }
 
   const stepStartedAt = Date.now();
-  try {
-    if (step.kind === "shell") {
-      await runShellScript(step.script, {
+  const maxAttempts = (step.retries ?? 0) + 1;
+  let attempt = 0;
+  let lastError = null;
+
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      if (step.kind === "shell") {
+        await runShellScript(step.script, {
+          label: maxAttempts > 1 ? `${step.label} (attempt ${attempt}/${maxAttempts})` : step.label,
+          env: {
+            E2E_RUNTIME_PRESET: runtimePreset,
+          },
+          logFile: path.join(outputDir, `${path.basename(step.script)}.log`),
+        });
+      } else {
+        await runNodeScript(step.script, {
+          label: maxAttempts > 1 ? `${step.label} (attempt ${attempt}/${maxAttempts})` : step.label,
+          args: step.args || [],
+          env: {
+            E2E_RUNTIME_PRESET: runtimePreset,
+          },
+          logFile: path.join(outputDir, `${path.basename(step.script, ".mjs")}.log`),
+        });
+      }
+      summary.steps.push({
         label: step.label,
-        env: {
-          E2E_RUNTIME_PRESET: runtimePreset,
-        },
-        logFile: path.join(outputDir, `${path.basename(step.script)}.log`),
+        script: step.script,
+        status: "passed",
+        durationMs: Date.now() - stepStartedAt,
+        attempts: attempt,
       });
-    } else {
-      await runNodeScript(step.script, {
-        label: step.label,
-        args: step.args || [],
-        env: {
-          E2E_RUNTIME_PRESET: runtimePreset,
-        },
-        logFile: path.join(outputDir, `${path.basename(step.script, ".mjs")}.log`),
-      });
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts) {
+        summary.steps.push({
+          label: step.label,
+          script: step.script,
+          status: "failed",
+          durationMs: Date.now() - stepStartedAt,
+          attempts: attempt,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await writeJson(summaryPath, {
+          ...summary,
+          finishedAt: new Date().toISOString(),
+        });
+        throw error;
+      }
     }
-    summary.steps.push({
-      label: step.label,
-      script: step.script,
-      status: "passed",
-      durationMs: Date.now() - stepStartedAt,
-    });
-  } catch (error) {
-    summary.steps.push({
-      label: step.label,
-      script: step.script,
-      status: "failed",
-      durationMs: Date.now() - stepStartedAt,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  }
+
+  if (lastError) {
     await writeJson(summaryPath, {
       ...summary,
       finishedAt: new Date().toISOString(),
     });
-    throw error;
+    throw lastError;
   }
 }
 

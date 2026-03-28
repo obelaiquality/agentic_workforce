@@ -12,13 +12,15 @@ Before you start, read:
 
 | Install lane | Best for | Requires |
 | --- | --- | --- |
-| Binary | Beta testers and non-contributors | Release artifact + local prerequisites for the chosen runtime |
+| Binary | Operators and evaluators | Signed GitHub Release artifact + local prerequisites for the chosen runtime |
 | Source + OpenAI | Fastest public source setup | Node 20+, PostgreSQL, Docker recommended, OpenAI API key |
 | Source + local runtime | Fully local operator path | Node 20+, PostgreSQL, Docker recommended, Python/runtime stack, optional Rust for full packaging |
 
+For surface-specific support expectations, read [docs/support-matrix.md](support-matrix.md).
+
 ## 1. Binary
 
-Use tagged GitHub releases when available.
+Use tagged GitHub Releases for packaged desktop artifacts. They are the canonical distribution channel for the desktop app.
 
 Current packaging targets:
 
@@ -34,7 +36,7 @@ Expected outcome:
 
 ## 2. Source + OpenAI
 
-This is the recommended public beta path.
+This is the recommended source install path.
 
 ### Prerequisites
 
@@ -82,16 +84,18 @@ Expected outcome:
 - Same desktop app workflow as the OpenAI path
 - Local Qwen or another OpenAI-compatible endpoint handles the model work
 
-## Public Beta Notes
+## Release Notes
 
 - `npm run start:desktop` remains the full bootstrap path.
 - `npm run dev:desktop` is the faster path when your database and runtime are already healthy.
 - Browser preview via `npm run dev` and `npm run dev:api` is useful for inspection, not for the full local operator flow. Standalone `npm run dev:api` requires a non-empty `API_TOKEN`, and the renderer must use the same value via `VITE_API_TOKEN` because local API auth is header-only.
-- Advanced/internal settings live in `.env.advanced.example` and are not required for first success.
+- Advanced settings live in `.env.advanced.example` and are not required for first success.
 - On desktop, existing plaintext provider API keys are migrated into the encrypted local secret store on first run when secure OS-backed storage is available. Outside Electron, the standalone API auto-provisions a per-user local secret-store key for the same write-only settings flow.
+- The repo root intentionally blocks npm publication. Use GitHub Releases for packaged installs and source checkout for repository-based work.
 
 Next steps:
 
 - [Onboarding](onboarding.md)
+- [Support matrix](support-matrix.md)
 - [Demo guide](demo.md)
 - [Troubleshooting](troubleshooting.md)

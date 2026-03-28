@@ -7,11 +7,13 @@ import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron } from "playwright-core";
+import { loadLocalEnv, resolveE2eRuntimePreset } from "./env-utils.mjs";
 
 const root = "/Users/neilslab/agentic_workforce";
+loadLocalEnv(root);
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.join(root, "output", "playwright", `desktop-acceptance-${timestamp}`);
-const runtimePreset = process.env.E2E_RUNTIME_PRESET || "default";
+const runtimePreset = resolveE2eRuntimePreset("default");
 async function getFreePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
