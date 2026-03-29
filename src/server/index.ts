@@ -41,6 +41,14 @@ export async function bootstrap() {
     await prisma.$disconnect();
     process.exit(0);
   });
+
+  process.on("uncaughtException", (error) => {
+    app.log.error(error, "Uncaught exception in API process");
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    app.log.error(reason instanceof Error ? reason : { reason }, "Unhandled rejection in API process");
+  });
 }
 
 const entrypointHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";

@@ -140,7 +140,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   const benchmarkService = new BenchmarkService(v2EventService, repoService, executionService);
   await benchmarkService.syncProjectManifests().catch(() => []);
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: true,
+    bodyLimit: 2 * 1024 * 1024, // 2 MB
+    requestTimeout: 120_000,    // 2 minutes
+  });
 
   await app.register(cors, {
     origin: (origin, callback) => {

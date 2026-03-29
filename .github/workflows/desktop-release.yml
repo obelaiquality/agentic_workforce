@@ -82,8 +82,8 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Push Prisma schema
-        run: npx prisma db push
+      - name: Apply Prisma migrations
+        run: npx prisma migrate deploy
 
       - name: Run validate suite
         run: npm run validate
@@ -134,8 +134,8 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Push Prisma schema
-        run: npx prisma db push
+      - name: Apply Prisma migrations
+        run: npx prisma migrate deploy
 
       - name: Run stable desktop E2E
         run: xvfb-run -a npm run test:e2e:desktop-stable

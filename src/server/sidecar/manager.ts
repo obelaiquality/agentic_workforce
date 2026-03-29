@@ -79,7 +79,8 @@ function startSidecarProcess() {
     });
   } else {
     if (!fs.existsSync(binary)) {
-      throw new Error(`Rust sidecar binary not found at ${binary}`);
+      console.warn(`[sidecar] Binary not found at ${binary}. Sidecar features will be unavailable.`);
+      return;
     }
     sidecarProcess = spawn(binary, [], {
       cwd: workingDirectory,

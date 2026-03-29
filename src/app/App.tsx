@@ -281,6 +281,12 @@ export default function App() {
           </aside>
 
           <main className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
+            {labsMode && (
+              <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-300">
+                <span className="font-semibold uppercase tracking-wider">Labs</span>
+                <span className="text-amber-300/70">Experimental features are enabled. Some tabs and workflows may be unstable.</span>
+              </div>
+            )}
             <div className="max-w-[1600px] mx-auto space-y-4">
               {mission.appModeNotice ? (
                 <AppModeBanner

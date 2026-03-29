@@ -169,7 +169,7 @@ async function buildCoreChecks() {
         key: "postgres_bootstrap",
         ok: false,
         severity: "error",
-        message: "Postgres is not reachable on 127.0.0.1:5433 and Docker is unavailable for the default bootstrap path.",
+        message: "Postgres is not reachable on 127.0.0.1:5433. Either start Postgres manually or install Docker to use the default bootstrap path.",
       })
     );
   }
@@ -224,7 +224,11 @@ async function buildLocalRuntimeChecks() {
         key: "mlx_lm",
         ok: mlx.ok,
         severity: "warning",
-        message: mlx.ok ? "MLX-LM available." : "MLX-LM module not available.",
+        message: mlx.ok
+          ? "MLX-LM available."
+          : process.platform !== "darwin"
+            ? "MLX-LM is macOS-only. Set ONPREM_QWEN_INFERENCE_BACKEND to ollama-openai, vllm-openai, or llama-cpp-openai."
+            : "MLX-LM module not available.",
       }),
       buildCheck({
         key: "llama_cpp",

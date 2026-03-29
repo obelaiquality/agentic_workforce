@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 export function isAllowedCorsOrigin(origin: string) {
   try {
     const parsed = new URL(origin);
@@ -17,7 +19,15 @@ export function isAuthorizedLocalApiRequest(input: {
     return true;
   }
   const normalizedHeaderToken = Array.isArray(input.headerToken) ? input.headerToken[0] : input.headerToken;
-  return normalizedHeaderToken === input.apiToken;
+  if (!normalizedHeaderToken || !input.apiToken) {
+    return false;
+  }
+  const a = Buffer.from(normalizedHeaderToken);
+  const b = Buffer.from(input.apiToken);
+  if (a.length !== b.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(a, b);
 }
 
 export function buildStreamHeaders(originHeader?: string | null) {

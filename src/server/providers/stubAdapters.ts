@@ -531,7 +531,7 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
     temperature: 0.15,
     maxTokens: 1600,
     pluginId: process.env.ONPREM_QWEN_PLUGIN || "qwen3.5-4b",
-    inferenceBackendId: process.env.ONPREM_QWEN_INFERENCE_BACKEND || "mlx-lm",
+    inferenceBackendId: process.env.ONPREM_QWEN_INFERENCE_BACKEND || (process.platform === "darwin" ? "mlx-lm" : "ollama-openai"),
     reasoningMode: ((process.env.ONPREM_QWEN_REASONING_MODE || "off") as ReasoningMode),
   };
 

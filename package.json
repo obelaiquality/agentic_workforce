@@ -47,13 +47,18 @@
     "check:docs": "node scripts/check-doc-links.mjs",
     "generate:icons": "python3 scripts/generate_release_icons.py",
     "lint": "node scripts/lint-workspace.mjs",
+    "lint:code": "eslint src/",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "prepublishOnly": "node scripts/prevent-npm-publish.mjs",
     "release:checksums": "node scripts/generate-release-checksums.mjs",
     "release:notes": "node scripts/build-release-notes.mjs",
     "security:check": "node scripts/security-guardrails.mjs",
+    "secrets:check": "node scripts/check-no-secrets.mjs",
     "sbom:prod": "node scripts/generate-production-sbom.mjs docs/sbom.production.cdx.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "validate": "npm run lint && npm run security:check && npm run audit:prod && npm run typecheck && npm run check:docs && npm run release:notes -- --check && npm run sbom:prod -- --check && npm run prisma:generate && npm test && npm run build && npm run build:server",
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
+    "validate": "npm run lint && npm run security:check && npm run secrets:check && npm run audit:prod && npm run typecheck && npm run check:docs && npm run release:notes -- --check && npm run sbom:prod -- --check && npm run prisma:generate && npm test && npm run build && npm run build:server",
     "cli": "node scripts/agentic-cli.mjs",
     "knowledge:import:docx": "node scripts/knowledge/import_docx_refs.mjs",
     "benchmarks:api": "node scripts/benchmarks/run_api_regression.mjs",
@@ -124,6 +129,9 @@
     "@radix-ui/react-toggle-group": "1.1.2",
     "@radix-ui/react-tooltip": "1.1.8",
     "@tanstack/react-query": "^5.75.5",
+    "@testing-library/dom": "^10.4.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
@@ -135,9 +143,11 @@
     "lucide-react": "0.487.0",
     "mermaid": "^11.13.0",
     "next-themes": "0.4.6",
+    "react": "18.3.1",
     "react-day-picker": "8.10.1",
     "react-dnd": "16.0.1",
     "react-dnd-html5-backend": "16.0.1",
+    "react-dom": "18.3.1",
     "react-hook-form": "7.55.0",
     "react-markdown": "^10.1.0",
     "react-popper": "2.3.0",
@@ -156,6 +166,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "4.1.12",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -164,27 +175,19 @@
     "concurrently": "^9.1.2",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
+    "eslint": "^10.1.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^29.0.1",
     "playwright-core": "^1.58.2",
+    "prettier": "^3.8.1",
     "prisma": "^6.19.2",
     "tailwindcss": "4.1.12",
     "tsup": "^8.4.0",
     "tsx": "^4.19.3",
+    "typescript-eslint": "^8.57.2",
     "vite": "6.3.5",
     "vitest": "^3.0.8",
     "wait-on": "^8.0.3"
-  },
-  "peerDependencies": {
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    }
   },
   "overrides": {
     "@prisma/config": {

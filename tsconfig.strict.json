@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/shared/contracts.ts",
+    "src/server/services/shadowGitService.ts",
+    "src/server/services/doomLoopDetector.ts",
+    "src/server/services/contextCompactionService.ts",
+    "src/server/services/editMatcherChain.ts",
+    "src/server/services/memoryService.ts",
+    "src/server/services/toolResultOptimizer.ts"
+  ]
+}

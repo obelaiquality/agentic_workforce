@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 export interface ShadowSnapshot {
   stepId: string;
@@ -40,10 +40,11 @@ export class ShadowGitService {
     const gitDir = path.join(this.snapshotDir, ".git");
     if (!fs.existsSync(gitDir)) {
       try {
-        execSync("git init -q -b main", { cwd: this.snapshotDir, encoding: "utf8" });
+        execFileSync("git", ["init", "-q", "-b", "main"], { cwd: this.snapshotDir, encoding: "utf8" });
       } catch (err) {
         throw new Error(
-          `Failed to initialize git repo in ${this.snapshotDir}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to initialize git repo in ${this.snapshotDir}: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
         );
       }
     }
@@ -67,28 +68,31 @@ export class ShadowGitService {
     const execOpts = { cwd: this.snapshotDir, encoding: "utf8" as const };
 
     try {
-      execSync(`git add ${filePath}`, execOpts);
+      execFileSync("git", ["add", "--", filePath], execOpts);
     } catch (err) {
       throw new Error(
-        `Failed to git add ${filePath}: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to git add ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
       );
     }
 
     const commitMessage = `step-${stepId}: ${description}`;
     try {
-      execSync(`git commit -m "${commitMessage}"`, execOpts);
+      execFileSync("git", ["commit", "-m", commitMessage], execOpts);
     } catch (err) {
       throw new Error(
-        `Failed to git commit: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to git commit: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
       );
     }
 
     let commitHash: string;
     try {
-      commitHash = execSync("git rev-parse HEAD", execOpts).trim();
+      commitHash = execFileSync("git", ["rev-parse", "HEAD"], execOpts).trim();
     } catch (err) {
       throw new Error(
-        `Failed to get commit hash: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to get commit hash: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
       );
     }
 
@@ -115,15 +119,20 @@ export class ShadowGitService {
 
     const execOpts = { cwd: this.snapshotDir, encoding: "utf8" as const };
 
+    if (!/^[0-9a-f]{40}$/.test(snap.commitHash)) {
+      throw new Error(`Invalid commit hash for step ${stepId}: ${snap.commitHash}`);
+    }
+
     try {
-      const content = execSync(
-        `git show ${snap.commitHash}:${snap.filePath}`,
+      const content = execFileSync(
+        "git", ["show", `${snap.commitHash}:${snap.filePath}`],
         execOpts
       ).toString();
       return { filePath: snap.filePath, content };
     } catch (err) {
       throw new Error(
-        `Failed to rollback step ${stepId}: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to rollback step ${stepId}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
       );
     }
   }

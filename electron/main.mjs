@@ -16,6 +16,16 @@ if (userDataOverride) {
   app.setPath("userData", userDataOverride);
 }
 
+// --- Crash handlers: log and surface unexpected failures ---
+process.on("uncaughtException", (error) => {
+  console.error("[main] Uncaught exception:", error);
+  dialog.showErrorBox("Unexpected Error", `${error.message}\n\nThe application will continue running, but you may want to restart it.`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] Unhandled promise rejection:", reason);
+});
+
 const apiPort = Number(process.env.API_PORT || 8787);
 const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
 const apiToken = process.env.API_TOKEN || crypto.randomUUID();

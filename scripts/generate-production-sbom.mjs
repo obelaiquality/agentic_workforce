@@ -13,10 +13,20 @@ const outputArg = args.find((arg) => !arg.startsWith("--")) || "docs/sbom.produc
 const outputPath = path.resolve(process.cwd(), outputArg);
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const rawSbom = execFileSync(npmCommand, ["sbom", "--omit=dev", "--sbom-format", "cyclonedx"], {
-  cwd: rootDir,
-  encoding: "utf8",
-});
+let rawSbom;
+try {
+  rawSbom = execFileSync(npmCommand, ["sbom", "--omit=dev", "--sbom-format", "cyclonedx"], {
+    cwd: rootDir,
+    encoding: "utf8",
+  });
+} catch (err) {
+  // npm 11+ exits non-zero on peer dep warnings; use stdout if available
+  if (err.stdout && err.stdout.trim().startsWith("{")) {
+    rawSbom = err.stdout;
+  } else {
+    throw err;
+  }
+}
 const parsed = JSON.parse(rawSbom);
 
 delete parsed.serialNumber;

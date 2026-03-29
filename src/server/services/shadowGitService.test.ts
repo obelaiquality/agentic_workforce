@@ -157,6 +157,25 @@ describe("ShadowGitService", () => {
     expect(removed).toBe(0);
   });
 
+  it("snapshot handles filenames with spaces and special characters safely", () => {
+    const root = makeTmpDir();
+    const service = new ShadowGitService(root, { snapshotDir: "snapshots" });
+    service.initialize();
+
+    const snap = service.snapshot({
+      filePath: "src/my file.ts",
+      content: "// content with spaces in path",
+      stepId: "special-1",
+      description: 'desc with "quotes" and $vars',
+    });
+
+    expect(snap.commitHash).toMatch(/^[0-9a-f]{40}$/);
+
+    const result = service.rollback("special-1");
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe("// content with spaces in path");
+  });
+
   it("multiple snapshots for same file (version history)", () => {
     const root = makeTmpDir();
     const service = new ShadowGitService(root, { snapshotDir: "snapshots" });

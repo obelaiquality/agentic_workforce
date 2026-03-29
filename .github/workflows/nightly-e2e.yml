@@ -7,21 +7,26 @@ on:
 
 jobs:
   nightly-e2e:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        ports:
-          - 5433:5432
-        env:
-          POSTGRES_USER: agentic
-          POSTGRES_PASSWORD: agentic
-          POSTGRES_DB: agentic_workforce
-        options: >-
-          --health-cmd "pg_isready -U agentic -d agentic_workforce"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            install_deps: |
+              sudo apt-get update
+              sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libasound2t64
+            run_prefix: "xvfb-run -a"
+            use_service: true
+          - os: macos-latest
+            install_deps: ""
+            run_prefix: ""
+            use_service: false
+          - os: windows-latest
+            install_deps: ""
+            run_prefix: ""
+            use_service: false
+    runs-on: ${{ matrix.os }}
+    services: ${{ matrix.use_service && fromJSON('{"postgres":{"image":"postgres:16","ports":["5433:5432"],"env":{"POSTGRES_USER":"agentic","POSTGRES_PASSWORD":"agentic","POSTGRES_DB":"agentic_workforce"},"options":"--health-cmd \"pg_isready -U agentic -d agentic_workforce\" --health-interval 10s --health-timeout 5s --health-retries 5"}}') || fromJSON('{}') }}
     env:
       DATABASE_URL: postgresql://agentic:agentic@127.0.0.1:5433/agentic_workforce?schema=public
       ENABLE_LOCAL_FAILOVER_E2E: ${{ vars.ENABLE_LOCAL_FAILOVER_E2E }}
@@ -36,10 +41,29 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install Electron runtime dependencies
+      - name: Start PostgreSQL (macOS)
+        if: matrix.os == 'macos-latest'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libasound2t64
+          brew install postgresql@16
+          brew services start postgresql@16
+          sleep 3
+          createuser -s agentic 2>/dev/null || true
+          createdb -U agentic agentic_workforce 2>/dev/null || true
+          psql -U agentic -d agentic_workforce -c "ALTER USER agentic PASSWORD 'agentic';" 2>/dev/null || true
+
+      - name: Start PostgreSQL (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install postgresql16 --params '/Password:agentic /Port:5433' -y
+          $env:PGPASSWORD = "postgres"
+          & "C:\Program Files\PostgreSQL\16\bin\createuser.exe" -U postgres -s agentic 2>$null
+          & "C:\Program Files\PostgreSQL\16\bin\createdb.exe" -U postgres -O agentic agentic_workforce 2>$null
+          & "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -c "ALTER USER agentic PASSWORD 'agentic';" 2>$null
+
+      - name: Install Electron runtime dependencies
+        if: matrix.install_deps != ''
+        run: ${{ matrix.install_deps }}
 
       - name: Install dependencies
         run: npm ci
@@ -47,16 +71,16 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Push Prisma schema
-        run: npx prisma db push
+      - name: Apply Prisma migrations
+        run: npx prisma migrate deploy
 
       - name: Run nightly suite
-        run: xvfb-run -a npm run test:e2e:nightly
+        run: ${{ matrix.run_prefix }} npm run test:e2e:nightly
 
       - name: Upload Playwright artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-nightly
+          name: playwright-nightly-${{ matrix.os }}
           path: output/playwright/**
           if-no-files-found: ignore

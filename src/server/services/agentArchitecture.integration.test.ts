@@ -72,6 +72,9 @@ import { checkTreeSitterSupport } from "./treeSitterAnalyzer";
 // Phase 12 — Shadow git snapshots
 import { ShadowGitService } from "./shadowGitService";
 
+// Phase 12.5 — Provider escalation
+import { applyEscalationPolicy } from "./providerOrchestrator";
+
 // Phase 13 — Dual memory
 import {
   MemoryService,
@@ -837,5 +840,159 @@ export default function App() {
 
     const short = "hello";
     expect(truncateToChars(short, 500)).toBe("hello");
+  });
+
+  // ────────────────────────────────────────────────────
+  // Scenario 15: Shadow git with adversarial inputs
+  // ────────────────────────────────────────────────────
+
+  it("shadow git handles paths with shell metacharacters safely", () => {
+    const svc = new ShadowGitService(tempDir, { snapshotDir: "snap" });
+    svc.initialize();
+
+    // Path with spaces, semicolons, quotes — would break execSync shell interpolation
+    const snap1 = svc.snapshot({
+      filePath: "src/my module.ts",
+      content: "export const x = 1;",
+      stepId: "adv-1",
+      description: 'test with "quotes" and $(echo oops)',
+    });
+    expect(snap1.commitHash).toMatch(/^[0-9a-f]{40}$/);
+
+    // Rollback preserves exact content
+    const rb = svc.rollback("adv-1");
+    expect(rb).not.toBeNull();
+    expect(rb!.content).toBe("export const x = 1;");
+
+    // Nested directory with special chars
+    const snap2 = svc.snapshot({
+      filePath: "src/sub dir/file (1).ts",
+      content: "export const y = 2;",
+      stepId: "adv-2",
+      description: "nested path with parens",
+    });
+    expect(snap2.commitHash).toMatch(/^[0-9a-f]{40}$/);
+    expect(svc.listSnapshots()).toHaveLength(2);
+  });
+
+  // ────────────────────────────────────────────────────
+  // Scenario 16: Shadow git multi-version rollback chain
+  // ────────────────────────────────────────────────────
+
+  it("shadow git preserves version history across rollbacks", () => {
+    const svc = new ShadowGitService(tempDir, { snapshotDir: "snap" });
+    svc.initialize();
+
+    const versions = ["v1: initial", "v2: refactored", "v3: optimized"];
+    for (let i = 0; i < versions.length; i++) {
+      svc.snapshot({
+        filePath: "main.ts",
+        content: versions[i],
+        stepId: `ver-${i}`,
+        description: `version ${i}`,
+      });
+    }
+
+    // Can rollback to any version regardless of order
+    for (let i = versions.length - 1; i >= 0; i--) {
+      const rb = svc.rollback(`ver-${i}`);
+      expect(rb).not.toBeNull();
+      expect(rb!.content).toBe(versions[i]);
+    }
+  });
+
+  // ────────────────────────────────────────────────────
+  // Scenario 17: Provider escalation policy integration
+  // ────────────────────────────────────────────────────
+
+  it("escalation policy gates overseer access based on risk and policy", () => {
+    // Auto policy always allows escalation
+    expect(applyEscalationPolicy("overseer_escalation", "auto")).toBe("overseer_escalation");
+
+    // High-risk-only allows when risk is high
+    expect(applyEscalationPolicy("overseer_escalation", "high_risk_only", "high")).toBe("overseer_escalation");
+
+    // High-risk-only blocks when risk is low — falls back to review_deep
+    expect(applyEscalationPolicy("overseer_escalation", "high_risk_only", "low")).toBe("review_deep");
+
+    // Manual always blocks auto-escalation
+    expect(applyEscalationPolicy("overseer_escalation", "manual")).toBe("review_deep");
+
+    // Non-escalation roles pass through unchanged
+    expect(applyEscalationPolicy("coder_default", "manual")).toBe("coder_default");
+  });
+
+  // ────────────────────────────────────────────────────
+  // Scenario 18: Full pipeline simulation
+  //   doom-loop + context + shadow git + edit matching
+  // ────────────────────────────────────────────────────
+
+  it("runs a complete agent pipeline simulation with all services", () => {
+    // 1. Initialize shadow git
+    const shadow = new ShadowGitService(tempDir, { snapshotDir: "snap" });
+    shadow.initialize();
+
+    // 2. Initialize doom-loop detector
+    const doom = new DoomLoopDetector();
+
+    // 3. Initialize memory service
+    const memory = new MemoryService(tempDir, { maxEpisodic: 10, maxWorking: 5 });
+
+    // 4. Simulate a 3-step task execution
+    const steps = [
+      { file: "src/index.ts", content: 'console.log("hello");', desc: "scaffold entry" },
+      { file: "src/utils.ts", content: "export function add(a: number, b: number) { return a + b; }", desc: "add utility" },
+      { file: "src/index.ts", content: 'import { add } from "./utils";\nconsole.log(add(1, 2));', desc: "wire utility" },
+    ];
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+
+      // Record for doom-loop detection
+      doom.record("generate_file", { path: step.file, step: i });
+      expect(doom.isLooping()).toBe(false);
+
+      // Take shadow git snapshot
+      const snap = shadow.snapshot({
+        filePath: step.file,
+        content: step.content,
+        stepId: `step-${i}`,
+        description: step.desc,
+      });
+      expect(snap.commitHash).toMatch(/^[0-9a-f]{40}$/);
+
+      // Add to episodic memory
+      memory.addEpisodicMemory({
+        taskDescription: `Step ${i}: ${step.desc}`,
+        summary: `Generated ${step.file}`,
+        outcome: "success",
+        keyFiles: [step.file],
+      });
+    }
+
+    // 5. Verify rollback works for the first version of index.ts
+    const rollback = shadow.rollback("step-0");
+    expect(rollback).not.toBeNull();
+    expect(rollback!.content).toBe('console.log("hello");');
+
+    // 6. Context compaction handles the accumulated messages
+    const messages: CompactionMessage[] = [
+      { role: "system", content: "You are a coding agent.", pinned: true },
+      ...steps.map((s, i) => ({ role: "assistant" as const, content: `Step ${i}: ${s.desc}\n${s.content}` })),
+      { role: "user", content: "Now add tests" },
+    ];
+    const compacted = compactMessages(messages, 2000);
+    expect(compacted.messages.length).toBeGreaterThan(0);
+    expect(compacted.messages[0].content).toBe("You are a coding agent.");
+
+    // 7. Edit matcher handles a search-replace on the latest content
+    const original = steps[2].content;
+    const searchStr = 'console.log(add(1, 2));';
+    const match = exactMatch(original, searchStr);
+    expect(match).not.toBeNull();
+
+    // 8. Memory has episodic entries for all steps
+    const relevant = memory.getRelevantEpisodicMemories("scaffold and wire utilities");
+    expect(relevant.length).toBeGreaterThanOrEqual(1);
   });
 });

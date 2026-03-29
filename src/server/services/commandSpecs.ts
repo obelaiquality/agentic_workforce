@@ -49,7 +49,7 @@ type StructuredCommand = {
   displayCommand: string;
 };
 
-const SHELL_METACHARACTER_PATTERN = /[;&|><`$]/;
+const SHELL_METACHARACTER_PATTERN = /[;&|><`$(){}!\n\r]/;
 const SAFE_BINARY_PATTERN = /^[A-Za-z0-9._:@/+~-]+$/;
 const SAFE_ARGUMENT_PATTERN = /^[^\n\r]+$/;
 const READONLY_GIT_SUBCOMMANDS = new Set(["branch", "diff", "log", "ls-files", "rev-parse", "show", "status"]);

@@ -56,7 +56,7 @@ Set `OPENAI_API_KEY` in `.env`, then:
 
 ```bash
 npm run db:up
-npx prisma db push
+npx prisma migrate deploy
 npx prisma generate
 npm run dev:desktop
 ```
@@ -83,6 +83,16 @@ Expected outcome:
 
 - Same desktop app workflow as the OpenAI path
 - Local Qwen or another OpenAI-compatible endpoint handles the model work
+
+## Using Postgres Without Docker
+
+Docker is only used for convenience to start a PostgreSQL instance. If you already have Postgres running (e.g., via Homebrew, apt, or a managed service), point `DATABASE_URL` in `.env` to your instance:
+
+```
+DATABASE_URL="postgresql://user:pass@127.0.0.1:5433/agentic_workforce?schema=public"
+```
+
+The bootstrap script (`npm run start:desktop`) automatically skips Docker when Postgres is already reachable on `127.0.0.1:5433`.
 
 ## Release Notes
 
