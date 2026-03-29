@@ -99,7 +99,7 @@
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@grpc/grpc-js": "^1.12.6",
-    "@grpc/proto-loader": "^0.7.13",
+    "@grpc/proto-loader": "^0.8.0",
     "@popperjs/core": "2.11.8",
     "@prisma/client": "^6.19.2",
     "@radix-ui/react-accordion": "1.2.3",
