@@ -62,6 +62,7 @@ Recommended first prompts:
 - Fully local runtime and multi-runtime failover: supported, but it requires extra operator setup
 - Benchmarks, Labs, training workflows, and channels: supported as specialized workflows with dedicated runbooks
 - Packaged desktop releases ship through GitHub Releases with per-platform notes, signatures, and checksums
+- macOS and Windows release automation proves signed launch plus preflight state; Linux is the only platform that currently runs the full packaged create/connect smoke automatically
 
 Read this before filing a bug about missing functionality: [Known limitations](docs/known-limitations.md)
 
@@ -79,7 +80,8 @@ Read this before filing a bug about missing functionality: [Known limitations](d
 - Architecture overview: [docs/architecture.md](docs/architecture.md)
 - Guided demo fixture repo: [docs/demo-react-dashboard.md](docs/demo-react-dashboard.md)
 - Release checklist: [docs/release-checklist.md](docs/release-checklist.md)
-- Release notes template: [docs/release-notes-template.md](docs/release-notes-template.md)
+- Release notes guide: [docs/release-notes-template.md](docs/release-notes-template.md)
+- Production SBOM: [docs/sbom.production.cdx.json](docs/sbom.production.cdx.json)
 
 ## Testing
 
@@ -125,7 +127,7 @@ The E2E tiers and prerequisites are documented in [docs/testing.md](docs/testing
 - Provider keys are handled as write-only settings and stored outside normal settings JSON.
 - Standalone `npm run dev:api` requires a non-empty `API_TOKEN`.
 - Browser preview requires a matching `VITE_API_TOKEN` because the local API no longer accepts query-string tokens.
-- Experimental channels and autonomy surfaces are opt-in and not part of the default launch path.
+- Channel integrations and autonomy surfaces are opt-in and not part of the default launch path.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 

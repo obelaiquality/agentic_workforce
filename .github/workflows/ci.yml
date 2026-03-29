@@ -46,26 +46,11 @@ jobs:
       - name: Push Prisma schema
         run: npx prisma db push
 
-      - name: Check docs
-        run: npm run check:docs
+      - name: Run validate suite
+        run: npm run validate
 
-      - name: Lint workspace
-        run: npm run lint
-
-      - name: Security guardrails
-        run: npm run security:check
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Build server
-        run: npm run build:server
+      - name: Run CLI smoke
+        run: npm run test:e2e:cli-smoke
 
   desktop-smoke:
     runs-on: ubuntu-latest
@@ -136,17 +121,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Decide whether stable desktop E2E can run
+      - name: Decide whether stable desktop E2E must run
         id: gate
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
         run: |
-          if [ -n "${OPENAI_API_KEY:-}" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Stable desktop E2E skipped because OPENAI_API_KEY is not configured."
+          if [ "${IS_FORK_PR}" = "true" ]; then
+            echo "Stable desktop E2E skipped for fork PRs because repository secrets are unavailable."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY must be configured for pushes and same-repo pull requests because stable desktop E2E is a protected-branch check."
+            exit 1
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         if: steps.gate.outputs.enabled == 'true'

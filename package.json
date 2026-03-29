@@ -2,7 +2,7 @@
   "name": "agentic-workforce",
   "main": "electron/main.mjs",
   "private": false,
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Local-first desktop coding agent for real repositories with verified execution and evidence-rich review.",
   "author": "Neilslab",
   "license": "MIT",
@@ -37,6 +37,7 @@
   },
   "type": "module",
   "scripts": {
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
     "build": "vite build",
     "build:server": "tsup src/server/index.ts --format esm --platform node --out-dir dist-server --clean --external electron",
     "build:sidecar": "node scripts/build-sidecar.mjs",
@@ -48,9 +49,11 @@
     "lint": "node scripts/lint-workspace.mjs",
     "prepublishOnly": "node scripts/prevent-npm-publish.mjs",
     "release:checksums": "node scripts/generate-release-checksums.mjs",
+    "release:notes": "node scripts/build-release-notes.mjs",
     "security:check": "node scripts/security-guardrails.mjs",
+    "sbom:prod": "node scripts/generate-production-sbom.mjs docs/sbom.production.cdx.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "validate": "npm run lint && npm run security:check && npm run typecheck && npm run check:docs && npm test && npm run build && npm run build:server",
+    "validate": "npm run lint && npm run security:check && npm run audit:prod && npm run typecheck && npm run check:docs && npm run release:notes -- --check && npm run sbom:prod -- --check && npm run prisma:generate && npm test && npm run build && npm run build:server",
     "cli": "node scripts/agentic-cli.mjs",
     "knowledge:import:docx": "node scripts/knowledge/import_docx_refs.mjs",
     "benchmarks:api": "node scripts/benchmarks/run_api_regression.mjs",
@@ -93,7 +96,7 @@
     "@grpc/grpc-js": "^1.12.6",
     "@grpc/proto-loader": "^0.7.13",
     "@popperjs/core": "2.11.8",
-    "@prisma/client": "^6.5.0",
+    "@prisma/client": "^6.19.2",
     "@radix-ui/react-accordion": "1.2.3",
     "@radix-ui/react-alert-dialog": "1.1.6",
     "@radix-ui/react-aspect-ratio": "1.1.2",
@@ -127,7 +130,7 @@
     "date-fns": "3.6.0",
     "dotenv": "^16.4.7",
     "embla-carousel-react": "8.6.0",
-    "fastify": "^5.2.1",
+    "fastify": "^5.8.4",
     "input-otp": "1.4.2",
     "lucide-react": "0.487.0",
     "mermaid": "^11.13.0",
@@ -147,7 +150,7 @@
     "tailwind-merge": "3.2.0",
     "tw-animate-css": "1.3.8",
     "vaul": "1.1.2",
-    "yaml": "^2.8.2",
+    "yaml": "^2.8.3",
     "zod": "^3.24.2",
     "zustand": "^5.0.3"
   },
@@ -163,7 +166,7 @@
     "electron-builder": "^25.1.8",
     "jsdom": "^29.0.1",
     "playwright-core": "^1.58.2",
-    "prisma": "^6.5.0",
+    "prisma": "^6.19.2",
     "tailwindcss": "4.1.12",
     "tsup": "^8.4.0",
     "tsx": "^4.19.3",
@@ -181,6 +184,11 @@
     },
     "react-dom": {
       "optional": true
+    }
+  },
+  "overrides": {
+    "@prisma/config": {
+      "effect": "^3.21.0"
     }
   },
   "pnpm": {
@@ -204,13 +212,31 @@
       "dist-sidecar/**/*",
       "electron/**/*",
       "prisma/**/*",
+      "proto/**/*",
       "package.json",
+      "node_modules/.prisma/**/*",
       "node_modules/**/*"
     ],
     "directories": {
       "buildResources": "build-resources",
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "node_modules/.prisma",
+        "to": "node_modules/.prisma",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "node_modules/@prisma/client",
+        "to": "node_modules/@prisma/client",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "mac": {
       "icon": "build-resources/icon.icns",
       "target": [

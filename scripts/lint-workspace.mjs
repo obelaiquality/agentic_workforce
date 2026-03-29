@@ -15,6 +15,7 @@ const requiredFiles = [
   "SUPPORT.md",
   "CHANGELOG.md",
   "docs/release-notes-template.md",
+  "docs/sbom.production.cdx.json",
   ".nvmrc",
   ".env.example",
   ".env.advanced.example",

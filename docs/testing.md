@@ -103,13 +103,13 @@ This is a launch/create/connect smoke for packaged app output, not a full releas
 
 ## Packaged Desktop Launch Probe
 
-Use this for cross-platform packaged launch verification when the environment can prove artifact startup but not the full create/connect flow:
+Use this for cross-platform packaged verification when the environment can prove signed artifact startup and desktop preflight state but not the full Linux packaged smoke prerequisites:
 
 ```bash
 npm run test:e2e:desktop-packaged-launch
 ```
 
-This probe launches the packaged desktop executable, captures a screenshot, and records basic artifact proof without depending on the full Linux service setup used by the packaged smoke flow.
+This probe launches the packaged desktop executable, waits for the desktop shell, captures preflight status, and records whether the packaged app reached a bounded project flow. On macOS and Windows release runners it is expected to prove launch plus preflight and defer the full packaged task flow to manual release-candidate signoff.
 
 ## Demo Media
 

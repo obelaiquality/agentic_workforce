@@ -4,8 +4,8 @@ This matrix describes the current support expectation for each public surface in
 
 | Surface | Status | Primary audience | Validation path |
 | --- | --- | --- | --- |
-| Desktop app (`Projects`, `Work`, `Codebase`, `Console`, `Settings`) | Primary supported surface | All operators | `npm run validate`, `npm run test:e2e:desktop-stable`, packaged release CI |
-| GitHub Release desktop binaries | Primary supported distribution | Operators who want packaged installs | Signed release workflow, per-platform packaging, checksums |
+| Desktop app (`Projects`, `Work`, `Codebase`, `Console`, `Settings`) | Primary supported surface | All operators | `npm run validate`, `npm run test:e2e:desktop-stable`, Linux packaged smoke, macOS/Windows launch plus preflight proof, manual RC signoff |
+| GitHub Release desktop binaries | Primary supported distribution | Operators who want packaged installs | Signed release workflow, checksums, production SBOM, Linux packaged smoke, macOS/Windows signed launch plus manual RC task-flow signoff |
 | Source + OpenAI | Primary supported setup path | Contributors and source users | [docs/install.md](install.md), [docs/onboarding.md](onboarding.md), `npm run validate` |
 | Browser preview | Supported secondary surface | Inspection, light settings work, UI development | Manual validation plus targeted E2E where available |
 | CLI companion | Supported secondary surface | Terminal-oriented operators | `npm run test:e2e:cli-smoke` |
@@ -18,4 +18,5 @@ This matrix describes the current support expectation for each public surface in
 
 - GitHub Releases are the canonical artifact source for packaged desktop installs.
 - The repo root intentionally blocks npm publication. If a dedicated npm package is needed, it should ship from a separate package directory with its own contract.
+- Linux is the only platform with full automated packaged create/connect smoke in release CI today. macOS and Windows keep signature plus launch/preflight proof in automation and require manual release-candidate task-flow signoff.
 - Specialized workflows are supported, but they require more setup and narrower validation than the default desktop path. Use the linked runbooks before treating first-run docs as incomplete.

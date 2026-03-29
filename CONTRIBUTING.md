@@ -25,12 +25,8 @@ Start with the desktop app unless your change is explicitly about the browser pr
 Run the same baseline checks that CI expects:
 
 ```bash
-npm run lint
-npm run typecheck
-npm run check:docs
-npm test
-npm run build
-npm run build:server
+npm run validate
+npm run test:e2e:cli-smoke
 ```
 
 If your change touches Electron packaging or desktop startup, also run:
@@ -86,7 +82,9 @@ npm run test:e2e:nightly
 - Stable desktop acceptance: `npm run test:e2e:desktop-stable`
 - Nightly/manual advanced coverage: `npm run test:e2e:nightly`
 - Packaged release smoke: `npm run test:e2e:desktop-packaged-smoke`
-- Cross-platform packaged launch proof in release CI: `npm run test:e2e:desktop-packaged-launch`
+- macOS/Windows packaged launch plus preflight proof in release CI: `npm run test:e2e:desktop-packaged-launch`
+
+Mainline CI treats stable desktop E2E as a protected-branch check for pushes and same-repo pull requests. Fork PRs keep the normal secretless skip path because repository secrets are not exposed there.
 
 ## Fixtures And Screenshots
 

@@ -2,7 +2,7 @@
 
 ## Supported Scope
 
-This repo is currently a public beta codebase. Security fixes are prioritized for:
+This repo ships as a public desktop application. Security fixes are prioritized for:
 
 - local API auth and transport
 - Electron renderer and preload boundaries

@@ -14,21 +14,21 @@ These constraints are current product boundaries and should be clear to operator
 - Fully local runtime setup is supported, but it requires more operator setup than the OpenAI-backed source flow.
 - Some failover and teacher/distillation paths depend on external CLIs or extra local services.
 
-## Experimental Surfaces
+## Specialized Surfaces
 
-- Labs, distillation, benchmarks, and experimental channels are not part of the default onboarding story.
+- Labs, distillation, benchmarks, and channel integrations are not part of the default onboarding story.
 - Channels and autonomy surfaces are intentionally separated from the stable first-run product path.
-- Some experimental paths still rely on more infrastructure than the main desktop product flow.
+- Some specialized paths still rely on more infrastructure than the main desktop product flow.
 
 ## Packaging And Releases
 
 - Signed desktop binaries ship through GitHub Releases.
-- Cross-platform packaging is part of the release contract and is validated per platform before publication.
+- Cross-platform packaging is part of the release contract, but only Linux currently runs the full packaged create/connect/work smoke automatically. macOS and Windows rely on signed launch plus preflight proof in CI and manual release-candidate task-flow signoff.
 - Larger demo video assets are not committed to git history and should be attached to releases or external docs instead.
 
 ## CI And E2E
 
-- Stable desktop E2E can gate CI when a provider credential is available.
+- Stable desktop E2E is required on pushes and same-repo pull requests when repository secrets are available. Fork PRs skip it because GitHub does not expose repository secrets there.
 - Advanced/nightly coverage is intentionally broader and more volatile than the PR gate.
 - Some heavy failover paths are designed for manual or scheduled runs, not every single PR.
 

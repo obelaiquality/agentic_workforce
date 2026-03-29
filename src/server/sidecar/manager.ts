@@ -16,6 +16,11 @@ function getProjectRoot() {
   return process.env.APP_ROOT || process.cwd();
 }
 
+function getSidecarWorkingDirectory() {
+  const appRoot = getProjectRoot();
+  return appRoot.includes(".asar") ? path.dirname(appRoot) : appRoot;
+}
+
 function resolveSidecarBinary() {
   if (process.env.RUST_SIDECAR_BIN) {
     return process.env.RUST_SIDECAR_BIN;
@@ -56,17 +61,18 @@ function startSidecarProcess() {
   const isDev = isDevRuntime();
   const isWin = process.platform === "win32";
   const appRoot = getProjectRoot();
+  const workingDirectory = getSidecarWorkingDirectory();
   const binary = resolveSidecarBinary();
 
   if (isDev) {
     const manifest = process.env.RUST_SIDECAR_MANIFEST || path.resolve(appRoot, "rust/sidecar/Cargo.toml");
     sidecarProcess = spawn("cargo", ["run", "--manifest-path", manifest], {
-      cwd: appRoot,
+      cwd: workingDirectory,
       env: {
         ...process.env,
         RUST_SIDECAR_ADDR: sidecarAddress,
         DATABASE_URL: sanitizeSidecarDatabaseUrl(process.env.DATABASE_URL),
-        WORKSPACE_ROOT: appRoot,
+        WORKSPACE_ROOT: workingDirectory,
       },
       stdio: "pipe",
       shell: isWin,
@@ -76,12 +82,12 @@ function startSidecarProcess() {
       throw new Error(`Rust sidecar binary not found at ${binary}`);
     }
     sidecarProcess = spawn(binary, [], {
-      cwd: appRoot,
+      cwd: workingDirectory,
       env: {
         ...process.env,
         RUST_SIDECAR_ADDR: sidecarAddress,
         DATABASE_URL: sanitizeSidecarDatabaseUrl(process.env.DATABASE_URL),
-        WORKSPACE_ROOT: appRoot,
+        WORKSPACE_ROOT: workingDirectory,
       },
       stdio: "pipe",
       shell: false,
