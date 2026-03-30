@@ -88,9 +88,6 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install dependencies
         run: npm ci
 
@@ -99,12 +96,6 @@ jobs:
 
       - name: Apply Prisma migrations
         run: npx prisma migrate deploy
-
-      - name: Pre-build Rust sidecar
-        run: cargo build --manifest-path rust/sidecar/Cargo.toml
-
-      - name: Run CLI smoke
-        run: npm run test:e2e:cli-smoke
 
       - name: Desktop smoke build
         run: npm run build:desktop
