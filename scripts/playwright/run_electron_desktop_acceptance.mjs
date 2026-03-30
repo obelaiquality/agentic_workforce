@@ -443,12 +443,14 @@ async function main() {
   await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 30000 });
 
   await page.screenshot({ path: path.join(outputDir, "01-shell.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "06-work-empty.png"), fullPage: true });
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByText("Use this for first-run success").waitFor({ timeout: 30000 });
+  await page.getByText("Runtime Mode").waitFor({ timeout: 30000 });
   await page.screenshot({ path: path.join(outputDir, "01c-settings-essentials.png"), fullPage: true });
   await page.getByRole("button", { name: "Advanced", exact: true }).click();
-  await page.getByText("Execution Profiles", { exact: true }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: /Execution Profiles/i }).click();
+  await page.getByRole("button", { name: /Deep Scope/i }).first().waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: /Deep Scope/i }).first().click();
   await waitFor(
     async () => {
@@ -469,10 +471,57 @@ async function main() {
   );
   await page.screenshot({ path: path.join(outputDir, "01d-settings-advanced.png"), fullPage: true });
 
+  // ── UI Redesign Validation: Settings accordion only-one-open ──
+  log("  UI check: Settings accordion only-one-open behavior");
+  const accordionButtons = await page.getByRole("button").filter({ hasText: /Execution Profiles|On-Prem Runtime|Labs|Accounts/i }).all();
+  if (accordionButtons.length >= 2) {
+    await accordionButtons[1].click();
+    await delay(300);
+    // The first accordion (Execution Profiles) should now be closed — Deep Scope button hidden
+    const deepScopeHidden = await page.getByRole("button", { name: /Deep Scope/i }).first().isVisible().then((v) => !v).catch(() => true);
+    assert(deepScopeHidden, "Settings accordion: only one section should be open at a time");
+    log("  ✓ Settings accordion only-one-open verified");
+  }
+
+  // ── UI Redesign Validation: Empty states before project connect ──
+  log("  UI check: Codebase empty state");
+  await page.getByRole("button", { name: "Codebase" }).click();
+  await delay(500);
+  const codebaseEmpty = await page.getByText(/connect a project/i).isVisible().catch(() => false);
+  assert(codebaseEmpty, "Codebase should show empty state when no project is active");
+  log("  ✓ Codebase empty state verified");
+
+  log("  UI check: Console empty state");
+  await page.getByRole("button", { name: "Console" }).click();
+  await delay(500);
+  const consoleEmpty = await page.getByText(/connect a project/i).isVisible().catch(() => false);
+  assert(consoleEmpty, "Console should show empty state when no project is active");
+  log("  ✓ Console empty state verified");
+
+  // ── UI Redesign Validation: Projects tab navigation ──
   await page.getByRole("button", { name: "Projects" }).click();
-  await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: "My Projects" }).waitFor({ timeout: 30000 });
+  log("  UI check: Projects tab navigation");
+  const myProjectsTab = page.getByRole("button", { name: "My Projects" });
+  const connectNewTab = page.getByRole("button", { name: "Connect New" });
+  assert(await myProjectsTab.isVisible(), "My Projects tab should be visible");
+  assert(await connectNewTab.isVisible(), "Connect New tab should be visible");
+  const noActiveProject = await page.getByText("No active project").isVisible().catch(() => false);
+  assert(noActiveProject, "Should show 'No active project' before any project is created");
+  log("  ✓ Projects tab navigation verified");
+
   await page.screenshot({ path: path.join(outputDir, "01b-projects.png"), fullPage: true });
 
+  // ── UI Redesign Validation: Connect New tab shows action buttons ──
+  log("  UI check: Connect New tab");
+  await connectNewTab.click();
+  await page.locator("button").filter({ hasText: /^Choose Local Repo$|^Opening Repo/ }).first().waitFor({ timeout: 10000 });
+  const hasLocalRepoBtn = await page.locator("button").filter({ hasText: /^Choose Local Repo$/ }).first().isVisible().catch(() => false);
+  const hasNewProjectBtn = await page.locator("button").filter({ hasText: /^New Project$/ }).first().isVisible().catch(() => false);
+  assert(hasLocalRepoBtn || hasNewProjectBtn, "Connect New tab should show action buttons");
+  log("  ✓ Connect New tab verified");
+
+  await page.locator("button").filter({ hasText: /^New Project$/ }).first().waitFor({ timeout: 10000 });
   await page.locator("button").filter({ hasText: /^New Project$/ }).first().click({ force: true });
   await page.getByRole("dialog").waitFor({ timeout: 30000 });
   await page.getByRole("button", { name: /Create a managed Git repo with no stack assumptions/i }).click();
@@ -545,6 +594,33 @@ async function main() {
 
   await page.screenshot({ path: path.join(outputDir, "03-scaffold-complete.png"), fullPage: true });
 
+  // ── UI Redesign Validation: Blueprint toggle on active project ──
+  log("  UI check: Blueprint toggle");
+  await page.getByRole("button", { name: "Projects" }).click();
+  await page.getByRole("button", { name: "My Projects" }).waitFor({ timeout: 10000 });
+  const viewBlueprintBtn = page.getByRole("button", { name: /View Blueprint/i });
+  const hasBlueprintToggle = await viewBlueprintBtn.isVisible({ timeout: 5000 }).catch(() => false);
+  if (hasBlueprintToggle) {
+    await viewBlueprintBtn.click();
+    await delay(500);
+    const hideBlueprintBtn = page.getByRole("button", { name: /Hide Blueprint/i });
+    const blueprintShown = await hideBlueprintBtn.isVisible().catch(() => false);
+    assert(blueprintShown, "Blueprint panel should show after clicking View Blueprint");
+    await hideBlueprintBtn.click();
+    await delay(300);
+    log("  ✓ Blueprint toggle verified");
+  }
+
+  // ── UI Redesign Validation: Go to Work button ──
+  log("  UI check: Go to Work button");
+  const goToWorkBtn = page.getByRole("button", { name: "Go to Work" });
+  const hasGoToWork = await goToWorkBtn.isVisible().catch(() => false);
+  if (hasGoToWork) {
+    await goToWorkBtn.click();
+    await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 5000 });
+    log("  ✓ Go to Work navigates to Work tab");
+  }
+
   const codeTreePayload = await apiGet(`/api/v8/mission/codebase/tree?projectId=${activeRepo.id}`);
   const codeTree = Array.isArray(codeTreePayload.items) ? codeTreePayload.items : [];
   const scaffoldSourcePath =
@@ -574,6 +650,21 @@ async function main() {
 
   await page.getByRole("button", { name: "Console" }).click();
   await page.getByText(/mission-control — .*event stream/i).waitFor({ timeout: 30000 });
+
+  // ── UI Redesign Validation: Console dropdown filter ──
+  log("  UI check: Console dropdown filter");
+  const filterTrigger = page.getByText("All categories");
+  const hasDropdownFilter = await filterTrigger.isVisible().catch(() => false);
+  if (hasDropdownFilter) {
+    await filterTrigger.click();
+    await delay(300);
+    const hasFilterOptions = await page.getByText("Execution").isVisible().catch(() => false);
+    assert(hasFilterOptions, "Console filter dropdown should show category options");
+    await filterTrigger.click(); // close dropdown
+    await delay(200);
+    log("  ✓ Console dropdown filter verified");
+  }
+
   await page.screenshot({ path: path.join(outputDir, "04-console.png"), fullPage: true });
 
   await page.getByRole("button", { name: "Work", exact: true }).click();

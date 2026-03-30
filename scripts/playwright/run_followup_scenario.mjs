@@ -302,7 +302,9 @@ async function main() {
 
   // --- Bootstrap ---
   await page.getByRole("button", { name: "Projects" }).click();
-  await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: "My Projects" }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: "Connect New" }).click();
+  await page.locator("button").filter({ hasText: /^New Project$/ }).first().waitFor({ timeout: 10000 });
   await page.locator("button").filter({ hasText: /^New Project$/ }).first().click({ force: true });
   await page.getByRole("dialog").waitFor({ timeout: 30000 });
   await page.getByRole("button", { name: /Create a managed Git repo with no stack assumptions/i }).click();

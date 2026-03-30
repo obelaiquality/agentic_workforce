@@ -36,7 +36,10 @@ const manifest = {
   capturedAt: new Date().toISOString(),
   sourceDir: latestAcceptanceDir,
   frames: [
+    "06-work-empty.png",
     "01b-projects.png",
+    "01c-settings-essentials.png",
+    "01d-settings-advanced.png",
     "02-scaffold-complete.png",
     "05-followup-card-expanded.png",
     "03-codebase.png",

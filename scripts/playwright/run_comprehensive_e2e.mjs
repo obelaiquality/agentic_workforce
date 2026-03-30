@@ -214,9 +214,9 @@ async function main() {
   });
   await page.setViewportSize({ width: 1640, height: 980 });
   await page.waitForLoadState("domcontentloaded");
-  log("  DOM loaded, waiting for Live State button...");
+  log("  DOM loaded, waiting for Work button...");
   try {
-    await page.getByRole("button", { name: "Live State" }).waitFor({ timeout: 120000 });
+    await page.getByRole("button", { name: "Work", exact: true }).waitFor({ timeout: 120000 });
   } catch (error) {
     try {
       await fsp.writeFile(path.join(outputDir, "startup-url.txt"), page.url(), "utf8");
@@ -236,8 +236,10 @@ async function main() {
   // ── Step 3: Create Project ──
   log("Step 3: Creating project via New Project");
   await page.getByRole("button", { name: "Projects" }).click();
-  await page.getByRole("heading", { name: "Connect Repo" }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: "My Projects" }).waitFor({ timeout: 30000 });
   await page.screenshot({ path: path.join(outputDir, "02-projects.png"), fullPage: true });
+  await page.getByRole("button", { name: "Connect New" }).click();
+  await page.locator("button").filter({ hasText: /^New Project$/ }).first().waitFor({ timeout: 10000 });
   await page.locator("button").filter({ hasText: /^New Project$/ }).first().click({ force: true });
 
   const activeRepo = await waitFor(
@@ -443,7 +445,7 @@ async function main() {
   // ── Step 13: Codebase panel shows ThemeToggle ──
   log("Step 13: Codebase panel shows ThemeToggle");
   // Navigate away and back to force codebase refresh
-  await page.getByRole("button", { name: "Live State" }).click();
+  await page.getByRole("button", { name: "Work", exact: true }).click();
   await delay(1000);
   await page.getByRole("button", { name: "Codebase" }).click();
   await delay(3000);

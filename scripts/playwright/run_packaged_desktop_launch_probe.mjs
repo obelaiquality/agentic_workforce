@@ -59,10 +59,9 @@ try {
   if (preflight.apiReady) {
     await page.getByRole("button", { name: "Projects" }).waitFor({ timeout: 30000 });
     await page.getByRole("button", { name: "Projects" }).click();
-    await Promise.race([
-      page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 30000 }),
-      page.getByRole("button", { name: /Choose Local Repo|Opening Repo/i }).waitFor({ timeout: 30000 }),
-    ]);
+    await page.getByRole("button", { name: "My Projects" }).waitFor({ timeout: 30000 });
+    await page.getByRole("button", { name: "Connect New" }).click();
+    await page.getByRole("button", { name: /Choose Local Repo|Opening Repo/i }).waitFor({ timeout: 10000 });
     await page.getByRole("button", { name: /Choose Local Repo|Opening Repo/i }).click();
     const activeRepo = await waitForActiveRepo(apiPort, apiToken, tempRepoDir, tempRepoCanonicalPath);
     await page.screenshot({ path: path.join(outputDir, "02-project-created.png"), fullPage: true });
