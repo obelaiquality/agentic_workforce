@@ -1,55 +1,143 @@
 # Agentic Workforce
 
-[![CI](https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml/badge.svg)](https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/obelaiquality/agentic_workforce?display_name=tag&label=latest%20release)](https://github.com/obelaiquality/agentic_workforce/releases)
-[![License](https://img.shields.io/github/license/obelaiquality/agentic_workforce)](LICENSE)
-[![Desktop 1.0](https://img.shields.io/badge/desktop-1.0-0f766e)](docs/install.md)
-[![macOS](https://img.shields.io/badge/macOS-verified-success)](docs/testing.md)
-[![Linux CI](https://img.shields.io/badge/Linux-CI%20verified-success)](docs/testing.md)
-[![Windows](https://img.shields.io/badge/Windows-needs%20testing-yellow)](docs/testing.md)
+<p align="center">
+  <img src="docs/media/hero-banner.svg" alt="Agentic Workforce — Desktop-first coding agent for real local repos" width="960"/>
+</p>
 
-A desktop-first coding agent for real local repositories. Connect a repo, scope a bounded task, execute in a managed worktree, verify the result, and keep the route, evidence, and logs visible in one operator UI.
+<p align="center">
+  <a href="https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml"><img src="https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/obelaiquality/agentic_workforce/releases"><img src="https://img.shields.io/github/v/release/obelaiquality/agentic_workforce?display_name=tag&label=latest%20release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/obelaiquality/agentic_workforce" alt="License"></a>
+  <a href="docs/install.md"><img src="https://img.shields.io/badge/desktop-1.0-0f766e" alt="Desktop 1.0"></a>
+  <a href="docs/testing.md"><img src="https://img.shields.io/badge/macOS-verified-success" alt="macOS"></a>
+  <a href="docs/testing.md"><img src="https://img.shields.io/badge/Linux-CI%20verified-success" alt="Linux CI"></a>
+  <a href="docs/testing.md"><img src="https://img.shields.io/badge/Windows-needs%20testing-yellow" alt="Windows"></a>
+</p>
 
-Runs locally with [Qwen](https://huggingface.co/mlx-community/Qwen3.5-4B-4bit) via MLX/Ollama/vLLM, or escalates to OpenAI when you need it. Your code never leaves your machine unless you choose to.
+<p align="center">
+  Connect a repo, scope a bounded task, execute in a managed worktree, verify the result.<br>
+  Your code never leaves your machine unless you choose to.
+</p>
 
-![Agentic Workforce demo](docs/media/agentic-workforce-demo.gif)
+<p align="center">
+  <img src="docs/media/agentic-workforce-demo.gif" alt="Agentic Workforce demo" width="720"/>
+</p>
 
-## Choose Your Path
+---
 
-| Path | Best for | What you need |
-| --- | --- | --- |
-| **Binary** | Operators who want the shortest install | A signed [GitHub Release](https://github.com/obelaiquality/agentic_workforce/releases) plus runtime prerequisites from the release notes |
-| **Source + OpenAI** | First-time source users (recommended) | Node 20+, PostgreSQL, Docker recommended, `OPENAI_API_KEY` |
-| **Source + local runtime** | Fully local, no cloud calls | Node 20+, PostgreSQL, MLX-LM/Ollama/vLLM on port 8000, optional Rust for packaging |
+## Quick Start with OpenAI (Recommended)
 
-More detail: [Install](docs/install.md) · [Support matrix](docs/support-matrix.md) · [Configuration](docs/configuration.md) · [Known limitations](docs/known-limitations.md)
-
-## Fastest First Success
+The fastest way to get running. You just need Node.js, PostgreSQL, and an OpenAI API key.
 
 ```bash
+git clone https://github.com/obelaiquality/agentic_workforce.git
+cd agentic_workforce
 npm install
 cp .env.example .env
+```
 
-# edit .env and set OPENAI_API_KEY=your_key_here
+Open `.env` and add your key:
 
+```env
+OPENAI_API_KEY=sk-your-key-here
+```
+
+Then start everything:
+
+```bash
+npm run db:up              # Start PostgreSQL (Docker) — or use your own Postgres
+npx prisma db push         # Create database tables
+npx prisma generate        # Generate Prisma client
+npm run dev:desktop        # Launch the app
+```
+
+That's it. The app opens, and you're ready to connect a repo and run your first task.
+
+> **Don't have Docker?** Just point `DATABASE_URL` in `.env` to any running PostgreSQL instance. See [Install guide](docs/install.md) for details.
+
+### Your First Task
+
+1. Open **Projects** > **Connect New** > create a new project or connect a local repo
+2. Switch to **My Projects** and click **Apply Starter** to scaffold a TypeScript app
+3. Go to **Work**, write a bounded task, and click **Run task**
+4. Inspect the result in **Codebase** and **Console**
+
+Try these prompts to start:
+
+- `Add a status badge component with tests`
+- `Rename the hero headline and update the test`
+- `Add a dark mode toggle with localStorage persistence`
+
+---
+
+## Quick Start with Local Models (No Cloud)
+
+For users who want everything running locally with no API keys and no cloud calls. Your code and prompts stay entirely on your machine.
+
+### macOS (Apple Silicon)
+
+```bash
+# Install the model server
+pip3 install mlx-lm
+
+# Download and start the model (one-time ~2.5 GB download)
+python3 -m mlx_lm.server \
+  --model mlx-community/Qwen3.5-4B-4bit \
+  --host 127.0.0.1 --port 8000
+```
+
+### macOS (Intel) / Linux / Windows
+
+```bash
+# Install Ollama from https://ollama.com
+ollama pull qwen2.5-coder:3b
+ollama serve    # Starts on port 11434 by default
+```
+
+Then set up the app (same as OpenAI path, minus the API key):
+
+```bash
+git clone https://github.com/obelaiquality/agentic_workforce.git
+cd agentic_workforce
+npm install
+cp .env.example .env
+```
+
+Open `.env` and configure for local models:
+
+```env
+# For MLX-LM (Apple Silicon):
+INFERENCE_PROVIDER=openai-compatible
+LOCAL_INFERENCE_URL=http://127.0.0.1:8000/v1
+
+# For Ollama:
+INFERENCE_PROVIDER=ollama-openai
+LOCAL_INFERENCE_URL=http://127.0.0.1:11434/v1
+```
+
+```bash
 npm run db:up
 npx prisma db push
 npx prisma generate
 npm run dev:desktop
 ```
 
-Then:
+> **GPU users:** vLLM and SGLang are supported for NVIDIA GPUs with better throughput. See [Configuration](docs/configuration.md) for setup.
 
-1. Open **Projects** > **Connect New** > create a new project or connect a local repo.
-2. Switch to **My Projects** and click **Apply Starter** to scaffold a TypeScript app.
-3. Go to **Work**, write one bounded task, and click **Run task**.
-4. Inspect the result in **Codebase** and **Console**.
+---
 
-Recommended first prompts:
+## Choose Your Path
 
-- `Add a status badge component with tests`
-- `Rename the hero headline and update the test`
-- `Document the local runtime setup in the README`
+| Path | Best for | What you need |
+| --- | --- | --- |
+| **OpenAI** | Fastest setup, strongest models | Node 20+, PostgreSQL, `OPENAI_API_KEY` |
+| **Local models** | Full privacy, no cloud calls | Node 20+, PostgreSQL, MLX-LM / Ollama / vLLM |
+| **Binary** | Shortest install, no source checkout | A signed [GitHub Release](https://github.com/obelaiquality/agentic_workforce/releases) |
+| **Hybrid** | Best of both — local for fast tasks, OpenAI for complex ones | All of the above |
+
+More detail: [Install](docs/install.md) · [Support matrix](docs/support-matrix.md) · [Configuration](docs/configuration.md) · [Known limitations](docs/known-limitations.md)
+
+---
 
 ## What Works Today
 
@@ -57,7 +145,7 @@ Recommended first prompts:
 - **Managed-worktree execution** against real local repos with verification and rollback
 - **New project bootstrap** from an empty folder with TypeScript App starter
 - **Route review, execution, approvals, verification**, and report generation
-- **Local model runtime** with MLX-LM (Apple Silicon), Ollama, vLLM, SGLang, llama.cpp, or TensorRT-LLM
+- **Local model runtime** with MLX-LM (Apple Silicon), Ollama (cross-platform), vLLM, SGLang, llama.cpp, or TensorRT-LLM
 - **OpenAI escalation** for complex tasks with configurable model roles and budget controls
 - **CLI companion** for connect, plan, run, and report flows against the same local API
 - **493 unit/integration tests** and multi-tier E2E validation (stable desktop, follow-up scenarios, comprehensive lifecycle, packaged smoke)

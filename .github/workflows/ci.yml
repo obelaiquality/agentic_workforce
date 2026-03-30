@@ -46,6 +46,9 @@ jobs:
       - name: Apply Prisma migrations
         run: npx prisma migrate deploy
 
+      - name: Regenerate SBOM for this environment
+        run: npm run sbom:prod
+
       - name: Run validate suite
         run: npm run validate
 

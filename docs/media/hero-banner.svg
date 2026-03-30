@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" width="960" height="320">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0a0a0c"/>
+      <stop offset="100%" stop-color="#110A26"/>
+    </linearGradient>
+    <linearGradient id="cyanFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00FFFF" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#00FFFF" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#00FFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="magentaFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF00FF" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#FF00FF" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#FF00FF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00FFFF" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#00FFFF" stop-opacity="0"/>
+    </radialGradient>
+    <style>
+      @keyframes floatObelisk {
+        0% { transform: translateY(2px); }
+        100% { transform: translateY(-3px); }
+      }
+      @keyframes floatApex {
+        0% { transform: translateY(1px); }
+        100% { transform: translateY(-4px); }
+      }
+      @keyframes corePulse {
+        0% { transform: scale(0.85); opacity: 0.6; }
+        100% { transform: scale(1.3); opacity: 1; }
+      }
+      @keyframes ringSpin {
+        to { stroke-dashoffset: 0; }
+      }
+      @keyframes streamUp {
+        to { stroke-dashoffset: -18; }
+      }
+      @keyframes orbitDot {
+        0% { transform: rotate(0deg) translateX(52px) rotate(0deg); opacity: 0.8; }
+        50% { opacity: 1; }
+        100% { transform: rotate(360deg) translateX(52px) rotate(-360deg); opacity: 0.8; }
+      }
+      @keyframes gridPulse {
+        0% { opacity: 0.03; }
+        50% { opacity: 0.06; }
+        100% { opacity: 0.03; }
+      }
+      @keyframes dataPacket {
+        0% { transform: translateX(0); opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { transform: translateX(100px); opacity: 0; }
+      }
+      @keyframes dataPacketRev {
+        0% { transform: translateX(0); opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { transform: translateX(-100px); opacity: 0; }
+      }
+      .obelisk-group { animation: floatObelisk 6s ease-in-out infinite alternate; transform-origin: 160px 160px; }
+      .apex-group { animation: floatApex 4s ease-in-out infinite alternate; transform-origin: 160px 80px; }
+      .core-pulse { animation: corePulse 2s infinite alternate; transform-origin: 160px 142px; }
+      .ring-1 { animation: ringSpin 8s linear infinite; stroke-dasharray: 40 80; stroke-dashoffset: 120; }
+      .ring-2 { animation: ringSpin 6s linear infinite reverse; stroke-dasharray: 20 40; stroke-dashoffset: 60; }
+      .stream { animation: streamUp 1.5s linear infinite; }
+      .orbit-dot { animation: orbitDot 8s linear infinite; transform-origin: 160px 200px; }
+      .orbit-dot-2 { animation: orbitDot 6s linear infinite reverse; transform-origin: 160px 200px; }
+      .grid-line { animation: gridPulse 4s ease-in-out infinite; }
+      .packet-1 { animation: dataPacket 3s cubic-bezier(0.4,0,0.2,1) infinite; }
+      .packet-2 { animation: dataPacket 3s cubic-bezier(0.4,0,0.2,1) infinite 1s; }
+      .packet-3 { animation: dataPacketRev 3.5s cubic-bezier(0.4,0,0.2,1) infinite 0.5s; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="320" fill="url(#bgGrad)" rx="12"/>
+
+  <!-- Subtle grid pattern -->
+  <g class="grid-line">
+    <line x1="0" y1="80" x2="960" y2="80" stroke="#725D93" stroke-width="0.5" opacity="0.04"/>
+    <line x1="0" y1="160" x2="960" y2="160" stroke="#725D93" stroke-width="0.5" opacity="0.04"/>
+    <line x1="0" y1="240" x2="960" y2="240" stroke="#725D93" stroke-width="0.5" opacity="0.04"/>
+    <line x1="240" y1="0" x2="240" y2="320" stroke="#725D93" stroke-width="0.5" opacity="0.04"/>
+    <line x1="480" y1="0" x2="480" y2="320" stroke="#725D93" stroke-width="0.5" opacity="0.04"/>
+    <line x1="720" y1="0" x2="720" y2="320" stroke="#725D93" stroke-width="0.5" opacity="0.04"/>
+  </g>
+
+  <!-- Horizontal accent lines -->
+  <rect x="0" y="159" width="960" height="1" fill="url(#cyanFade)"/>
+  <rect x="0" y="200" width="960" height="1" fill="url(#magentaFade)"/>
+
+  <!-- Data packets flowing left side -->
+  <g opacity="0.6">
+    <circle cx="40" cy="159" r="2" fill="#00FFFF" filter="url(#glow)" class="packet-1"/>
+    <circle cx="70" cy="200" r="1.5" fill="#FF00FF" filter="url(#glow)" class="packet-2"/>
+    <circle cx="280" cy="159" r="1.5" fill="#00FFFF" filter="url(#glow)" class="packet-3"/>
+  </g>
+
+  <!-- Core glow behind obelisk -->
+  <circle cx="160" cy="170" r="80" fill="url(#coreGlow)"/>
+
+  <!-- Obelisk (centered at x=160) -->
+  <g class="obelisk-group">
+    <!-- Orbit rings -->
+    <ellipse cx="160" cy="200" rx="52" ry="16" fill="none" stroke="#A5F6E3" stroke-width="1.25" opacity="0.5" filter="url(#softGlow)" class="ring-1"/>
+    <ellipse cx="160" cy="200" rx="40" ry="12" fill="none" stroke="#FF007F" stroke-width="1.25" opacity="0.4" filter="url(#softGlow)" class="ring-2"/>
+
+    <!-- Orbit dots -->
+    <circle cx="160" cy="200" r="2.5" fill="#A5F6E3" filter="url(#glow)" class="orbit-dot"/>
+    <circle cx="160" cy="200" r="2" fill="#FF007F" filter="url(#glow)" class="orbit-dot-2"/>
+
+    <!-- Shaft -->
+    <polygon points="148,135 140,210 160,222 160,142" fill="#110A26" stroke="#725D93" stroke-width="1.5" stroke-linejoin="round"/>
+    <polygon points="172,135 180,210 160,222 160,142" fill="#2A1B4D" stroke="#725D93" stroke-width="1.5" stroke-linejoin="round"/>
+
+    <!-- Data streams on shaft -->
+    <line x1="145" y1="205" x2="151" y2="140" stroke="#FF007F" stroke-width="1.5" stroke-dasharray="6 12" filter="url(#glow)" class="stream"/>
+    <line x1="155" y1="215" x2="157" y2="142" stroke="#00FFFF" stroke-width="1.5" stroke-dasharray="4 16" filter="url(#glow)" class="stream" style="animation-duration:2s"/>
+    <line x1="175" y1="205" x2="169" y2="140" stroke="#FF007F" stroke-width="1.5" stroke-dasharray="6 12" filter="url(#glow)" class="stream" style="animation-duration:1.2s"/>
+
+    <!-- Energy core -->
+    <line x1="160" y1="122" x2="160" y2="142" stroke="#00FFFF" stroke-width="2" filter="url(#glow)" opacity="0.5"/>
+    <circle cx="160" cy="142" r="4" fill="#00FFFF" filter="url(#glow)" class="core-pulse"/>
+
+    <!-- Apex -->
+    <g class="apex-group">
+      <polygon points="160,100 148,120 160,127" fill="#00FFFF" stroke="#00FFFF" stroke-width="1" filter="url(#glow)" opacity="0.9"/>
+      <polygon points="160,100 172,120 160,127" fill="#00AAAA" stroke="#00FFFF" stroke-width="1" filter="url(#glow)" opacity="0.6"/>
+    </g>
+  </g>
+
+  <!-- Text area (right side) -->
+
+  <!-- Title -->
+  <text x="300" y="120" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="42" font-weight="600" fill="white" letter-spacing="-1">
+    Agentic Workforce
+  </text>
+
+  <!-- Gradient underline -->
+  <rect x="300" y="132" width="280" height="2" rx="1" fill="url(#brandGrad)" opacity="0.8"/>
+
+  <!-- Tagline -->
+  <text x="300" y="165" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="16" fill="#a1a1aa" letter-spacing="0.3">
+    Desktop-first coding agent for real local repos
+  </text>
+
+  <!-- Feature pills -->
+  <g font-family="Inter, system-ui, -apple-system, sans-serif" font-size="11" letter-spacing="0.5">
+    <!-- Pill 1: Local Models -->
+    <rect x="300" y="190" width="110" height="26" rx="13" fill="none" stroke="#00FFFF" stroke-width="1" opacity="0.5"/>
+    <circle cx="315" cy="203" r="3" fill="#00FFFF" filter="url(#glow)" opacity="0.8"/>
+    <text x="324" y="207" fill="#00FFFF" opacity="0.9">Local Models</text>
+
+    <!-- Pill 2: OpenAI -->
+    <rect x="420" y="190" width="86" height="26" rx="13" fill="none" stroke="#7c3aed" stroke-width="1" opacity="0.5"/>
+    <circle cx="435" cy="203" r="3" fill="#7c3aed" filter="url(#glow)" opacity="0.8"/>
+    <text x="444" y="207" fill="#a78bfa" opacity="0.9">OpenAI</text>
+
+    <!-- Pill 3: Managed Worktrees -->
+    <rect x="516" y="190" width="148" height="26" rx="13" fill="none" stroke="#FF007F" stroke-width="1" opacity="0.5"/>
+    <circle cx="531" cy="203" r="3" fill="#FF007F" filter="url(#glow)" opacity="0.8"/>
+    <text x="540" y="207" fill="#FF007F" opacity="0.9">Managed Worktrees</text>
+
+    <!-- Pill 4: Verification -->
+    <rect x="674" y="190" width="108" height="26" rx="13" fill="none" stroke="#A5F6E3" stroke-width="1" opacity="0.5"/>
+    <circle cx="689" cy="203" r="3" fill="#A5F6E3" filter="url(#glow)" opacity="0.8"/>
+    <text x="698" y="207" fill="#A5F6E3" opacity="0.9">Verification</text>
+  </g>
+
+  <!-- Bottom tagline -->
+  <text x="300" y="252" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="12" fill="#52525b" letter-spacing="0.8">
+    YOUR CODE STAYS LOCAL  ·  EXECUTE IN ISOLATION  ·  VERIFY BEFORE MERGE
+  </text>
+
+  <!-- Corner accent marks -->
+  <path d="M12,12 L12,32 M12,12 L32,12" stroke="#725D93" stroke-width="1" opacity="0.3"/>
+  <path d="M948,12 L948,32 M948,12 L928,12" stroke="#725D93" stroke-width="1" opacity="0.3"/>
+  <path d="M12,308 L12,288 M12,308 L32,308" stroke="#725D93" stroke-width="1" opacity="0.3"/>
+  <path d="M948,308 L948,288 M948,308 L928,308" stroke="#725D93" stroke-width="1" opacity="0.3"/>
+</svg>
