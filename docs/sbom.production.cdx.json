@@ -3925,6 +3925,89 @@
       ]
     },
     {
+      "bom-ref": "@testing-library/dom@10.4.1",
+      "type": "library",
+      "name": "@testing-library/dom",
+      "version": "10.4.1",
+      "scope": "required",
+      "author": "Kent C. Dodds",
+      "description": "Simple and complete DOM testing utilities that encourage good testing practices.",
+      "purl": "pkg:npm/%40testing-library/dom@10.4.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@testing-library/dom/-/dom-10.4.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/testing-library/dom-testing-library.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/testing-library/dom-testing-library#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/testing-library/dom-testing-library/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a383d725089da8997cd9c90569751ea005be5f2b0f2dab98238dc06e48b984005df39de23218ada2873ace73a773381b4d89843fa53aff2d59c8a008b2f30a1a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@types/aria-query@5.0.4",
+      "type": "library",
+      "name": "@types/aria-query",
+      "version": "5.0.4",
+      "scope": "required",
+      "description": "TypeScript definitions for aria-query",
+      "purl": "pkg:npm/%40types/aria-query@5.0.4",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/aria-query/-/aria-query-5.0.4.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/aria-query"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "adf4fddee8f9b343d12fb13371c18cb376eba6585cae08670e8576e8da8a842012d61568f9674db0fbc4ff26fa8a57ebe618b630493a77911625329dc60f2357"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "@types/d3@7.4.3",
       "type": "library",
       "name": "@types/d3",
@@ -5360,6 +5443,88 @@
       ]
     },
     {
+      "bom-ref": "@types/react@19.2.14",
+      "type": "library",
+      "name": "@types/react",
+      "version": "19.2.14",
+      "scope": "required",
+      "description": "TypeScript definitions for react",
+      "purl": "pkg:npm/%40types/react@19.2.14",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8a57131ff52788290c76d7b192808dd1b23ba4c7090ef99014fbee3ef98469803f3527c54c081d5122c0a158da4499bbfba3ef70cfaad7360ec12e304d8305f7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@types/react-dom@19.2.3",
+      "type": "library",
+      "name": "@types/react-dom",
+      "version": "19.2.3",
+      "scope": "required",
+      "description": "TypeScript definitions for react-dom",
+      "purl": "pkg:npm/%40types/react-dom@19.2.3",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8e9d8bfde63a7e7f8a81555000ea9822d6c5d1563f600a5ee4ccf61746b29123bc831df56d8099caf49e6310872afcc71b97998dcfb3c9a4b906b056c9adbe91"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "@types/trusted-types@2.0.7",
       "type": "library",
       "name": "@types/trusted-types",
@@ -6395,6 +6560,48 @@
         {
           "alg": "SHA-512",
           "content": "b3dc214d7227312800a7f3555d536e57154acc61f6a9c9376909551f10c274010f82d30ac1ce16abafd02a181d11d81b2d28bdac14c070fa116ba269886e24b2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "csstype@3.2.3",
+      "type": "library",
+      "name": "csstype",
+      "version": "3.2.3",
+      "scope": "required",
+      "author": "Fredrik Nicol",
+      "description": "Strict TypeScript and Flow types for style based on MDN data",
+      "purl": "pkg:npm/csstype@3.2.3",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/frenic/csstype.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/frenic/csstype#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/frenic/csstype/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "cf51c629c632db103c00641fc2b9f43c0cbe3c1ed7fc64a3dd45495bda8aca7e37c566be825e675e6538aaa2cc4735952c50bc2aeb145fc4ffd240a2398a4021"
         }
       ],
       "licenses": [
@@ -8540,6 +8747,47 @@
       ]
     },
     {
+      "bom-ref": "dom-accessibility-api@0.5.16",
+      "type": "library",
+      "name": "dom-accessibility-api",
+      "version": "0.5.16",
+      "scope": "required",
+      "description": "Implements https://w3c.github.io/accname/",
+      "purl": "pkg:npm/dom-accessibility-api@0.5.16",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/dom-accessibility-api/-/dom-accessibility-api-0.5.16.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/eps1lon/dom-accessibility-api.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/eps1lon/dom-accessibility-api#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/eps1lon/dom-accessibility-api/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5fb049db2125b27389df4a59178b882037c1115805e17101c4bf41c61cba767ae6e61933aa6b161c64e21ea46221336133214bc808969dd2093fb675353b5e0e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "dom-helpers@5.2.1",
       "type": "library",
       "name": "dom-helpers",
@@ -10584,6 +10832,48 @@
       ]
     },
     {
+      "bom-ref": "loose-envify@1.4.0",
+      "type": "library",
+      "name": "loose-envify",
+      "version": "1.4.0",
+      "scope": "required",
+      "author": "Andres Suarez",
+      "description": "Fast (and loose) selective `process.env` replacer using js-tokens instead of an AST",
+      "purl": "pkg:npm/loose-envify@1.4.0",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git://github.com/zertosh/loose-envify.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/zertosh/loose-envify"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/zertosh/loose-envify/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "972bb13c6aff59f86b95e9b608bfd472751cd7372a280226043cee918ed8e45ff242235d928ebe7d12debe5c351e03324b0edfeb5d54218e34f04b71452a0add"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "lucide-react@0.487.0",
       "type": "library",
       "name": "lucide-react",
@@ -10621,6 +10911,48 @@
         {
           "license": {
             "id": "ISC"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "lz-string@1.5.0",
+      "type": "library",
+      "name": "lz-string",
+      "version": "1.5.0",
+      "scope": "required",
+      "author": "pieroxy",
+      "description": "LZ-based compression algorithm",
+      "purl": "pkg:npm/lz-string@1.5.0",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/lz-string/-/lz-string-1.5.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/pieroxy/lz-string.git"
+        },
+        {
+          "type": "website",
+          "url": "http://pieroxy.net/blog/pages/lz-string/index.html"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/pieroxy/lz-string/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8796e0256a7124db306d4eea0ab574b4829009a4b76e53c3aea296c7e431ceeccbd73194ce28fd5c258bad22ec24fbb9b7e79603fc9c7adcd800ee4838c71601"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
           }
         }
       ]
@@ -13185,6 +13517,90 @@
       ]
     },
     {
+      "bom-ref": "pretty-format@27.5.1",
+      "type": "library",
+      "name": "pretty-format",
+      "version": "27.5.1",
+      "scope": "required",
+      "author": "James Kyle",
+      "description": "Stringify any JavaScript value.",
+      "purl": "pkg:npm/pretty-format@27.5.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/pretty-format/-/pretty-format-27.5.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/jest.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/facebook/jest#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/facebook/jest/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "41bd60cb93ab3f9fb30dfd81be7cdd9778ec4dfd6a5d531acdbbc2a0a86d2aa56ce3f60ae28cd7e2029024957235ef9c6a334f9f42a80b4302dc552668758499"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "ansi-styles@5.2.0",
+      "type": "library",
+      "name": "ansi-styles",
+      "version": "5.2.0",
+      "scope": "required",
+      "author": "Sindre Sorhus",
+      "description": "ANSI escape codes for styling strings in the terminal",
+      "purl": "pkg:npm/ansi-styles@5.2.0",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-5.2.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/chalk/ansi-styles.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/ansi-styles#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/chalk/ansi-styles/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "0b1c29b7649f4f34ed5dc7ce97318479ef0ef9cf8c994806acd8817179ee5b1b852477ba6b91f3eeac21c1ee4e81a498234209be42ea597d40486f9c24e90488"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "process-warning@5.0.0",
       "type": "library",
       "name": "process-warning",
@@ -13394,6 +13810,47 @@
       ]
     },
     {
+      "bom-ref": "react@18.3.1",
+      "type": "library",
+      "name": "react",
+      "version": "18.3.1",
+      "scope": "required",
+      "description": "React is a JavaScript library for building user interfaces.",
+      "purl": "pkg:npm/react@18.3.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react/-/react-18.3.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://reactjs.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/facebook/react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c12fa1020252851d0a844bcf240adfb8f54dd7e1f3d6dd18ea7e632eb1906e46f8bab80f13fd11bdefb590c075bffa16807826e1621c57e8bb176a53563fb689"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "react-day-picker@8.10.1",
       "type": "library",
       "name": "react-day-picker",
@@ -13518,6 +13975,47 @@
       ]
     },
     {
+      "bom-ref": "react-dom@18.3.1",
+      "type": "library",
+      "name": "react-dom",
+      "version": "18.3.1",
+      "scope": "required",
+      "description": "React package for working with the DOM.",
+      "purl": "pkg:npm/react-dom@18.3.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://reactjs.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/facebook/react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e66e2740aa7ead945bd3d2cd1f9f463380714e1f76e75ff295b2886e97bb4e91b17c9fbd92fe812e42c15c88e3b296e06e720136a948db7b519d3593d2c9d423"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "react-fast-compare@3.2.2",
       "type": "library",
       "name": "react-fast-compare",
@@ -13591,6 +14089,47 @@
         {
           "alg": "SHA-512",
           "content": "5d19e3b07dc654c433d66a194d6e773317e858deda0e9520fc6a5535ce00dde5d154d7465df6f3278bcce1a2d0f20e970948759c86f1ef469a34297b9319e3a2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "react-is@17.0.2",
+      "type": "library",
+      "name": "react-is",
+      "version": "17.0.2",
+      "scope": "required",
+      "description": "Brand checking of React Elements.",
+      "purl": "pkg:npm/react-is@17.0.2",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react-is/-/react-is-17.0.2.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://reactjs.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/facebook/react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c361accae90beb62099e569f7ff9d17a03d047de02fd75da9af3169921d1278cbb4ecff8a1c1919931ef3acf0f484ea90777563ab0ff9ee7ae539b1db81b10e3"
         }
       ],
       "licenses": [
@@ -14764,6 +15303,47 @@
         {
           "alg": "SHA-512",
           "content": "6f7ae9a532a6f53f8fb1508110e511e3a19623b7dd3acd3454a675fbd7351160da0ccbe341cead530b85c88a6b806813716a151d22ab53c1f7d591c0d9ed111c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "scheduler@0.23.2",
+      "type": "library",
+      "name": "scheduler",
+      "version": "0.23.2",
+      "scope": "required",
+      "description": "Cooperative scheduler for the browser environment.",
+      "purl": "pkg:npm/scheduler@0.23.2",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/scheduler/-/scheduler-0.23.2.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://reactjs.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/facebook/react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "50e4a1b0fc33ecdacc52a851eadd215a315dbaf3b36edbfbb680c7d7f848adf44d2030679c159dd02c094c6bd3a67815966c0609d3fdfd997fb55ac3a9cb98cd"
         }
       ],
       "licenses": [
@@ -16367,6 +16947,48 @@
       ]
     },
     {
+      "bom-ref": "yaml@2.8.3",
+      "type": "library",
+      "name": "yaml",
+      "version": "2.8.3",
+      "scope": "required",
+      "author": "Eemeli Aro",
+      "description": "JavaScript parser and stringifier for YAML",
+      "purl": "pkg:npm/yaml@2.8.3",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/yaml/-/yaml-2.8.3.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/eemeli/yaml.git"
+        },
+        {
+          "type": "website",
+          "url": "https://eemeli.org/yaml/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/eemeli/yaml/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "02f6da08b38ed8eb70fe55b96e687d77f58475c0c5750a766766541f7a57f54da2872518d27bcbbfb27a4eb5a8c2495118f61b07f22e20c7d88316823e0e41a6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "zustand@5.0.11",
       "type": "library",
       "name": "zustand",
@@ -16487,6 +17109,9 @@
         "@radix-ui/react-toggle-group@1.1.2",
         "@radix-ui/react-tooltip@1.1.8",
         "@tanstack/react-query@5.90.21",
+        "@testing-library/dom@10.4.1",
+        "@types/react@19.2.14",
+        "@types/react-dom@19.2.3",
         "class-variance-authority@0.7.1",
         "clsx@2.1.1",
         "cmdk@1.1.1",
@@ -16497,9 +17122,11 @@
         "lucide-react@0.487.0",
         "mermaid@11.13.0",
         "next-themes@0.4.6",
+        "react@18.3.1",
         "react-day-picker@8.10.1",
         "react-dnd@16.0.1",
         "react-dnd-html5-backend@16.0.1",
+        "react-dom@18.3.1",
         "react-hook-form@7.55.0",
         "react-markdown@10.1.0",
         "react-popper@2.3.0",
@@ -16512,6 +17139,7 @@
         "tailwind-merge@3.2.0",
         "tw-animate-css@1.3.8",
         "vaul@1.1.2",
+        "yaml@2.8.3",
         "zustand@5.0.11"
       ]
     },
@@ -17252,6 +17880,19 @@
       ]
     },
     {
+      "ref": "@testing-library/dom@10.4.1",
+      "dependsOn": [
+        "@types/aria-query@5.0.4",
+        "dom-accessibility-api@0.5.16",
+        "lz-string@1.5.0",
+        "pretty-format@27.5.1"
+      ]
+    },
+    {
+      "ref": "@types/aria-query@5.0.4",
+      "dependsOn": []
+    },
+    {
       "ref": "@types/d3@7.4.3",
       "dependsOn": [
         "@types/d3-array@3.2.2",
@@ -17451,6 +18092,16 @@
       ]
     },
     {
+      "ref": "@types/react@19.2.14",
+      "dependsOn": [
+        "csstype@3.2.3"
+      ]
+    },
+    {
+      "ref": "@types/react-dom@19.2.3",
+      "dependsOn": []
+    },
+    {
       "ref": "@types/trusted-types@2.0.7",
       "dependsOn": []
     },
@@ -17539,7 +18190,6 @@
     {
       "ref": "chevrotain-allstar@0.3.1",
       "dependsOn": [
-        "chevrotain@11.1.2",
         "lodash-es@4.17.23"
       ]
     },
@@ -17581,20 +18231,22 @@
       ]
     },
     {
+      "ref": "csstype@3.2.3",
+      "dependsOn": []
+    },
+    {
       "ref": "cytoscape@3.33.1",
       "dependsOn": []
     },
     {
       "ref": "cytoscape-cose-bilkent@4.1.0",
       "dependsOn": [
-        "cytoscape@3.33.1",
         "cose-base@1.0.3"
       ]
     },
     {
       "ref": "cytoscape-fcose@2.2.0",
       "dependsOn": [
-        "cytoscape@3.33.1",
         "cose-base@2.2.0"
       ]
     },
@@ -17834,7 +18486,6 @@
     {
       "ref": "d3-transition@3.0.1",
       "dependsOn": [
-        "d3-selection@3.0.0",
         "d3-color@3.1.0",
         "d3-dispatch@3.0.1",
         "d3-ease@3.0.1",
@@ -17900,8 +18551,14 @@
       ]
     },
     {
-      "ref": "dom-helpers@5.2.1",
+      "ref": "dom-accessibility-api@0.5.16",
       "dependsOn": []
+    },
+    {
+      "ref": "dom-helpers@5.2.1",
+      "dependsOn": [
+        "csstype@3.2.3"
+      ]
     },
     {
       "ref": "dompurify@3.3.3",
@@ -17922,9 +18579,7 @@
     },
     {
       "ref": "embla-carousel-reactive-utils@8.6.0",
-      "dependsOn": [
-        "embla-carousel@8.6.0"
-      ]
+      "dependsOn": []
     },
     {
       "ref": "estree-util-is-identifier-name@3.0.0",
@@ -18169,7 +18824,15 @@
       "dependsOn": []
     },
     {
+      "ref": "loose-envify@1.4.0",
+      "dependsOn": []
+    },
+    {
       "ref": "lucide-react@0.487.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "lz-string@1.5.0",
       "dependsOn": []
     },
     {
@@ -18702,12 +19365,24 @@
       ]
     },
     {
+      "ref": "pretty-format@27.5.1",
+      "dependsOn": [
+        "ansi-styles@5.2.0",
+        "react-is@17.0.2"
+      ]
+    },
+    {
+      "ref": "ansi-styles@5.2.0",
+      "dependsOn": []
+    },
+    {
       "ref": "process-warning@5.0.0",
       "dependsOn": []
     },
     {
       "ref": "prop-types@15.8.1",
       "dependsOn": [
+        "loose-envify@1.4.0",
         "react-is@16.13.1"
       ]
     },
@@ -18736,10 +19411,14 @@
       "dependsOn": []
     },
     {
-      "ref": "react-day-picker@8.10.1",
+      "ref": "react@18.3.1",
       "dependsOn": [
-        "date-fns@3.6.0"
+        "loose-envify@1.4.0"
       ]
+    },
+    {
+      "ref": "react-day-picker@8.10.1",
+      "dependsOn": []
     },
     {
       "ref": "react-dnd@16.0.1",
@@ -18757,11 +19436,22 @@
       ]
     },
     {
+      "ref": "react-dom@18.3.1",
+      "dependsOn": [
+        "loose-envify@1.4.0",
+        "scheduler@0.23.2"
+      ]
+    },
+    {
       "ref": "react-fast-compare@3.2.2",
       "dependsOn": []
     },
     {
       "ref": "react-hook-form@7.55.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "react-is@17.0.2",
       "dependsOn": []
     },
     {
@@ -18783,7 +19473,6 @@
     {
       "ref": "react-popper@2.3.0",
       "dependsOn": [
-        "@popperjs/core@2.11.8",
         "react-fast-compare@3.2.2",
         "warning@4.0.3"
       ]
@@ -18838,6 +19527,7 @@
       "ref": "react-transition-group@4.4.5",
       "dependsOn": [
         "dom-helpers@5.2.1",
+        "loose-envify@1.4.0",
         "prop-types@15.8.1"
       ]
     },
@@ -18951,6 +19641,12 @@
     {
       "ref": "safe-stable-stringify@2.5.0",
       "dependsOn": []
+    },
+    {
+      "ref": "scheduler@0.23.2",
+      "dependsOn": [
+        "loose-envify@1.4.0"
+      ]
     },
     {
       "ref": "secure-json-parse@4.1.0",
@@ -19164,6 +19860,12 @@
     },
     {
       "ref": "warning@4.0.3",
+      "dependsOn": [
+        "loose-envify@1.4.0"
+      ]
+    },
+    {
+      "ref": "yaml@2.8.3",
       "dependsOn": []
     },
     {
