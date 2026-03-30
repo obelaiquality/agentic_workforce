@@ -1,8 +1,20 @@
 # Testing
 
-This repo now uses explicit test tiers instead of one blended “run everything” expectation.
+This repo uses explicit test tiers instead of one blended “run everything” expectation.
 
-## Baseline Validation
+## Quick Reference
+
+| Tier | Command | When to run |
+| --- | --- | --- |
+| Unit + lint | `npm run validate` | Every PR |
+| Desktop stable | `npm run test:e2e:desktop-stable` | UI or operator-path changes |
+| Follow-up scenarios | `npm run test:e2e:followup:status-badge` | Follow-up execution changes |
+| Comprehensive | `node scripts/playwright/run_comprehensive_e2e.mjs` | Full lifecycle (requires local model) |
+| Nightly | `npm run test:e2e:nightly` | Broader regression |
+| Packaged smoke | `npm run test:e2e:desktop-packaged-smoke` | Before cutting a release |
+| Demo media | `npm run demo:capture && npm run demo:render` | After UI changes |
+
+## Baseline Validation (493 tests)
 
 Run this before every normal PR:
 
@@ -12,13 +24,13 @@ npm run validate
 
 Covers:
 
-- lint
-- security guardrails
-- typecheck
-- docs link validation
-- unit/integration tests
-- frontend build
-- server build
+- ESLint + Prettier
+- Security guardrails (`npm run secrets:check`, `npm run audit:prod`)
+- TypeScript strict typecheck
+- Docs link validation
+- 493 unit/integration tests (Vitest, node environment)
+- Frontend build (Vite)
+- Server build (tsup)
 
 ## Stable Desktop E2E
 
@@ -30,21 +42,71 @@ npm run test:e2e:desktop-stable
 
 Covers:
 
-- launch Electron
-- change a stable settings value from the desktop UI and verify the persisted config
-- create a blank project from an empty folder
-- apply a starter after blank project creation
-- attach an existing deterministic repo fixture
-- execute one bounded follow-up task
-- round-trip mission ticket permissions through `strict` and `balanced`
-- inspect `Codebase` and `Console`
+- Launch Electron with custom app icon
+- Settings Essentials 3-card layout (Runtime Mode, API Keys, Active Profile)
+- Settings Advanced accordion behavior (Execution Profiles & Routing, only-one-open)
+- Profile mutation round-trip (Deep Scope, Balanced via API verification)
+- Projects tab navigation (My Projects / Connect New tabs)
+- Connect New tab action buttons (Choose Local Repo, New Project, Connect GitHub)
+- Create a blank project from an empty folder
+- Apply a TypeScript App starter after blank project creation
+- Blueprint View/Hide toggle on active project
+- “Go to Work” button navigation from project card
+- Codebase file browsing and source content verification
+- Console event stream with dropdown filter popover
+- Execute one bounded follow-up task (StatusBadge)
+- Round-trip mission ticket permissions through `strict` and `balanced`
+- Empty state detection for Codebase/Console when no project is active
 
 Runtime presets:
 
 ```bash
+# OpenAI-backed (recommended for first run)
 OPENAI_API_KEY=... E2E_RUNTIME_PRESET=openai_all npm run test:e2e:desktop-stable
+
+# Local model runtime (requires MLX-LM/Ollama on port 8000)
 E2E_RUNTIME_PRESET=default npm run test:e2e:desktop-stable
 ```
+
+## Follow-up Scenarios
+
+Individual follow-up edit scenarios, each covering scaffold + targeted component creation:
+
+```bash
+npm run test:e2e:followup:status-badge
+npm run test:e2e:followup:progress-bar
+npm run test:e2e:followup:utility-module
+npm run test:e2e:followup:api-stop
+npm run test:e2e:followup:rename-component
+```
+
+## Comprehensive E2E (22 checks)
+
+Full lifecycle test covering project creation through verification recheck. Requires a local model runtime on port 8000:
+
+```bash
+# Start local model first
+python3 -m mlx_lm.server --model mlx-community/Qwen3.5-4B-4bit --host 127.0.0.1 --port 8000
+
+# Then run
+node scripts/playwright/run_comprehensive_e2e.mjs
+```
+
+Covers 22 checks:
+
+- Model runtime health
+- Project bootstrap + scaffold verification
+- Codebase tree + file content APIs
+- Console events (existence + verification event)
+- Snapshot aggregation with console events
+- Blueprint extraction
+- UI navigation (Codebase panel file listing, Console panel)
+- Follow-up execution via API (ThemeToggle component)
+- Post-followup snapshot growth
+- Independent verification recheck (lint + test + build)
+- Stop action endpoint
+
+ThemeToggle component checks are soft failures when using deterministic templates (expected behavior).
 
 ## Nightly / Manual Coverage
 
@@ -132,3 +194,21 @@ output/playwright/
 ```
 
 That includes screenshots, logs, summaries, and rendered media.
+
+## Platform Testing Status
+
+| Platform | Unit tests | Desktop E2E | Comprehensive | Packaged smoke | Status |
+| --- | --- | --- | --- | --- | --- |
+| macOS (Apple Silicon) | 493/493 | Full pass | 18/18 hard checks | Verified | Primary development platform |
+| macOS (Intel) | Expected pass | Not yet verified | Not yet verified | Not yet verified | Needs contributor |
+| Ubuntu/Debian | CI pass | CI pass (xvfb) | Not yet verified | Verified | CI-validated |
+| Other Linux | Expected pass | Not yet verified | Not yet verified | Not yet verified | Needs contributor |
+| Windows | Expected pass | Not yet verified | Not yet verified | Not yet verified | Needs contributor |
+
+### What "Not yet verified" means
+
+The codebase uses cross-platform Node.js and Electron APIs, and `scripts/shellDetect.ts` handles platform-specific shell detection. The Playwright E2E scripts use `playwright-core` with `_electron.launch()` which works cross-platform. However, we have not yet run the full E2E suite on these platforms in a real environment.
+
+### How you can help
+
+If you have access to Linux (non-Ubuntu) or Windows, we would love your help verifying the E2E test suite. See [CONTRIBUTING.md](../CONTRIBUTING.md) for details on how to run the tests and report results. Even a simple "I ran `npm run validate` on Windows and it passed" is valuable signal.

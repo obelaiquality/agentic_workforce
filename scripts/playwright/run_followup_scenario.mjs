@@ -319,6 +319,9 @@ async function main() {
   }, 240000, "bootstrapped active repo");
 
   const managedWorktree = path.join(activeRepo.managedWorktreeRoot, "active");
+  // Switch to "My Projects" tab to see the active project card with Apply Starter
+  await page.getByRole("button", { name: "My Projects" }).click();
+  await delay(500);
   await page.getByRole("button", { name: /Apply Starter/i }).waitFor({ timeout: 30000 });
   await page.getByRole("button", { name: /Apply Starter/i }).click();
   await page.getByRole("dialog").waitFor({ timeout: 30000 });
@@ -369,9 +372,15 @@ async function main() {
     log("testing stop action endpoint");
     await page.getByRole("button", { name: "Work", exact: true }).click();
     await page.locator("textarea").first().fill(scenario.objective);
-    await page.getByRole("button", { name: "Review plan", exact: true }).click();
-    await page.getByRole("button", { name: "Run task", exact: true }).waitFor({ timeout: 60000 });
-    await page.getByRole("button", { name: "Run task", exact: true }).click();
+    {
+      const reviewBtn = page.getByRole("button", { name: "Review plan", exact: true });
+      const runBtn = page.getByRole("button", { name: "Run task", exact: true });
+      if (await reviewBtn.isVisible().catch(() => false)) {
+        await reviewBtn.click();
+        await runBtn.waitFor({ timeout: 60000 });
+      }
+      await runBtn.click();
+    }
 
     // Wait briefly for execution to start
     await delay(3000);
@@ -424,9 +433,15 @@ async function main() {
     log("setting up pre-existing component before rename");
     await page.getByRole("button", { name: "Work", exact: true }).click();
     await page.locator("textarea").first().fill("Add a status badge component to the app and test it. Update any docs if needed.");
-    await page.getByRole("button", { name: "Review plan", exact: true }).click();
-    await page.getByRole("button", { name: "Run task", exact: true }).waitFor({ timeout: 60000 });
-    await page.getByRole("button", { name: "Run task", exact: true }).click();
+    {
+      const reviewBtn = page.getByRole("button", { name: "Review plan", exact: true });
+      const runBtn = page.getByRole("button", { name: "Run task", exact: true });
+      if (await reviewBtn.isVisible().catch(() => false)) {
+        await reviewBtn.click();
+        await runBtn.waitFor({ timeout: 60000 });
+      }
+      await runBtn.click();
+    }
 
     await waitFor(async () => {
       const payload = await apiGet(`/api/v8/projects/${activeRepo.id}/report/latest`);
@@ -445,9 +460,15 @@ async function main() {
   // --- Follow-up feature edit ---
   await page.getByRole("button", { name: "Work", exact: true }).click();
   await page.locator("textarea").first().fill(scenario.objective);
-  await page.getByRole("button", { name: "Review plan", exact: true }).click();
-  await page.getByRole("button", { name: "Run task", exact: true }).waitFor({ timeout: 60000 });
-  await page.getByRole("button", { name: "Run task", exact: true }).click();
+  {
+    const reviewBtn = page.getByRole("button", { name: "Review plan", exact: true });
+    const runBtn = page.getByRole("button", { name: "Run task", exact: true });
+    if (await reviewBtn.isVisible().catch(() => false)) {
+      await reviewBtn.click();
+      await runBtn.waitFor({ timeout: 60000 });
+    }
+    await runBtn.click();
+  }
 
   const approvedFollowupApprovals = new Set();
   let followupReport = await waitFor(async () => {

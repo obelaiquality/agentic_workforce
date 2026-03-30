@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, safeStorage, session, shell } from "electron";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -447,12 +447,20 @@ function hardenWindowNavigation(window) {
 }
 
 async function createMainWindow() {
+  // Use the custom app icon for both the window and the macOS dock in dev mode.
+  const iconPath = path.join(projectRoot, "build-resources", "icon.png");
+  const iconImage = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : undefined;
+  if (iconImage && process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(iconImage);
+  }
+
   const window = new BrowserWindow({
     width: 1640,
     height: 980,
     minWidth: 1200,
     minHeight: 760,
     backgroundColor: "#0a0a0c",
+    icon: iconImage,
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
       contextIsolation: true,

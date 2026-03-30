@@ -1,5 +1,29 @@
 # Contributing
 
+Welcome! Whether you are fixing a typo, testing on a new platform, or building a new feature, we appreciate your help.
+
+## Where Help Is Most Needed
+
+These are the highest-impact areas for new contributors:
+
+### Cross-Platform Testing
+
+The E2E test suite is verified on macOS (Apple Silicon) and Ubuntu (CI). We need help confirming it works on:
+
+- **Windows 10/11** — Run `npm run validate` and `npm run test:e2e:desktop-stable`, then report results in a GitHub issue.
+- **macOS Intel** — Same as above.
+- **Linux (Fedora, Arch, etc.)** — Same as above.
+- **Local runtime backends** — Test with Ollama (Windows/Linux), vLLM (NVIDIA), SGLang, or llama.cpp and report any issues.
+
+Even a short issue saying "I ran `npm run validate` on Windows 11 and all 493 tests passed" is extremely valuable. Use the `platform-testing` issue label.
+
+### Other Ways to Contribute
+
+- **Bug reports** — Include OS, Node version, install path, and relevant logs or screenshots.
+- **Documentation** — Improve guides for platforms and runtimes you use.
+- **UI/UX feedback** — File issues with screenshots showing layout problems on your display.
+- **Code contributions** — Pick up issues labeled `good first issue` or `help wanted`.
+
 ## Ground Rules
 
 - Keep changes scoped and reviewable.
@@ -97,3 +121,23 @@ npm run demo:render
 ```
 
 - Store the README GIF in `docs/media/`. Keep larger video artifacts out of git history and attach them to releases or external docs.
+
+## Platform Testing Report Template
+
+If you are testing on a new platform, please include this information in your issue or PR:
+
+```
+**Platform**: (e.g., Windows 11 23H2, Fedora 41, macOS 14 Intel)
+**Node version**: (e.g., 20.11.1)
+**PostgreSQL**: (e.g., 16.2 via Docker / native install)
+**Local runtime**: (e.g., Ollama 0.5.1 / MLX-LM 0.31 / none — OpenAI only)
+
+### Results
+- [ ] `npm run validate` — pass/fail (X/493 tests)
+- [ ] `npm run test:e2e:desktop-stable` — pass/fail
+- [ ] `npm run test:e2e:desktop-packaged-smoke` — pass/fail/skipped
+- [ ] App launches and renders correctly — yes/no
+
+### Notes
+(Any issues, workarounds, or observations)
+```
