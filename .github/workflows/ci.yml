@@ -37,6 +37,11 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@agentic-workforce.dev"
+          git config --global user.name "CI Runner"
+
       - name: Install dependencies
         run: npm ci
 
