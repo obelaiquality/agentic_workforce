@@ -32,6 +32,7 @@ import {
   setRuntimeMode,
 } from "../../lib/apiClient";
 import { useUiStore } from "../../store/uiStore";
+import { ChevronDown } from "lucide-react";
 import { Chip, Panel, PanelHeader } from "../UI";
 
 type SettingsView = "essentials" | "advanced";
@@ -257,6 +258,39 @@ function stripRoleRuntimeSecretState(runtime: Record<string, unknown>) {
   return rest;
 }
 
+function AdvancedSection({
+  id,
+  title,
+  subtitle,
+  open,
+  onToggle,
+  children,
+}: {
+  id: string;
+  title: string;
+  subtitle?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-white/8 bg-white/[0.01] overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-white/[0.03]"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-sm font-medium text-white">{title}</span>
+          {subtitle ? <span className="text-[10px] text-zinc-500 truncate">{subtitle}</span> : null}
+        </div>
+        <ChevronDown className={`h-4 w-4 text-zinc-500 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? <div className="border-t border-white/5 p-4">{children}</div> : null}
+    </div>
+  );
+}
+
 function LabeledInput({
   label,
   value,
@@ -305,6 +339,7 @@ export function SettingsControlView() {
   const executionProfilesSectionRef = useRef<HTMLDivElement | null>(null);
   const accountsSectionRef = useRef<HTMLDivElement | null>(null);
   const [highlightSection, setHighlightSection] = useState<"providers" | "execution_profiles" | "accounts" | null>(null);
+  const [advancedOpenSection, setAdvancedOpenSection] = useState<string | null>("profiles");
 
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: listProviders });
   const accountsQuery = useQuery({ queryKey: ["qwen-accounts"], queryFn: listQwenAccounts });
@@ -934,14 +969,8 @@ export function SettingsControlView() {
 
   return (
     <div className="space-y-4">
-      <Panel>
-        <PanelHeader title="Settings">
-          <div className="flex items-center gap-2">
-            <Chip variant="subtle">{providersQuery.data?.activeProvider ?? "loading"}</Chip>
-            <Chip variant="subtle">{view === "essentials" ? "essentials" : "advanced"}</Chip>
-          </div>
-        </PanelHeader>
-        <div className="p-4 flex flex-wrap gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1 rounded-lg bg-zinc-900/50 p-1 border border-white/5">
           {([
             { key: "essentials" as const, label: "Essentials" },
             { key: "advanced" as const, label: "Advanced" },
@@ -949,256 +978,140 @@ export function SettingsControlView() {
             <button
               key={item.key}
               onClick={() => setView(item.key)}
-              className={`rounded-full px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20 ${view === item.key ? "bg-cyan-500/15 border border-cyan-400/30 text-cyan-100" : "border border-white/10 bg-white/[0.03] text-zinc-400"}`}
+              className={`px-4 py-2 rounded-md text-xs font-medium transition-colors ${view === item.key ? "bg-white/[0.08] text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}`}
             >
               {item.label}
             </button>
           ))}
-          <label className="ml-auto flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">
-            <span className="text-xs text-zinc-400">Show Labs</span>
-            <input aria-label="Show Labs" type="checkbox" checked={labsMode} onChange={(event) => setLabsMode(event.target.checked)} />
-          </label>
         </div>
-        <div className="px-4 pb-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Essentials</div>
-              <div className="mt-1 text-sm text-white">Use this for first-run success</div>
-              <div className="mt-1 text-xs text-zinc-400">
-                Start here for runtime mode, provider keys, local runtime summary, and normal approval defaults.
-              </div>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Advanced</div>
-              <div className="mt-1 text-sm text-white">Routing and deeper control</div>
-              <div className="mt-1 text-xs text-zinc-400">
-                Use Advanced for execution profiles, role routing, dedicated runtimes, budgets, and experimental channels.
-              </div>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Labs</div>
-              <div className="mt-1 text-sm text-white">Hidden by default</div>
-              <div className="mt-1 text-xs text-zinc-400">
-                Labs stay off the normal onboarding path so first-time users stay focused on the stable desktop workflow.
-              </div>
-            </div>
-          </div>
-        </div>
-      </Panel>
+        <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">
+          <span className="text-xs text-zinc-400">Labs</span>
+          <input aria-label="Show Labs" type="checkbox" checked={labsMode} onChange={(event) => setLabsMode(event.target.checked)} />
+        </label>
+      </div>
 
       {view === "essentials" ? (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-4">
-            <div
-              ref={providersSectionRef}
-              className={
-                highlightSection === "providers"
-                  ? "rounded-2xl ring-1 ring-cyan-400/35 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
-                  : "transition-all"
-              }
-            >
-              <Panel>
-                <PanelHeader title="Essentials" />
-                <div className="p-4 space-y-4">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-white">Runtime mode</div>
-                        <div className="mt-1 text-xs text-zinc-500">
-                          Pick the default operator mode first. Advanced routing and lifecycle controls live in Advanced.
-                        </div>
-                      </div>
-                      <Chip variant={runtimeMode === "openai_api" ? "ok" : "subtle"}>
-                        {runtimeMode === "openai_api" ? "OpenAI API active" : "Local Qwen active"}
-                      </Chip>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() =>
-                          runtimeModeMutation.mutate({
-                            mode: "openai_api",
-                            openAiApiKey: openAiApiKeyDraft.trim() || undefined,
-                            openAiModel: openAiResponsesSettings.model,
-                          })
-                        }
-                        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white"
-                      >
-                        Use OpenAI for all roles
-                      </button>
-                      <button
-                        onClick={() => runtimeModeMutation.mutate({ mode: "local_qwen" })}
-                        className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
-                      >
-                        Restore Local Qwen
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-medium text-white">OpenAI connection</div>
-                      <Chip variant={openAiResponsesSettings.hasApiKey ? "ok" : "subtle"}>
-                        {providerSecretStatus(openAiResponsesSettings.hasApiKey, openAiResponsesSettings.apiKeySource)}
-                      </Chip>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_auto]">
-                      <LabeledInput
-                        label="API key"
-                        type="password"
-                        value={openAiApiKeyDraft}
-                        placeholder={openAiResponsesSettings.hasApiKey ? "Saved in backend. Enter a new key to rotate it." : "sk-..."}
-                        onChange={setOpenAiApiKeyDraft}
-                      />
-                      <button
-                        onClick={() => updateSettingsMutation.mutate({ openAiResponses: { apiKey: openAiApiKeyDraft } })}
-                        disabled={!openAiApiKeyDraft.trim()}
-                        className="self-end rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-                      >
-                        Save key
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (openAiApiKeyDraft.trim()) {
-                            setOpenAiApiKeyDraft("");
-                            return;
-                          }
-                          updateSettingsMutation.mutate({ openAiResponses: { clearApiKey: true } });
-                        }}
-                        className="self-end rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
-                      >
-                        {openAiApiKeyDraft.trim() ? "Clear draft" : "Clear saved key"}
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => queryClient.invalidateQueries({ queryKey: ["openai-models"] })}
-                        className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
-                      >
-                        Refresh models
-                      </button>
-                    </div>
-                    <div className="text-xs text-zinc-500">
-                      Daily remaining budget: ${(openAiBudgetQuery.data?.item.remainingUsd ?? openAiResponsesSettings.dailyBudgetUsd).toFixed(2)}. Model selection and budgets live in Advanced.
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-white">Local runtime summary</div>
-                        <div className="mt-1 text-xs text-zinc-500">
-                          This is the default local runtime used when Local Qwen is active.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setView("advanced")}
-                        className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/[0.08]"
-                      >
-                        Open Advanced
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Base URL</div>
-                        <div className="mt-1 text-xs text-zinc-200 break-all">{onPremSettings.baseUrl}</div>
-                      </div>
-                      <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Model</div>
-                        <div className="mt-1 text-xs text-zinc-200 break-all">{onPremSettings.model}</div>
-                      </div>
-                      <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Backend</div>
-                        <div className="mt-1 text-xs text-zinc-200">{selectedInferenceBackend?.label ?? "plugin/default"}</div>
-                      </div>
-                    </div>
-                  </div>
+        <div
+          ref={providersSectionRef}
+          className={
+            highlightSection === "providers"
+              ? "rounded-2xl ring-1 ring-cyan-400/35 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
+              : "transition-all"
+          }
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <Panel>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-white">Runtime Mode</div>
+                  <Chip variant={runtimeMode === "openai_api" ? "ok" : "subtle"} className="text-[10px]">
+                    {runtimeMode === "openai_api" ? "OpenAI" : "Local"}
+                  </Chip>
                 </div>
-              </Panel>
-            </div>
-
-            <div
-              ref={accountsSectionRef}
-              className={
-                highlightSection === "accounts"
-                  ? "rounded-2xl ring-1 ring-cyan-400/35 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
-                  : "transition-all"
-              }
-            >
-              <Panel>
-                <PanelHeader title="Accounts">
-                  <Chip variant="subtle">optional provider path</Chip>
-                </PanelHeader>
-                <div className="space-y-4 p-4">
-                  <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4 space-y-3">
-                    <div className="text-sm font-medium text-white">Add Qwen account</div>
-                    <LabeledInput label="Account label" value={newAccountLabel} onChange={setNewAccountLabel} placeholder="Google Main" />
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => newAccountLabel.trim() && bootstrapAccountMutation.mutate({ label: newAccountLabel.trim() })}
-                        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white"
-                      >
-                        Create + Auth
-                      </button>
-                      <button
-                        onClick={() => newAccountLabel.trim() && bootstrapAccountMutation.mutate({ label: newAccountLabel.trim(), importCurrentAuth: true })}
-                        className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
-                      >
-                        Import Current
-                      </button>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2">
-                      <div className="text-sm text-white font-medium">Add existing profile path</div>
-                      <LabeledInput label="Label" value={newAccountLabel} onChange={setNewAccountLabel} />
-                      <LabeledInput label="Profile path" value={newAccountPath} onChange={setNewAccountPath} placeholder="/path/to/isolated/home" />
-                      <button
-                        onClick={() => newAccountLabel.trim() && newAccountPath.trim() && createAccountMutation.mutate({ label: newAccountLabel.trim(), profilePath: newAccountPath.trim() })}
-                        className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
-                      >
-                        Add Existing
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    {(accountsQuery.data?.items ?? []).map((account) => (
-                      <article key={account.id} className="rounded-xl border border-white/10 bg-zinc-900/40 p-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm text-zinc-100 font-medium">{account.label}</div>
-                            <div className="text-xs text-zinc-500 mt-1">{account.profilePath}</div>
-                          </div>
-                          {account.state === "ready" ? <Chip variant="ok">ready</Chip> : account.state === "cooldown" ? <Chip variant="warn">cooldown</Chip> : <Chip variant="stop">{account.state}</Chip>}
-                        </div>
-                        <div className="text-xs text-zinc-500">next usable: {account.quotaNextUsableAt ?? "unknown"} · confidence {(account.quotaEtaConfidence * 100).toFixed(0)}%</div>
-                        <div className="flex flex-wrap gap-2">
-                          <button onClick={() => updateAccountMutation.mutate({ id: account.id, patch: { enabled: !account.enabled } })} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300">{account.enabled ? "Disable" : "Enable"}</button>
-                          <button onClick={() => reauthMutation.mutate(account.id)} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300">Re-auth</button>
-                          <button onClick={() => startAccountAuthMutation.mutate(account.id)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white">{authSessionMap.get(account.id)?.status === "running" ? "Auth Running" : account.state === "auth_required" ? "Start Auth" : "Verify Auth"}</button>
-                        </div>
-                        {authSessionMap.get(account.id) ? (
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-zinc-400 whitespace-pre-wrap">
-                            auth status: <span className="text-zinc-200">{authSessionMap.get(account.id)?.status}</span>
-                            {authSessionMap.get(account.id)?.message ? ` · ${authSessionMap.get(account.id)?.message}` : ""}
-                            {(authSessionMap.get(account.id)?.log ?? []).length ? `\n${(authSessionMap.get(account.id)?.log ?? []).slice(-3).join("\n")}` : ""}
-                          </div>
-                        ) : null}
-                      </article>
-                    ))}
-                    {(accountsQuery.data?.items ?? []).length === 0 ? <div className="text-xs text-zinc-600">No Qwen CLI accounts configured.</div> : null}
-                  </div>
+                <div className="text-xs text-zinc-500">Choose between local on-device models or cloud API.</div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() =>
+                      runtimeModeMutation.mutate({
+                        mode: "openai_api",
+                        openAiApiKey: openAiApiKeyDraft.trim() || undefined,
+                        openAiModel: openAiResponsesSettings.model,
+                      })
+                    }
+                    className={`rounded-lg px-3 py-2 text-xs font-medium transition ${runtimeMode === "openai_api" ? "bg-cyan-600 text-white" : "border border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]"}`}
+                  >
+                    Use OpenAI API
+                  </button>
+                  <button
+                    onClick={() => runtimeModeMutation.mutate({ mode: "local_qwen" })}
+                    className={`rounded-lg px-3 py-2 text-xs font-medium transition ${runtimeMode !== "openai_api" ? "bg-cyan-600 text-white" : "border border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]"}`}
+                  >
+                    Use Local Qwen
+                  </button>
                 </div>
-              </Panel>
-            </div>
+              </div>
+            </Panel>
+
+            <Panel>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-white">API Keys</div>
+                  <Chip variant={openAiResponsesSettings.hasApiKey ? "ok" : "subtle"} className="text-[10px]">
+                    {providerSecretStatus(openAiResponsesSettings.hasApiKey, openAiResponsesSettings.apiKeySource)}
+                  </Chip>
+                </div>
+                <LabeledInput
+                  label="OpenAI API key"
+                  type="password"
+                  value={openAiApiKeyDraft}
+                  placeholder={openAiResponsesSettings.hasApiKey ? "Key saved. Enter new to rotate." : "sk-..."}
+                  onChange={setOpenAiApiKeyDraft}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => updateSettingsMutation.mutate({ openAiResponses: { apiKey: openAiApiKeyDraft } })}
+                    disabled={!openAiApiKeyDraft.trim()}
+                    className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (openAiApiKeyDraft.trim()) {
+                        setOpenAiApiKeyDraft("");
+                        return;
+                      }
+                      updateSettingsMutation.mutate({ openAiResponses: { clearApiKey: true } });
+                    }}
+                    className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300"
+                  >
+                    {openAiApiKeyDraft.trim() ? "Clear" : "Remove key"}
+                  </button>
+                </div>
+                <div className="text-[10px] text-zinc-600">
+                  Budget: ${(openAiBudgetQuery.data?.item.remainingUsd ?? openAiResponsesSettings.dailyBudgetUsd).toFixed(2)}/day remaining
+                </div>
+              </div>
+            </Panel>
+
+            <Panel>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-white">Active Profile</div>
+                  <Chip variant="subtle" className="text-[10px]">{activeExecutionProfile?.name ?? "Balanced"}</Chip>
+                </div>
+                <div className="text-xs text-zinc-500">Controls how the agent pipeline distributes work across model roles.</div>
+                <div className="flex flex-col gap-1.5">
+                  {executionProfiles.profiles.slice(0, 3).map((profile) => (
+                    <button
+                      key={profile.id}
+                      onClick={() => setActiveExecutionProfile(profile.id)}
+                      className={`rounded-lg px-3 py-2 text-left text-xs transition ${
+                        executionProfiles.activeProfileId === profile.id
+                          ? "bg-cyan-500/10 border border-cyan-400/30 text-cyan-100"
+                          : "border border-white/10 bg-white/[0.02] text-zinc-300 hover:bg-white/[0.05]"
+                      }`}
+                    >
+                      <span className="font-medium">{profile.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setView("advanced")}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300 transition"
+                >
+                  Customize profiles in Advanced →
+                </button>
+              </div>
+            </Panel>
           </div>
 
-          <div className="space-y-4">
+          <div className="mt-4">
             <Panel>
-              <PanelHeader title="Approvals" />
-              <div className="p-4 grid grid-cols-1 gap-2">
+              <div className="p-4 grid grid-cols-1 gap-2 md:grid-cols-3">
                 {Object.entries(safety).map(([key, value]) => (
                   <label key={key} className="rounded-lg border border-white/10 bg-zinc-900/40 p-3 flex items-center justify-between gap-2">
-                    <span className="text-xs text-zinc-300">{key}</span>
+                    <span className="text-xs text-zinc-300">{key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}</span>
                     <input
                       type="checkbox"
                       checked={Boolean(value)}
@@ -1215,28 +1128,19 @@ export function SettingsControlView() {
                 ))}
               </div>
             </Panel>
-
-            <Panel>
-              <PanelHeader title="When to use Advanced" />
-              <div className="space-y-3 p-4">
-                <div className="text-sm text-zinc-300">
-                  Use Advanced when you need execution profiles, role routing, dedicated local runtimes, budgets, or developer Labs.
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setView("advanced")}
-                  className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300 hover:bg-white/[0.08]"
-                >
-                  Open Advanced
-                </button>
-              </div>
-            </Panel>
           </div>
         </div>
       ) : null}
 
       {view === "advanced" ? (
-        <div className="space-y-4">
+        <div className="space-y-2">
+          <AdvancedSection
+            id="profiles"
+            title="Execution Profiles & Routing"
+            subtitle={activeExecutionProfile?.name ?? "Balanced"}
+            open={advancedOpenSection === "profiles"}
+            onToggle={() => setAdvancedOpenSection(advancedOpenSection === "profiles" ? null : "profiles")}
+          >
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_1fr]">
             <div
               ref={executionProfilesSectionRef}
@@ -1799,7 +1703,15 @@ export function SettingsControlView() {
               </Panel>
             </div>
           </div>
+          </AdvancedSection>
 
+          <AdvancedSection
+            id="runtime"
+            title="Runtime & Diagnostics"
+            subtitle={onPremSettings.inferenceBackendId}
+            open={advancedOpenSection === "runtime"}
+            onToggle={() => setAdvancedOpenSection(advancedOpenSection === "runtime" ? null : "runtime")}
+          >
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
           <Panel>
             <PanelHeader title="Runtime" />
@@ -2171,7 +2083,15 @@ export function SettingsControlView() {
             </div>
           </Panel>
           </div>
+          </AdvancedSection>
 
+          <AdvancedSection
+            id="labs"
+            title="Labs & Experimental"
+            subtitle={labsMode ? "Enabled" : "Disabled"}
+            open={advancedOpenSection === "labs"}
+            onToggle={() => setAdvancedOpenSection(advancedOpenSection === "labs" ? null : "labs")}
+          >
           {labsMode ? (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
               <Panel>
@@ -2202,11 +2122,72 @@ export function SettingsControlView() {
               </Panel>
             </div>
           ) : (
-            <Panel>
-              <PanelHeader title="Labs are hidden" />
-              <div className="p-6 text-sm text-zinc-500">Enable Developer Labs above if you need benchmarks, distillation, or internal tuning tools.</div>
-            </Panel>
+            <div className="p-4 text-sm text-zinc-500">Enable Developer Labs at the top of this page to access benchmarks, distillation, and internal tuning tools.</div>
           )}
+          </AdvancedSection>
+
+          <AdvancedSection
+            id="accounts"
+            title="Accounts & Approvals"
+            subtitle={`${(accountsQuery.data?.items ?? []).length} accounts`}
+            open={advancedOpenSection === "accounts"}
+            onToggle={() => setAdvancedOpenSection(advancedOpenSection === "accounts" ? null : "accounts")}
+          >
+            <div
+              ref={accountsSectionRef}
+              className={
+                highlightSection === "accounts"
+                  ? "rounded-2xl ring-1 ring-cyan-400/35 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_24px_rgba(34,211,238,0.08)] transition-all"
+                  : "transition-all"
+              }
+            >
+              <Panel>
+                <PanelHeader title="Accounts">
+                  <Chip variant="subtle">optional provider path</Chip>
+                </PanelHeader>
+                <div className="space-y-4 p-4">
+                  <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4 space-y-3">
+                    <div className="text-sm font-medium text-white">Add Qwen account</div>
+                    <LabeledInput label="Account label" value={newAccountLabel} onChange={setNewAccountLabel} placeholder="Google Main" />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => newAccountLabel.trim() && bootstrapAccountMutation.mutate({ label: newAccountLabel.trim() })}
+                        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white"
+                      >
+                        Create + Auth
+                      </button>
+                      <button
+                        onClick={() => newAccountLabel.trim() && bootstrapAccountMutation.mutate({ label: newAccountLabel.trim(), importCurrentAuth: true })}
+                        className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-300"
+                      >
+                        Import Current
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(accountsQuery.data?.items ?? []).map((account) => (
+                      <article key={account.id} className="rounded-xl border border-white/10 bg-zinc-900/40 p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm text-zinc-100 font-medium">{account.label}</div>
+                            <div className="text-xs text-zinc-500 mt-1">{account.profilePath}</div>
+                          </div>
+                          {account.state === "ready" ? <Chip variant="ok">ready</Chip> : account.state === "cooldown" ? <Chip variant="warn">cooldown</Chip> : <Chip variant="stop">{account.state}</Chip>}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button onClick={() => updateAccountMutation.mutate({ id: account.id, patch: { enabled: !account.enabled } })} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300">{account.enabled ? "Disable" : "Enable"}</button>
+                          <button onClick={() => reauthMutation.mutate(account.id)} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300">Re-auth</button>
+                          <button onClick={() => startAccountAuthMutation.mutate(account.id)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white">{authSessionMap.get(account.id)?.status === "running" ? "Auth Running" : account.state === "auth_required" ? "Start Auth" : "Verify Auth"}</button>
+                        </div>
+                      </article>
+                    ))}
+                    {(accountsQuery.data?.items ?? []).length === 0 ? <div className="text-xs text-zinc-600">No Qwen CLI accounts configured.</div> : null}
+                  </div>
+                </div>
+              </Panel>
+            </div>
+          </AdvancedSection>
         </div>
       ) : null}
     </div>

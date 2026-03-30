@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ChevronDown, ChevronRight, Filter } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Filter } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
 import type { ApiEventStream } from "../../lib/apiClient";
 import { getMissionConsoleV8, openMissionConsoleStreamV8, requestDependencyBootstrapV9 } from "../../lib/apiClient";
+import { EmptyState } from "../ui/empty-state";
 import { modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
@@ -246,8 +247,26 @@ export function ConsoleView({
   const [liveEvents, setLiveEvents] = useState<ConsoleEvent[]>([]);
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const filterRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!filterRef.current?.contains(event.target as Node)) setFilterOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilterOpen(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [filterOpen]);
 
   const query = useQuery({
     queryKey: ["mission-console-v8", projectId],
@@ -379,15 +398,11 @@ export function ConsoleView({
 
   if (!projectId) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 p-6">
-        <div className="text-sm font-medium text-white">Connect a project to unlock the live console</div>
-        <div className="mt-2 text-sm text-zinc-400">
-          Once a project is active, this view streams real execution, verification, approval, indexing, and provider events.
-        </div>
-        <div className="mt-3 text-xs text-zinc-500">
-          Best next step: open Projects, connect or create a repo, then return here after you review or run a task from Work.
-        </div>
-      </div>
+      <EmptyState
+        icon={<Terminal className="h-6 w-6 text-zinc-500" />}
+        heading="No project connected"
+        description="Connect a project to stream live execution, verification, and provider events."
+      />
     );
   }
 
@@ -452,20 +467,47 @@ export function ConsoleView({
                 </button>
               </div>
             ) : null}
-            <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
-              {(Object.keys(CATEGORY_LABELS) as Array<keyof typeof CATEGORY_LABELS>).map((category) => (
-                <button
-                  key={category}
-                  onClick={() => setCategoryFilter(category as "all" | ConsoleEvent["category"])}
-                  className={`rounded-lg px-2.5 py-1.5 text-[10px] uppercase tracking-[0.14em] transition-colors ${
-                    categoryFilter === category
-                      ? "border border-white/12 bg-white/[0.08] text-zinc-100"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  {CATEGORY_LABELS[category]}
-                </button>
-              ))}
+            <div ref={filterRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setFilterOpen((open) => !open)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.06]"
+              >
+                <Filter className="h-3 w-3 text-zinc-500" />
+                {categoryFilter === "all" ? "All categories" : CATEGORY_LABELS[categoryFilter]}
+                {categoryFilter !== "all" && categoryCounts[categoryFilter as ConsoleEvent["category"]] > 0 && (
+                  <span className="font-mono text-[9px] text-zinc-500">{categoryCounts[categoryFilter as ConsoleEvent["category"]]}</span>
+                )}
+                <ChevronDown className={`h-3 w-3 text-zinc-500 transition-transform ${filterOpen ? "rotate-180" : ""}`} />
+              </button>
+              {filterOpen && (
+                <div className="absolute left-0 top-[calc(100%+4px)] z-50 min-w-[200px] rounded-xl border border-white/10 bg-[#101013]/95 p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.4)] backdrop-blur">
+                  {(Object.keys(CATEGORY_LABELS) as Array<keyof typeof CATEGORY_LABELS>).map((category) => {
+                    const isActive = categoryFilter === category;
+                    const count = category !== "all" ? categoryCounts[category as ConsoleEvent["category"]] : undefined;
+                    const style = category !== "all" ? CATEGORY_STYLES[category as ConsoleEvent["category"]] : null;
+                    return (
+                      <button
+                        key={category}
+                        onClick={() => {
+                          setCategoryFilter(category as "all" | ConsoleEvent["category"]);
+                          setFilterOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[11px] transition hover:bg-white/[0.05]",
+                          isActive ? "text-zinc-100" : "text-zinc-400"
+                        )}
+                      >
+                        {style && <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", style.dot)} />}
+                        {!style && <span className="h-1.5 w-1.5 shrink-0" />}
+                        <span className="flex-1 text-left">{CATEGORY_LABELS[category]}</span>
+                        {count !== undefined && <span className="font-mono text-[9px] text-zinc-600">{count}</span>}
+                        {isActive && <Check className="h-3 w-3 text-cyan-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="ml-auto flex items-center gap-2">
@@ -481,26 +523,9 @@ export function ConsoleView({
                 </button>
               ) : null}
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-                <Filter className="w-3 h-3" />
                 {query.isLoading ? "syncing stream" : `${filtered.length} entries`}
               </div>
             </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {(Object.keys(CATEGORY_STYLES) as Array<ConsoleEvent["category"]>).map((category) => (
-              <div
-                key={category}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]",
-                  CATEGORY_STYLES[category].badge
-                )}
-              >
-                <span className={cn("h-1.5 w-1.5 rounded-full", CATEGORY_STYLES[category].dot)} />
-                {CATEGORY_LABELS[category]}
-                <span className="font-mono text-[9px]">{categoryCounts[category]}</span>
-              </div>
-            ))}
           </div>
 
           {workflowId && scope === "workflow" ? (

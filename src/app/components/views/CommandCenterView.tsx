@@ -20,6 +20,7 @@ import {
   PanelRightClose,
   PanelLeftOpen,
   Play,
+  Square,
   ScrollText,
   SendHorizontal,
   Sparkles,
@@ -405,9 +406,10 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
               onOpenApprovals={openApprovalContext}
             />
 
-            <RouteReviewPanel mission={mission} onOpenSettings={() => setActiveSection("settings")} onOpenConsole={() => setActiveSection("console")} />
 
-            <AutonomyActivityPanel mission={mission} onOpenSettings={() => setActiveSection("settings")} />
+            {(mission.experimentalAutonomy?.channels?.length > 0 || mission.experimentalAutonomy?.subagents?.length > 0) && (
+              <AutonomyActivityPanel mission={mission} onOpenSettings={() => setActiveSection("settings")} />
+            )}
 
             <Panel className="border-white/8">
               <PanelHeader
@@ -558,13 +560,14 @@ function OverseerCommandCard({
   onOpenCodebaseScope: (scope: "context" | "tests" | "docs") => void;
   onOpenApprovals: () => void;
 }) {
+  const [routeExpanded, setRouteExpanded] = useState(false);
   const route = mission.route;
   const contextPack = mission.contextPack;
   const hasInput = Boolean(mission.input.trim());
   const hasRouteContext = Boolean(route && contextPack);
-  const selectedTicketStatus = mission.selectedTicket?.status ?? null;
+  const isRunning = mission.isExecuting || mission.isReviewing;
   const primaryAction =
-    !mission.selectedRepo || !hasInput || mission.isExecuting || mission.isReviewing || !hasRouteContext
+    !mission.selectedRepo || !hasInput || isRunning || !hasRouteContext
       ? mission.reviewRoute
       : mission.executeRoute;
   const primaryLabel = mission.isExecuting
@@ -574,29 +577,30 @@ function OverseerCommandCard({
     : !hasRouteContext
     ? "Review plan"
     : "Run task";
-  const showSecondaryReview = Boolean(mission.selectedRepo && hasInput && hasRouteContext);
+  const showSecondaryReview = Boolean(mission.selectedRepo && hasInput && hasRouteContext && !isRunning);
+  const routeConfidence = route
+    ? Math.round(((route.metadata?.confidence as number | undefined) || contextPack?.confidence || 0.68) * 100)
+    : contextPack
+    ? Math.round((contextPack.confidence || 0.38) * 100)
+    : null;
+  const routeSummaryText = hasRouteContext
+    ? `Plan ready · ${routeConfidence}% · ${mission.selectedExecutionProfile?.name || "Default"}`
+    : contextPack
+    ? `Context ready · ${routeConfidence}%`
+    : null;
 
   return (
     <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
       <div className="space-y-3.5 px-5 py-4">
         <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
-              <img src="/assets/hypercube.svg" alt="" className="h-3.5 w-3.5 opacity-80" aria-hidden="true" />
-              Work
-            </div>
-            <h2 className="text-[1.22rem] font-semibold tracking-tight text-white lg:text-[1.28rem]">Describe the task</h2>
-          </div>
-          <div className="flex max-w-[420px] flex-wrap items-center justify-end gap-2">
-            <Chip variant="subtle" className="max-w-[220px] truncate text-[10px]" title={mission.selectedRepo.displayName}>
+          <h2 className="text-lg font-semibold tracking-tight text-white">Describe the task</h2>
+          <div className="flex items-center gap-2">
+            <Chip variant="subtle" className="max-w-[180px] truncate text-[10px]" title={mission.selectedRepo.displayName}>
               {mission.selectedRepo.displayName}
             </Chip>
-            <Chip variant="subtle" className="text-[10px]">
-              {mission.selectedRepo.branch || mission.selectedRepo.defaultBranch || "main"}
-            </Chip>
             <Chip variant={attentionCount ? "warn" : "ok"} className="text-[10px]">
-              {attentionCount ? `${attentionCount} attention` : "project ready"}
+              {attentionCount ? `${attentionCount} attention` : "ready"}
             </Chip>
           </div>
         </div>
@@ -605,49 +609,18 @@ function OverseerCommandCard({
           <textarea
             value={mission.input}
             onChange={(event) => mission.setInput(event.target.value)}
-            placeholder={mission.activeProjectIsBlank ? "Describe what you want to build." : "Describe the next change."}
+            placeholder={mission.activeProjectIsBlank ? "Describe what you want to build..." : "Describe the next change..."}
             aria-label="Task objective"
-            className="min-h-[128px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-7 text-zinc-100 outline-none placeholder:text-zinc-600 disabled:cursor-not-allowed focus-visible:outline-none"
+            className="min-h-[112px] w-full resize-none bg-transparent px-4 py-3.5 text-[15px] leading-7 text-zinc-100 outline-none placeholder:text-zinc-600 disabled:cursor-not-allowed focus-visible:outline-none"
           />
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/6 bg-black/20 px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {mission.selectedRepo ? (
-                <>
-                  <SmallMetric
-                    icon={<img src="/assets/hypercube.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
-                    label={`Context ${contextPack?.files.length || 0} files`}
-                    onClick={() => onOpenCodebaseScope("context")}
-                    disabled={!contextPack?.files.length}
-                  />
-                  <SmallMetric
-                    icon={<img src="/assets/benchmark-reactor.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
-                    label={`${contextPack?.tests.length || 0} tests`}
-                    onClick={() => onOpenCodebaseScope("tests")}
-                    disabled={!contextPack?.tests.length}
-                  />
-                  <SmallMetric
-                    icon={<img src="/assets/structural-blueprint.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
-                    label={`${contextPack?.docs.length || 0} docs`}
-                    onClick={() => onOpenCodebaseScope("docs")}
-                    disabled={!contextPack?.docs.length}
-                  />
-                  <SmallMetric
-                    icon={<img src="/assets/aegis-eye.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 opacity-90" />}
-                    label={`${mission.pendingApprovals.length} approvals`}
-                    onClick={onOpenApprovals}
-                    disabled={!mission.pendingApprovals.length}
-                  />
-                </>
-              ) : null}
-            </div>
-
-            <div className="ml-auto flex min-w-[300px] flex-wrap items-center justify-end gap-2">
+          <div className="flex items-center justify-between gap-3 border-t border-white/6 bg-black/20 px-4 py-2.5">
+            <div className="flex items-center gap-2 min-w-0">
               <select
                 value={mission.selectedExecutionProfileId}
                 onChange={(event) => mission.setExecutionProfile(event.target.value)}
                 disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
-                className="min-w-[130px] rounded-xl border border-white/10 bg-[#111113] px-3 py-2 text-xs text-zinc-100 outline-none disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
+                className="rounded-lg border border-white/10 bg-[#111113] px-2.5 py-1.5 text-xs text-zinc-300 outline-none disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-cyan-400/20"
               >
                 {mission.executionProfiles.profiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
@@ -655,37 +628,90 @@ function OverseerCommandCard({
                   </option>
                 ))}
               </select>
-              {mission.isUpdatingExecutionProfile ? (
-                <div className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-2 text-[10px] uppercase tracking-[0.16em] text-cyan-200">
-                  <ProcessingIndicator kind="processing" active size="xs" tone="accent" />
-                  Updating profile
-                </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {showSecondaryReview ? (
+                <button
+                  onClick={mission.reviewRoute}
+                  disabled={mission.isActing || !hasInput || !mission.selectedRepo}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-cyan-400/20"
+                >
+                  <FileSearch className="h-3.5 w-3.5" />
+                  Review
+                </button>
+              ) : null}
+              {isRunning ? (
+                <button
+                  onClick={mission.refreshSnapshot}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 focus-visible:ring-2 focus-visible:ring-rose-400/30"
+                >
+                  <Square className="h-3 w-3" />
+                  Stop
+                </button>
               ) : null}
               <button
                 onClick={primaryAction}
                 disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-1.5 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-cyan-400/30"
               >
-                {mission.isExecuting || mission.isReviewing ? (
-                  <ProcessingIndicator kind={mission.isExecuting ? "processing" : "thinking"} active size="xs" tone="accent" />
+                {isRunning ? (
+                  <ProcessingIndicator kind="processing" active size="xs" tone="accent" />
                 ) : (
                   <Play className="h-3.5 w-3.5" />
                 )}
                 {primaryLabel}
               </button>
-              {showSecondaryReview ? (
-                <button
-                  onClick={mission.reviewRoute}
-                  disabled={mission.isActing || !hasInput || !mission.selectedRepo}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs text-zinc-200 hover:bg-white/[0.08] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
-                >
-                  <FileSearch className="h-3.5 w-3.5" />
-                  Review plan
-                </button>
-              ) : null}
             </div>
           </div>
         </div>
+
+        {routeSummaryText ? (
+          <div className="rounded-xl border border-white/6 bg-white/[0.02]">
+            <button
+              type="button"
+              onClick={() => setRouteExpanded((prev) => !prev)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
+            >
+              <span className="text-xs text-zinc-400">{routeSummaryText}</span>
+              <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform", routeExpanded && "rotate-180")} />
+            </button>
+            {routeExpanded ? (
+              <div className="border-t border-white/5 px-4 py-3 space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {route ? (
+                    <Chip variant="subtle" className="text-[10px]">
+                      {executionModeLabel(route.executionMode)} · {modelRoleLabel(route.modelRole)}
+                    </Chip>
+                  ) : null}
+                  {route ? (
+                    <Chip variant="subtle" className="text-[10px]">
+                      {providerLabel(route.providerId)}
+                    </Chip>
+                  ) : null}
+                </div>
+                {contextPack ? (
+                  <div className="flex flex-wrap gap-3 text-[11px] text-zinc-500">
+                    <button onClick={() => onOpenCodebaseScope("context")} className="hover:text-zinc-300 transition-colors">
+                      {contextPack.files.length} files
+                    </button>
+                    <button onClick={() => onOpenCodebaseScope("tests")} className="hover:text-zinc-300 transition-colors">
+                      {contextPack.tests.length} tests
+                    </button>
+                    <button onClick={() => onOpenCodebaseScope("docs")} className="hover:text-zinc-300 transition-colors">
+                      {contextPack.docs.length} docs
+                    </button>
+                    {mission.pendingApprovals.length > 0 ? (
+                      <button onClick={onOpenApprovals} className="text-amber-400 hover:text-amber-300 transition-colors">
+                        {mission.pendingApprovals.length} approvals pending
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </Panel>
   );
@@ -933,125 +959,88 @@ function WorkEmptyState({
   appMode: MissionData["appMode"];
   appModeNotice: MissionData["appModeNotice"];
 }) {
-  const hasRecent = recentProjects.length > 0 || recentRepoPaths.length > 0;
-
   return (
-    <div className="space-y-4">
-      <Panel className="border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),#111113]">
-        <div className="space-y-4 px-5 py-5">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-zinc-500">
-              <img src="/assets/hypercube.svg" alt="" className="h-3.5 w-3.5 opacity-80" aria-hidden="true" />
-              Work
-            </div>
-            <h2 className="text-[1.24rem] font-semibold tracking-tight text-white">Choose a project before you start a task</h2>
-            <p className="max-w-2xl text-sm leading-6 text-zinc-400">
-              Project connection and setup now live in Projects. Once a project is active, this workspace becomes your clean task surface for planning, running, and reviewing work.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={openProjects}
-              className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] transition hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
-            >
-              <FolderGit2 className="h-4 w-4" />
-              Open Projects
-            </button>
-            {recentProjects[0] ? (
-              <button
-                type="button"
-                onClick={() => activateRepo(recentProjects[0].id)}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
-              >
-                <ArrowRight className="h-4 w-4" />
-                Reopen {recentProjects[0].displayName}
-              </button>
-            ) : recentRepoPaths[0] ? (
-              <button
-                type="button"
-                onClick={() => openRecentPath(recentRepoPaths[0].path, recentRepoPaths[0].label)}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
-              >
-                <FolderClock className="h-4 w-4" />
-                Open recent folder
-              </button>
-            ) : null}
-          </div>
+    <div className="flex flex-col items-center justify-center gap-8 py-12">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <img src="/assets/agentic-workforce-shell.svg" alt="" className="h-12 w-12 opacity-60" aria-hidden="true" />
+        <div className="space-y-2">
+          <h2 className="text-xl font-semibold tracking-tight text-white">Welcome to Agentic Workforce</h2>
+          <p className="max-w-md text-sm text-zinc-400">Your local AI coding agent. Connect a repo, describe a task, and let the agent handle the rest.</p>
         </div>
-      </Panel>
+      </div>
 
-      {appModeNotice ? (
-        <Panel className="border-white/8 bg-[#101114]">
-          <PanelHeader title={appMode === "backend_unavailable" ? "Recovery" : "Limited mode"} />
-          <div className="space-y-2 p-4">
-            <div className="text-sm text-white">{appModeNotice.message}</div>
-            <div className="text-xs leading-5 text-zinc-400">{appModeNotice.detail}</div>
+      <div className="grid w-full max-w-lg grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-white/6 bg-white/[0.02] px-4 py-5 text-center">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-500/10">
+            <FolderGit2 className="h-4 w-4 text-cyan-400" />
           </div>
-        </Panel>
+          <div className="text-xs font-medium text-zinc-200">Connect</div>
+          <div className="text-[11px] text-zinc-500">Link a local repo</div>
+        </div>
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-white/6 bg-white/[0.02] px-4 py-5 text-center">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500/10">
+            <Sparkles className="h-4 w-4 text-violet-400" />
+          </div>
+          <div className="text-xs font-medium text-zinc-200">Describe</div>
+          <div className="text-[11px] text-zinc-500">Write a task prompt</div>
+        </div>
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-white/6 bg-white/[0.02] px-4 py-5 text-center">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          </div>
+          <div className="text-xs font-medium text-zinc-200">Verify</div>
+          <div className="text-[11px] text-zinc-500">Review proven output</div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={openProjects}
+        className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] transition hover:bg-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-400/30"
+      >
+        <FolderGit2 className="h-4 w-4" />
+        Connect a repo
+      </button>
+
+      {(recentProjects.length > 0 || recentRepoPaths.length > 0) ? (
+        <div className="w-full max-w-lg space-y-2">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 px-1">Recent projects</div>
+          {recentProjects.slice(0, 3).map((repo) => (
+            <button
+              key={repo.id}
+              onClick={() => activateRepo(repo.id)}
+              className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/6 bg-white/[0.02] px-4 py-2.5 text-left transition hover:bg-white/[0.05]"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm text-zinc-200">{repo.displayName}</div>
+                <div className="truncate text-[11px] text-zinc-500">{repo.branch || repo.defaultBranch || "main"}</div>
+              </div>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+            </button>
+          ))}
+          {!recentProjects.length && recentRepoPaths.slice(0, 3).map((item) => (
+            <button
+              key={item.path}
+              onClick={() => openRecentPath(item.path, item.label)}
+              className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/6 bg-white/[0.02] px-4 py-2.5 text-left transition hover:bg-white/[0.05]"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm text-zinc-200">{item.label}</div>
+                <div className="truncate text-[11px] text-zinc-500">{item.path}</div>
+              </div>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+            </button>
+          ))}
+        </div>
       ) : null}
 
-      <Panel className="border-white/8">
-        <PanelHeader title="Recent Projects">
-          <Chip variant="subtle" className="text-[10px]">
-            {recentProjects.length || recentRepoPaths.length}
-          </Chip>
-        </PanelHeader>
-        <div className="space-y-3 p-4">
-          {recentProjects.length ? (
-            recentProjects.slice(0, 4).map((repo) => (
-              <button
-                key={repo.id}
-                onClick={() => activateRepo(repo.id)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-left transition hover:bg-white/[0.04]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-white">{repo.displayName}</div>
-                  <div className="truncate text-xs text-zinc-500">{repo.branch || repo.defaultBranch || "main"}</div>
-                </div>
-                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-500" />
-              </button>
-            ))
-          ) : recentRepoPaths.length ? (
-            recentRepoPaths.slice(0, 4).map((item) => (
-              <button
-                key={item.path}
-                onClick={() => openRecentPath(item.path, item.label)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3 text-left transition hover:bg-white/[0.04]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-white">{item.label}</div>
-                  <div className="truncate text-xs text-zinc-500">{item.path}</div>
-                </div>
-                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-500" />
-              </button>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/8 px-4 py-8 text-center text-sm text-zinc-500">
-              Projects you open will appear here for quick access.
-            </div>
-          )}
-        </div>
-      </Panel>
-
-      {!hasRecent ? (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-          <ProofCard
-            icon={<Sparkles className="h-4 w-4 text-violet-400" />}
-            title="Plan"
-            body="Work focuses on describing a task clearly before any code runs."
-          />
-          <ProofCard
-            icon={<TestTube2 className="h-4 w-4 text-cyan-300" />}
-            title="Verify"
-            body="Every run stays tied to tests, docs, and project policy."
-          />
-          <ProofCard
-            icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}
-            title="Prove"
-            body="Results end with evidence and a report, not only model output."
-          />
+      {appModeNotice ? (
+        <div className={cn(
+          "w-full max-w-lg rounded-xl border px-4 py-3",
+          appMode === "backend_unavailable" ? "border-rose-500/20 bg-rose-500/10" : "border-amber-500/20 bg-amber-500/10"
+        )}>
+          <div className="text-sm text-white">{appModeNotice.message}</div>
+          <div className="mt-1 text-xs text-zinc-400">{appModeNotice.detail}</div>
         </div>
       ) : null}
     </div>
@@ -1116,7 +1105,7 @@ function WorkflowLane({
     <div
       ref={dropRef}
       className={cn(
-        "overflow-hidden rounded-[24px] border transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+        "overflow-hidden rounded-2xl border transition-all",
         meta.columnClass,
         emphasized ? "opacity-100" : "opacity-82",
         isOver && canDrop ? "ring-1 ring-cyan-300/30 border-cyan-300/30 shadow-[0_0_20px_rgba(34,211,238,0.07)]" : ""
@@ -1285,7 +1274,7 @@ function WorkflowCard({
         dropRef(node);
       }}
       className={cn(
-        "overflow-hidden rounded-[24px] border transition-all",
+        "overflow-hidden rounded-xl border transition-all",
         laneSurfaceClass(lane),
         meta.cardAccent,
         active ? "ring-1 ring-cyan-300/35 border-cyan-300/28 shadow-[0_0_22px_rgba(34,211,238,0.08)]" : "hover:border-white/14 hover:shadow-[0_0_16px_rgba(255,255,255,0.03)]",
@@ -1455,7 +1444,7 @@ function WorkflowCard({
               <MetaStat label="Verification" value={verificationLabel} />
             </div>
 
-            <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
+            <div className="rounded-lg bg-white/[0.02] p-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Execution Snapshot</div>
@@ -1515,7 +1504,7 @@ function WorkflowCard({
               />
             </div>
 
-            <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
+            <div className="rounded-lg bg-white/[0.02] p-2.5">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">At a Glance</div>
               <div className="mt-1.5 space-y-2">
                 {taskDetail?.route ? (
@@ -1548,7 +1537,7 @@ function WorkflowCard({
               </div>
             </div>
 
-            <div className="rounded-[16px] border border-white/8 bg-black/20 p-2.5">
+            <div className="rounded-lg bg-white/[0.02] p-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Worker Notes</div>
                 <Chip variant="subtle" className="text-[9px]">

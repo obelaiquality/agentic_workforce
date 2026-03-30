@@ -67,6 +67,8 @@ function makeMission(overrides: Record<string, unknown> = {}) {
     shareReport: null,
     blueprint: null,
     setSelectedTicketId: vi.fn(),
+    experimentalAutonomy: { channels: [], subagents: [] },
+    refreshSnapshot: vi.fn(),
     ...overrides,
   };
 }
@@ -98,36 +100,34 @@ describe("CommandCenterView", () => {
       />
     );
 
-    expect(screen.getByRole("heading", { name: "Choose a project before you start a task" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Projects" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reopen Agentic Workforce" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Welcome to Agentic Workforce" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Connect a repo/ })).toBeInTheDocument();
+    expect(screen.getByText("Agentic Workforce")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Describe the task" })).not.toBeInTheDocument();
   });
 
-  it("renders the Work surface in composer, review, board, outcome order", () => {
+  it("renders the Work surface in composer, board, outcome order", () => {
     render(
       <CommandCenterView
         mission={makeMission({
           selectedRepo: { id: "repo-1", displayName: "Agentic Workforce", branch: "main", defaultBranch: "main" },
           contextPack: { files: ["src/app/App.tsx"], tests: ["src/app/App.test.tsx"], docs: ["README.md"], confidence: 0.82 },
           input: "Simplify first-run UX",
-          route: { executionMode: "single_agent", modelRole: "coder_default", metadata: { confidence: 0.87 } },
+          route: { executionMode: "single_agent", modelRole: "coder_default", metadata: { confidence: 0.87 }, providerId: "onprem-qwen" },
           runSummary: { status: "completed" },
         }) as never}
       />
     );
 
     const taskHeading = screen.getByRole("heading", { name: "Describe the task" });
-    const reviewHeading = screen.getByText("Review the Plan");
     const boardHeading = screen.getByText("Task Board");
     const outcomeHeading = screen.getByRole("heading", { name: "Outcome summary" });
 
-    expect(taskHeading.compareDocumentPosition(reviewHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(reviewHeading.compareDocumentPosition(boardHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(taskHeading.compareDocumentPosition(boardHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(boardHeading.compareDocumentPosition(outcomeHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText("How this works")).not.toBeInTheDocument();
     expect(screen.queryByText("Prompt starters")).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Describe the next change.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe the next change...")).toBeInTheDocument();
   });
 
   it("removes persistent onboarding helpers from the active project composer", () => {
@@ -160,7 +160,7 @@ describe("CommandCenterView", () => {
       />
     );
 
-    expect(screen.getByPlaceholderText("Describe what you want to build.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe what you want to build...")).toBeInTheDocument();
     expect(screen.queryByText("How this works")).not.toBeInTheDocument();
     expect(screen.queryByText("Prompt starters")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Review plan" })).toHaveLength(1);

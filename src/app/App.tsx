@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ChevronDown, Code2, FolderGit2, Settings, Terminal } from "lucide-react";
+import { EmptyState } from "./components/ui/empty-state";
 import { PreflightGate } from "./components/PreflightGate";
-import { Chip } from "./components/UI";
 import { CodebaseView } from "./components/views/CodebaseView";
 import { ConsoleView } from "./components/views/ConsoleView";
 import { SettingsControlView } from "./components/views/SettingsControlView";
@@ -148,9 +148,6 @@ export default function App() {
             <div className="flex items-center gap-2 text-white shrink-0 min-w-0">
               <img src="/assets/agentic-workforce-shell.svg" alt="Agentic Workforce" className="h-5 w-5 shrink-0" />
               <span className="font-bold tracking-tight text-sm truncate">Agentic Workforce</span>
-              <Chip variant="subtle" className="text-[9px] border-purple-500/30 text-purple-400 bg-purple-500/10 uppercase tracking-widest px-1.5 py-0 hidden sm:inline-flex">
-                NEXT-GEN
-              </Chip>
             </div>
 
             <div className="h-4 w-px bg-white/10 hidden md:block" />
@@ -183,28 +180,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3 min-w-0">
-            <div className="hidden lg:flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 min-w-[300px] max-w-[420px]">
-              <FolderGit2 className="h-3.5 w-3.5 text-cyan-300 shrink-0" />
-              <select
-                value={mission.selectedRepo?.id || ""}
-                onChange={(event) => {
-                  const repoId = event.target.value;
-                  if (repoId) mission.activateRepo(repoId);
-                }}
-                className="min-w-0 flex-1 bg-transparent text-xs text-zinc-100 outline-none"
-              >
-                <option value="">No project selected</option>
-                {headerRepos.map((repo) => (
-                  <option key={repo.id} value={repo.id}>
-                    {repo.displayName}
-                  </option>
-                ))}
-              </select>
-              <span className="text-[10px] uppercase tracking-wide text-zinc-500 whitespace-nowrap">
-                {mission.selectedRepo ? mission.selectedRepo.branch || mission.selectedRepo.defaultBranch || "main" : "connect repo"}
-              </span>
-            </div>
-
             <div className={`hidden sm:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${headerStatus.className}`}>
               <ProcessingIndicator
                 kind="telemetry"
@@ -258,7 +233,7 @@ export default function App() {
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          <aside className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0">
+          <aside className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0 transition-[width] duration-200">
             <div className="p-2 flex flex-col gap-1 pt-3">
               {SIDEBAR_ITEMS.map((item) => (
                 <SidebarItem
@@ -270,7 +245,42 @@ export default function App() {
                 />
               ))}
             </div>
-            <div className="p-2 pb-4">
+            <div className="p-2 pb-4 flex flex-col gap-2">
+              <div className="rounded-lg border border-white/5 bg-white/[0.02] px-2 py-2">
+                <div className="hidden lg:flex items-center gap-2 mb-1.5 px-0.5">
+                  <FolderGit2 className="h-3 w-3 text-cyan-400/70 shrink-0" />
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Project</span>
+                </div>
+                <select
+                  value={mission.selectedRepo?.id || ""}
+                  onChange={(event) => {
+                    const repoId = event.target.value;
+                    if (repoId) mission.activateRepo(repoId);
+                  }}
+                  title="Select project"
+                  className="w-full bg-transparent text-xs text-zinc-300 outline-none truncate cursor-pointer hidden lg:block"
+                >
+                  <option value="">No project</option>
+                  {headerRepos.map((repo) => (
+                    <option key={repo.id} value={repo.id}>
+                      {repo.displayName}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("projects")}
+                  title={mission.selectedRepo?.displayName || "Select project"}
+                  className="lg:hidden flex items-center justify-center w-full"
+                >
+                  <FolderGit2 className="h-4 w-4 text-cyan-400/70" />
+                </button>
+                {mission.selectedRepo && (
+                  <div className="hidden lg:block mt-1 px-0.5 text-[10px] text-zinc-600 truncate">
+                    {mission.selectedRepo.branch || mission.selectedRepo.defaultBranch || "main"}
+                  </div>
+                )}
+              </div>
               <SidebarItem
                 icon={<Settings />}
                 label="Settings"
@@ -320,28 +330,17 @@ export default function App() {
                   )}
 
                   {liveTab !== "Execution" && (
-                    <SectionHeader
-                      title={`${liveTab} (Labs)`}
-                      description="Advanced mission-control diagnostics stay out of the normal operator path."
-                    >
-                      <StatusDot color="amber" label="labs only" />
-                    </SectionHeader>
+                    <EmptyState
+                      icon={<Activity className="h-6 w-6 text-zinc-500" />}
+                      heading={`${liveTab} is coming soon`}
+                      description="This feature is in active development. Enable Labs mode in Settings to preview experimental capabilities as they ship."
+                    />
                   )}
                 </>
               )}
 
               {sidebarSection === "codebase" && (
                 <>
-                  <SectionHeader
-                    title="Codebase Explorer"
-                    description="Browse the managed worktree and jump straight to the files, tests, and docs tied to the current task."
-                    iconSrc="/assets/focus-reticle.svg"
-                  >
-                    <StatusDot
-                      color={mission.selectedRepo ? "amber" : "purple"}
-                      label={mission.selectedRepo ? "managed worktree" : "select a project"}
-                    />
-                  </SectionHeader>
                   <CodebaseView
                     repoId={mission.selectedRepo?.id || null}
                     contextPaths={workflowFocusedFiles}
@@ -355,13 +354,6 @@ export default function App() {
 
               {sidebarSection === "console" && (
                 <>
-                  <SectionHeader
-                    title="Console"
-                    description="Follow execution, verification, approvals, and provider activity in one chronological stream."
-                    iconSrc="/assets/telemetry-wave.svg"
-                  >
-                    <StatusDot color="emerald" label="real event stream" animate />
-                  </SectionHeader>
                   <ConsoleView
                     projectId={mission.selectedRepo?.id || null}
                     snapshotEvents={mission.consoleEvents}
@@ -374,13 +366,6 @@ export default function App() {
 
               {sidebarSection === "projects" && (
                 <>
-                  <SectionHeader
-                    title="Projects"
-                    description="Connect a repo, reopen recent work, and manage the active project before you switch back to Work."
-                    iconSrc="/assets/autonomous-kanban.svg"
-                  >
-                    <StatusDot color="cyan" label={`${mission.recentRepos.length} recent`} />
-                  </SectionHeader>
                   <ProjectsWorkspaceView
                     activeRepo={mission.selectedRepo}
                     recentRepos={mission.recentRepos}
@@ -423,11 +408,6 @@ export default function App() {
 
               {sidebarSection === "settings" && (
                 <>
-                  <SectionHeader
-                    title="Settings"
-                    description="Keep essentials simple, and move advanced runtime tuning behind a dedicated advanced view."
-                    iconSrc="/assets/provider-switchboard.svg"
-                  />
                   <SettingsControlView />
                 </>
               )}
@@ -453,20 +433,19 @@ function SidebarItem({
   return (
     <button
       onClick={onClick}
-      title={label}
-      className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-all w-full group relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20 ${
+      className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-all duration-150 w-full group relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20 ${
         active ? "bg-purple-500/10 text-purple-300" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
       }`}
     >
       <span
-        className={`[&>svg]:w-4 [&>svg]:h-4 shrink-0 transition-transform group-hover:scale-105 ${
+        className={`[&>svg]:w-4 [&>svg]:h-4 shrink-0 transition-transform duration-150 group-hover:scale-105 ${
           active ? "text-purple-400" : "text-zinc-500 group-hover:text-zinc-400"
         }`}
       >
         {icon}
       </span>
       <span className="hidden lg:block text-xs font-medium tracking-wide truncate">{label}</span>
-      {active ? <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r bg-purple-500" /> : null}
+      <span className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 rounded-r bg-purple-500 transition-all duration-150 ${active ? "h-5 opacity-100" : "h-0 opacity-0"}`} />
     </button>
   );
 }
@@ -522,52 +501,3 @@ function AppModeBanner({
   );
 }
 
-function SectionHeader({
-  title,
-  description,
-  iconSrc,
-  children,
-}: {
-  title: string;
-  description?: string;
-  iconSrc?: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-xl border border-white/5 bg-white/[0.015]">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          {iconSrc ? <img src={iconSrc} alt="" className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" /> : null}
-        <h1 className="text-base font-bold text-white">{title}</h1>
-        </div>
-        {description ? <p className="text-xs text-zinc-500 mt-0.5">{description}</p> : null}
-      </div>
-      {children ? <div className="shrink-0">{children}</div> : null}
-    </div>
-  );
-}
-
-function StatusDot({
-  color,
-  label,
-  animate,
-}: {
-  color: "emerald" | "amber" | "rose" | "purple" | "cyan";
-  label: string;
-  animate?: boolean;
-}) {
-  const dotColors = {
-    emerald: "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]",
-    amber: "bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]",
-    rose: "bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]",
-    purple: "bg-purple-500 shadow-[0_0_6px_rgba(168,85,247,0.6)]",
-    cyan: "bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.6)]",
-  };
-
-  return (
-    <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
-      <span className={`w-1.5 h-1.5 rounded-full ${dotColors[color]} ${animate ? "animate-pulse" : ""}`} />
-      {label}
-    </div>
-  );
-}

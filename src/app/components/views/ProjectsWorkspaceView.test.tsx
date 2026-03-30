@@ -71,22 +71,13 @@ function makeProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ProjectsWorkspaceView", () => {
-  it("keeps repo connection in Projects and shows limited browser guidance", () => {
+  it("shows My Projects tab by default with no active project guidance", () => {
     render(<ProjectsWorkspaceView {...makeProps()} />);
 
-    expect(screen.getByText("Connect or Create")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Choose Local Repo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New Project" })).toBeInTheDocument();
-    expect(screen.getByText("Project connection lives here. Once a project is active, switch back to Work to plan and run tasks.")).toBeInTheDocument();
-    expect(screen.getByText("Start blank or add a starter")).toBeInTheDocument();
-    expect(screen.getByText("Attach an existing repository")).toBeInTheDocument();
-    expect(screen.getByText("Return to Work")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Browser preview is limited. Use the desktop app for the repo picker and full local task execution. If you only need to inspect the UI, keep going here. If you need a real local repo, switch to Electron."
-      )
-    ).toBeInTheDocument();
-    expect(screen.getByText("Recent Projects")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "My Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect New" })).toBeInTheDocument();
+    expect(screen.getByText("No active project")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Connect a project/ })).toBeInTheDocument();
   });
 
   it("opens the starter dialog and shows blank-first choices", () => {
@@ -111,7 +102,7 @@ describe("ProjectsWorkspaceView", () => {
     expect(props.createProjectFromStarter).toHaveBeenCalledWith("typescript_vite_react");
   });
 
-  it("shows next-step controls for an active blank project", () => {
+  it("shows active project card with Go to Work and Apply Starter buttons", () => {
     const props = makeProps({
       activeRepo: {
         id: "repo-blank",
@@ -129,7 +120,7 @@ describe("ProjectsWorkspaceView", () => {
 
     render(<ProjectsWorkspaceView {...props} />);
 
-    expect(screen.getByText("This is a blank repo. Go to Work to define the first task, or apply a starter if you want an initial baseline.")).toBeInTheDocument();
+    expect(screen.getByText("Blank Starterless Repo")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go to Work" }));
     expect(props.openWork).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Apply Starter" }));

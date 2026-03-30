@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronRight, Copy, FileCode2, Folder, FolderOpen, FolderTree, Search, Sparkles, WrapText } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Code2, Copy, FileCode2, Folder, FolderOpen, FolderTree, Search, Sparkles, WrapText } from "lucide-react";
+import { EmptyState } from "../ui/empty-state";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { CodebaseTreeNode } from "../../../shared/contracts";
@@ -1033,15 +1034,11 @@ export function CodebaseView({
 
   if (!repoId) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 p-6">
-        <div className="text-sm font-medium text-white">Connect a project to inspect the managed worktree</div>
-        <div className="mt-2 text-sm text-zinc-400">
-          This view is strongest after you review or run a task, because Work can focus it on impacted files, tests, and docs.
-        </div>
-        <div className="mt-3 text-xs text-zinc-500">
-          Best next step: open Projects, activate a repo, then return here from Work to inspect the scoped file set.
-        </div>
-      </div>
+      <EmptyState
+        icon={<Code2 className="h-6 w-6 text-zinc-500" />}
+        heading="No project connected"
+        description="Connect a project to browse files, tests, and docs impacted by your tasks."
+      />
     );
   }
 
