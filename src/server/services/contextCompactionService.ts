@@ -17,6 +17,15 @@ export interface CompactionResult {
   tokensAfter: number;
 }
 
+export interface CompactionTracker {
+  consecutiveFailures: number;
+  lastCompactedAt: string | null;
+  totalCompactions: number;
+}
+
+/** Max consecutive failures before circuit breaker trips. */
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 /** Rough token estimate: ~4 chars per token. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -182,6 +191,73 @@ export function compactMessages(
   return {
     messages: current,
     stage: appliedStage,
+    pressure,
+    tokensBefore,
+    tokensAfter: totalTokens(current),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Circuit-breaker-aware compaction
+// ---------------------------------------------------------------------------
+
+export function createCompactionTracker(): CompactionTracker {
+  return { consecutiveFailures: 0, lastCompactedAt: null, totalCompactions: 0 };
+}
+
+/**
+ * Attempt compaction with circuit breaker protection.
+ * After MAX_CONSECUTIVE_FAILURES, compaction is skipped until the tracker is reset.
+ * Returns null when the circuit breaker is open.
+ */
+export function compactWithCircuitBreaker(
+  messages: CompactionMessage[],
+  maxContextTokens: number,
+  tracker: CompactionTracker,
+): CompactionResult | null {
+  if (tracker.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    return null;
+  }
+
+  const result = compactMessages(messages, maxContextTokens);
+
+  if (result.tokensAfter >= result.tokensBefore) {
+    // Compaction did not reduce tokens — count as failure
+    tracker.consecutiveFailures += 1;
+    return result;
+  }
+
+  // Successful compaction — reset failures
+  tracker.consecutiveFailures = 0;
+  tracker.lastCompactedAt = new Date().toISOString();
+  tracker.totalCompactions += 1;
+  return result;
+}
+
+/**
+ * Emergency compaction — skips directly to stage 4-5 (merge + emergency).
+ * Used by reactive compaction when the API rejects with prompt_too_long.
+ */
+export function emergencyCompact(
+  messages: CompactionMessage[],
+  maxContextTokens: number,
+): CompactionResult {
+  const tokensBefore = totalTokens(messages);
+  let current = [...messages];
+
+  // Apply merge consecutive (stage 4)
+  current = applyMergeConsecutive(current);
+  let pressure = computePressure(current, maxContextTokens);
+
+  // If still over, apply emergency (stage 5)
+  if (pressure >= 0.9) {
+    current = applyEmergency(current);
+    pressure = computePressure(current, maxContextTokens);
+  }
+
+  return {
+    messages: current,
+    stage: 5,
     pressure,
     tokensBefore,
     tokensAfter: totalTokens(current),

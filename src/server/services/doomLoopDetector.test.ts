@@ -96,4 +96,132 @@ describe("DoomLoopDetector", () => {
     detector.record("edit", { line: 10, path: "/x.ts" });
     expect(detector.isLooping()).toBe(true);
   });
+
+  // ---------------------------------------------------------------------------
+  // Chain depth tracking
+  // ---------------------------------------------------------------------------
+
+  describe("chain depth tracking", () => {
+    it("getChainContext returns initial depth of 0", () => {
+      const detector = new DoomLoopDetector();
+      const context = detector.getChainContext();
+      expect(context.depth).toBe(0);
+      expect(context.chainId).toBeTruthy();
+    });
+
+    it("createChildChain increments depth by 1", () => {
+      const detector = new DoomLoopDetector();
+      const parent = detector.getChainContext();
+      const child = detector.createChildChain();
+
+      expect(child.depth).toBe(parent.depth + 1);
+      expect(child.chainId).toBe(parent.chainId);
+    });
+
+    it("createChildChain does not mutate current context", () => {
+      const detector = new DoomLoopDetector();
+      const before = detector.getChainContext();
+      detector.createChildChain();
+      const after = detector.getChainContext();
+
+      expect(after.depth).toBe(before.depth);
+    });
+
+    it("setChainContext updates the chain context", () => {
+      const detector = new DoomLoopDetector();
+      const newContext = { chainId: "custom-id", depth: 3 };
+
+      detector.setChainContext(newContext);
+
+      const current = detector.getChainContext();
+      expect(current.chainId).toBe("custom-id");
+      expect(current.depth).toBe(3);
+    });
+
+    it("isDepthExceeded returns false when below limit", () => {
+      const detector = new DoomLoopDetector(20, 3, 5);
+      detector.setChainContext({ chainId: "test", depth: 4 });
+      expect(detector.isDepthExceeded()).toBe(false);
+    });
+
+    it("isDepthExceeded returns true when at limit", () => {
+      const detector = new DoomLoopDetector(20, 3, 5);
+      detector.setChainContext({ chainId: "test", depth: 5 });
+      expect(detector.isDepthExceeded()).toBe(true);
+    });
+
+    it("isDepthExceeded returns true when over limit", () => {
+      const detector = new DoomLoopDetector(20, 3, 5);
+      detector.setChainContext({ chainId: "test", depth: 10 });
+      expect(detector.isDepthExceeded()).toBe(true);
+    });
+
+    it("incrementDepth increases depth and returns true when within limit", () => {
+      const detector = new DoomLoopDetector(20, 3, 5);
+      detector.setChainContext({ chainId: "test", depth: 3 });
+
+      const result = detector.incrementDepth();
+      expect(result).toBe(true);
+      expect(detector.getChainContext().depth).toBe(4);
+    });
+
+    it("incrementDepth returns false when limit would be exceeded", () => {
+      const detector = new DoomLoopDetector(20, 3, 5);
+      detector.setChainContext({ chainId: "test", depth: 5 });
+
+      const result = detector.incrementDepth();
+      expect(result).toBe(false);
+      expect(detector.getChainContext().depth).toBe(5);
+    });
+
+    it("incrementDepth stops at limit", () => {
+      const detector = new DoomLoopDetector(20, 3, 2);
+      detector.setChainContext({ chainId: "test", depth: 0 });
+
+      expect(detector.incrementDepth()).toBe(true);
+      expect(detector.getChainContext().depth).toBe(1);
+
+      // At depth 1, another increment would exceed the limit (2)
+      expect(detector.incrementDepth()).toBe(true);
+      expect(detector.getChainContext().depth).toBe(2);
+
+      // At depth 2 (limit reached), can't increment further
+      expect(detector.incrementDepth()).toBe(false);
+      expect(detector.getChainContext().depth).toBe(2);
+    });
+
+    it("stats includes chainDepth", () => {
+      const detector = new DoomLoopDetector(20, 3, 5);
+      detector.setChainContext({ chainId: "test", depth: 2 });
+
+      const s = detector.stats();
+      expect(s.chainDepth).toBe(2);
+    });
+
+    it("uses default max depth of 5", () => {
+      const detector = new DoomLoopDetector();
+      detector.setChainContext({ chainId: "test", depth: 4 });
+      expect(detector.isDepthExceeded()).toBe(false);
+
+      detector.setChainContext({ chainId: "test", depth: 5 });
+      expect(detector.isDepthExceeded()).toBe(true);
+    });
+
+    it("nested child chains accumulate depth", () => {
+      const detector = new DoomLoopDetector();
+      const level0 = detector.getChainContext();
+      expect(level0.depth).toBe(0);
+
+      const level1 = detector.createChildChain();
+      expect(level1.depth).toBe(1);
+
+      detector.setChainContext(level1);
+      const level2 = detector.createChildChain();
+      expect(level2.depth).toBe(2);
+
+      detector.setChainContext(level2);
+      const level3 = detector.createChildChain();
+      expect(level3.depth).toBe(3);
+    });
+  });
 });

@@ -287,4 +287,226 @@ describe("MemoryService", () => {
     const filePath = path.join(tmpDir, ".agentic-workforce/memory/episodic.json");
     expect(fs.existsSync(filePath)).toBe(false);
   });
+
+  // ── evictOldestEpisodic ────────────────────────────────────────────
+
+  describe("evictOldestEpisodic", () => {
+    it("evicts the oldest N episodic memories", () => {
+      const svc = new MemoryService(tmpDir);
+
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const mem = svc.addEpisodicMemory({
+          taskDescription: `Task ${i}`,
+          summary: `Summary ${i}`,
+          outcome: "success",
+        });
+        ids.push(mem.id);
+      }
+
+      expect(svc.episodicCount()).toBe(5);
+
+      const result = svc.evictOldestEpisodic(2);
+      expect(result.evicted).toBe(2);
+      expect(result.tokensFreed).toBeGreaterThan(0);
+      expect(svc.episodicCount()).toBe(3);
+
+      // Oldest two should be gone
+      const filePath = path.join(tmpDir, ".agentic-workforce/memory/episodic.json");
+      const onDisk = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      const diskIds = onDisk.map((m: { id: string }) => m.id);
+      expect(diskIds).not.toContain(ids[0]);
+      expect(diskIds).not.toContain(ids[1]);
+      expect(diskIds).toContain(ids[2]);
+    });
+
+    it("returns zero when count is zero", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addEpisodicMemory({
+        taskDescription: "Task",
+        summary: "Summary",
+        outcome: "success",
+      });
+
+      const result = svc.evictOldestEpisodic(0);
+      expect(result.evicted).toBe(0);
+      expect(result.tokensFreed).toBe(0);
+      expect(svc.episodicCount()).toBe(1);
+    });
+
+    it("returns zero when no episodic memories exist", () => {
+      const svc = new MemoryService(tmpDir);
+      const result = svc.evictOldestEpisodic(5);
+      expect(result.evicted).toBe(0);
+      expect(result.tokensFreed).toBe(0);
+    });
+
+    it("evicts all if count exceeds available memories", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addEpisodicMemory({
+        taskDescription: "Task 1",
+        summary: "Summary 1",
+        outcome: "success",
+      });
+      svc.addEpisodicMemory({
+        taskDescription: "Task 2",
+        summary: "Summary 2",
+        outcome: "success",
+      });
+
+      expect(svc.episodicCount()).toBe(2);
+
+      const result = svc.evictOldestEpisodic(10);
+      expect(result.evicted).toBe(2);
+      expect(svc.episodicCount()).toBe(0);
+    });
+
+    it("estimates tokens freed correctly", () => {
+      const svc = new MemoryService(tmpDir);
+
+      svc.addEpisodicMemory({
+        taskDescription: "Task",
+        summary: "x".repeat(100),
+        outcome: "success",
+        lessons: ["lesson1", "lesson2"],
+      });
+
+      const result = svc.evictOldestEpisodic(1);
+      expect(result.evicted).toBe(1);
+      // ~100 chars summary + ~14 chars lessons = ~114 chars / 4 ~= 29 tokens
+      expect(result.tokensFreed).toBeGreaterThan(20);
+    });
+
+    it("persists changes to disk", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addEpisodicMemory({
+        taskDescription: "Task 1",
+        summary: "Summary 1",
+        outcome: "success",
+      });
+      svc.addEpisodicMemory({
+        taskDescription: "Task 2",
+        summary: "Summary 2",
+        outcome: "success",
+      });
+
+      svc.evictOldestEpisodic(1);
+
+      const filePath = path.join(tmpDir, ".agentic-workforce/memory/episodic.json");
+      const onDisk = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      expect(onDisk).toHaveLength(1);
+      expect(onDisk[0].taskDescription).toBe("Task 2");
+    });
+  });
+
+  // ── trimWorking ────────────────────────────────────────────────────
+
+  describe("trimWorking", () => {
+    it("trims working memory to keep last N messages", () => {
+      const svc = new MemoryService(tmpDir);
+
+      for (let i = 0; i < 10; i++) {
+        svc.addWorkingMessage({ role: "user", content: `msg ${i}` });
+      }
+
+      expect(svc.workingCount()).toBe(10);
+
+      const result = svc.trimWorking(3);
+      expect(result.trimmed).toBe(7);
+      expect(result.tokensFreed).toBeGreaterThan(0);
+      expect(svc.workingCount()).toBe(3);
+
+      const comp = svc.compose("anything");
+      expect(comp.workingMessages[0].content).toBe("msg 7");
+      expect(comp.workingMessages[1].content).toBe("msg 8");
+      expect(comp.workingMessages[2].content).toBe("msg 9");
+    });
+
+    it("returns zero when already within limit", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addWorkingMessage({ role: "user", content: "msg 1" });
+      svc.addWorkingMessage({ role: "user", content: "msg 2" });
+
+      const result = svc.trimWorking(5);
+      expect(result.trimmed).toBe(0);
+      expect(result.tokensFreed).toBe(0);
+      expect(svc.workingCount()).toBe(2);
+    });
+
+    it("returns zero when keepLast equals current count", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addWorkingMessage({ role: "user", content: "msg 1" });
+      svc.addWorkingMessage({ role: "user", content: "msg 2" });
+
+      const result = svc.trimWorking(2);
+      expect(result.trimmed).toBe(0);
+      expect(result.tokensFreed).toBe(0);
+      expect(svc.workingCount()).toBe(2);
+    });
+
+    it("estimates tokens freed correctly", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addWorkingMessage({ role: "user", content: "x".repeat(100) });
+      svc.addWorkingMessage({ role: "user", content: "x".repeat(200) });
+
+      const result = svc.trimWorking(1);
+      expect(result.trimmed).toBe(1);
+      // 100 chars / 4 = 25 tokens
+      expect(result.tokensFreed).toBeGreaterThanOrEqual(25);
+    });
+
+    it("can trim to zero messages", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addWorkingMessage({ role: "user", content: "msg 1" });
+      svc.addWorkingMessage({ role: "user", content: "msg 2" });
+
+      const result = svc.trimWorking(0);
+      expect(result.trimmed).toBe(2);
+      expect(svc.workingCount()).toBe(0);
+    });
+  });
+
+  // ── episodicCount / workingCount ───────────────────────────────────
+
+  describe("episodicCount / workingCount", () => {
+    it("episodicCount returns correct count", () => {
+      const svc = new MemoryService(tmpDir);
+      expect(svc.episodicCount()).toBe(0);
+
+      svc.addEpisodicMemory({
+        taskDescription: "Task 1",
+        summary: "Summary 1",
+        outcome: "success",
+      });
+      expect(svc.episodicCount()).toBe(1);
+
+      svc.addEpisodicMemory({
+        taskDescription: "Task 2",
+        summary: "Summary 2",
+        outcome: "success",
+      });
+      expect(svc.episodicCount()).toBe(2);
+    });
+
+    it("workingCount returns correct count", () => {
+      const svc = new MemoryService(tmpDir);
+      expect(svc.workingCount()).toBe(0);
+
+      svc.addWorkingMessage({ role: "user", content: "msg 1" });
+      expect(svc.workingCount()).toBe(1);
+
+      svc.addWorkingMessage({ role: "assistant", content: "msg 2" });
+      expect(svc.workingCount()).toBe(2);
+    });
+
+    it("clearWorking updates workingCount", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.addWorkingMessage({ role: "user", content: "msg 1" });
+      svc.addWorkingMessage({ role: "user", content: "msg 2" });
+      expect(svc.workingCount()).toBe(2);
+
+      svc.clearWorking();
+      expect(svc.workingCount()).toBe(0);
+    });
+  });
 });

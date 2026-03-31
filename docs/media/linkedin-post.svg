@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+  <rect width="1080" height="1080" fill="#000000"/>
+
+  <!-- Obel logomark: two vertical bars, top-left -->
+  <g transform="translate(72, 72)">
+    <rect x="0" y="0" width="28" height="160" rx="4" fill="white" transform="skewX(-8)"/>
+    <rect x="48" y="0" width="28" height="160" rx="4" fill="white" transform="skewX(-8)"/>
+  </g>
+
+  <!-- Main text block -->
+  <text
+    x="72"
+    y="390"
+    font-family="'Helvetica Neue', 'Arial Black', Helvetica, Arial, sans-serif"
+    font-weight="900"
+    font-size="148"
+    fill="white"
+    letter-spacing="-6"
+    text-anchor="start"
+  >THE</text>
+
+  <text
+    x="72"
+    y="540"
+    font-family="'Helvetica Neue', 'Arial Black', Helvetica, Arial, sans-serif"
+    font-weight="900"
+    font-size="148"
+    fill="white"
+    letter-spacing="-6"
+    text-anchor="start"
+  >CLOUD</text>
+
+  <text
+    x="72"
+    y="690"
+    font-family="'Helvetica Neue', 'Arial Black', Helvetica, Arial, sans-serif"
+    font-weight="900"
+    font-size="148"
+    fill="white"
+    letter-spacing="-6"
+    text-anchor="start"
+  >CALLED.</text>
+
+  <!-- Divider line -->
+  <rect x="72" y="722" width="180" height="5" fill="white" opacity="0.3"/>
+
+  <text
+    x="72"
+    y="850"
+    font-family="'Helvetica Neue', 'Arial Black', Helvetica, Arial, sans-serif"
+    font-weight="900"
+    font-size="148"
+    fill="white"
+    letter-spacing="-6"
+    text-anchor="start"
+  >WE</text>
+
+  <text
+    x="72"
+    y="990"
+    font-family="'Helvetica Neue', 'Arial Black', Helvetica, Arial, sans-serif"
+    font-weight="900"
+    font-size="148"
+    fill="white"
+    letter-spacing="-6"
+    text-anchor="start"
+  >DECLINED.</text>
+
+  <!-- Bottom label -->
+  <text
+    x="72"
+    y="1052"
+    font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+    font-weight="400"
+    font-size="22"
+    fill="white"
+    letter-spacing="4"
+    opacity="0.4"
+    text-anchor="start"
+  >AGENTIC WORKFORCE — OPEN SOURCE — RUNS LOCAL</text>
+</svg>

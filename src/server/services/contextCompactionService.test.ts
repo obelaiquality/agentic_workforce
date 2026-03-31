@@ -3,6 +3,9 @@ import {
   estimateTokens,
   computePressure,
   compactMessages,
+  createCompactionTracker,
+  compactWithCircuitBreaker,
+  emergencyCompact,
   type CompactionMessage,
 } from "./contextCompactionService";
 
@@ -353,5 +356,182 @@ describe("makeMessages helper", () => {
     const msgs = makeMessages(0.5, 1000, { pinnedCount: 3 });
     const pinned = msgs.filter((m) => m.pinned);
     expect(pinned.length).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Circuit breaker + emergency compaction
+// ---------------------------------------------------------------------------
+
+describe("createCompactionTracker", () => {
+  it("returns a fresh tracker with zero failures", () => {
+    const tracker = createCompactionTracker();
+    expect(tracker.consecutiveFailures).toBe(0);
+    expect(tracker.lastCompactedAt).toBeNull();
+    expect(tracker.totalCompactions).toBe(0);
+  });
+});
+
+describe("compactWithCircuitBreaker", () => {
+  it("returns null when circuit breaker is open (3+ failures)", () => {
+    const msgs = makeMessages(0.5, 1000);
+    const tracker = createCompactionTracker();
+    tracker.consecutiveFailures = 3;
+
+    const result = compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(result).toBeNull();
+  });
+
+  it("increments failures when compaction does not reduce tokens", () => {
+    // Create messages with low pressure — compaction won't reduce tokens
+    const msgs = makeMessages(0.5, 1000);
+    const tracker = createCompactionTracker();
+
+    const result = compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(result).not.toBeNull();
+    expect(tracker.consecutiveFailures).toBe(1);
+    expect(tracker.totalCompactions).toBe(0);
+  });
+
+  it("resets failures and increments totalCompactions on successful compaction", () => {
+    // Create messages with high pressure to trigger actual compaction
+    const msgs = makeMessages(0.85, 1000);
+    const tracker = createCompactionTracker();
+    tracker.consecutiveFailures = 2; // Set some prior failures
+
+    const result = compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(result).not.toBeNull();
+    expect(result!.tokensAfter).toBeLessThan(result!.tokensBefore);
+    expect(tracker.consecutiveFailures).toBe(0);
+    expect(tracker.totalCompactions).toBe(1);
+    expect(tracker.lastCompactedAt).toBeTruthy();
+  });
+
+  it("opens circuit breaker after 3 consecutive failures", () => {
+    const msgs = makeMessages(0.5, 1000);
+    const tracker = createCompactionTracker();
+
+    // Trigger 3 failures
+    compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(tracker.consecutiveFailures).toBe(1);
+
+    compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(tracker.consecutiveFailures).toBe(2);
+
+    compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(tracker.consecutiveFailures).toBe(3);
+
+    // Circuit should now be open
+    const result = compactWithCircuitBreaker(msgs, 1000, tracker);
+    expect(result).toBeNull();
+  });
+
+  it("maintains lastCompactedAt timestamp", () => {
+    const msgs = makeMessages(0.85, 1000);
+    const tracker = createCompactionTracker();
+
+    const before = Date.now();
+    compactWithCircuitBreaker(msgs, 1000, tracker);
+    const after = Date.now();
+
+    expect(tracker.lastCompactedAt).toBeTruthy();
+    const timestamp = new Date(tracker.lastCompactedAt!).getTime();
+    expect(timestamp).toBeGreaterThanOrEqual(before);
+    expect(timestamp).toBeLessThanOrEqual(after);
+  });
+});
+
+describe("emergencyCompact", () => {
+  it("returns stage 5 result", () => {
+    const msgs = makeMessages(0.95, 1000);
+    const result = emergencyCompact(msgs, 1000);
+    expect(result.stage).toBe(5);
+  });
+
+  it("applies merge consecutive (stage 4) first", () => {
+    const maxTokens = 1000;
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "sys", pinned: true },
+      { role: "user", content: "a".repeat(400) },
+      { role: "user", content: "b".repeat(400) },
+      { role: "assistant", content: "c".repeat(400) },
+      { role: "assistant", content: "d".repeat(400) },
+    ];
+
+    const result = emergencyCompact(msgs, maxTokens);
+
+    // After merging, consecutive user/assistant messages should be combined
+    const userMsgs = result.messages.filter((m) => m.role === "user");
+    const assistantMsgs = result.messages.filter((m) => m.role === "assistant");
+
+    // Should have merged consecutive same-role messages
+    expect(userMsgs.length).toBeLessThanOrEqual(1);
+    expect(assistantMsgs.length).toBeLessThanOrEqual(1);
+  });
+
+  it("applies emergency (stage 5) when pressure remains high", () => {
+    const maxTokens = 100;
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "critical", pinned: true },
+    ];
+
+    // Add 20 large messages to create extreme pressure
+    for (let i = 0; i < 20; i++) {
+      msgs.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: "x".repeat(500),
+      });
+    }
+
+    const result = emergencyCompact(msgs, maxTokens);
+
+    // Should keep only pinned + last 5 non-pinned
+    const pinned = result.messages.filter((m) => m.pinned);
+    const nonPinned = result.messages.filter((m) => !m.pinned);
+
+    expect(pinned.length).toBe(1);
+    expect(nonPinned.length).toBeLessThanOrEqual(5);
+    expect(result.stage).toBe(5);
+  });
+
+  it("significantly reduces token count", () => {
+    const maxTokens = 100;
+    const msgs: CompactionMessage[] = [];
+
+    // Add many large messages to ensure significant reduction
+    for (let i = 0; i < 20; i++) {
+      msgs.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: "x".repeat(500),
+      });
+    }
+
+    const result = emergencyCompact(msgs, maxTokens);
+
+    expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
+    // Emergency compaction should be aggressive
+    expect(result.tokensAfter).toBeLessThan(result.tokensBefore * 0.5);
+  });
+
+  it("preserves all pinned messages", () => {
+    const maxTokens = 100;
+    const pinnedContent1 = "critical system context";
+    const pinnedContent2 = "important blueprint data";
+
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: pinnedContent1, pinned: true },
+      { role: "system", content: pinnedContent2, pinned: true },
+    ];
+
+    for (let i = 0; i < 30; i++) {
+      msgs.push({ role: "user", content: "x".repeat(300) });
+    }
+
+    const result = emergencyCompact(msgs, maxTokens);
+
+    const pinned = result.messages.filter((m) => m.pinned);
+    expect(pinned.length).toBe(2);
+    expect(pinned[0].content).toBe(pinnedContent1);
+    expect(pinned[1].content).toBe(pinnedContent2);
   });
 });

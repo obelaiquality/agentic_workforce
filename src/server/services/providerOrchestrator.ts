@@ -11,6 +11,63 @@ import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import { ProviderFactory } from "../providers/factory";
 import { estimateNextUsableAt } from "./quotaEstimator";
+import { emergencyCompact, type CompactionMessage } from "./contextCompactionService";
+
+/** Query source classification for retry behavior. */
+export type QuerySource = "execution" | "verification" | "context_building" | "reporting";
+
+/** Foreground sources retry on capacity errors; background sources bail immediately. */
+const FOREGROUND_SOURCES = new Set<QuerySource>(["execution", "verification", "context_building"]);
+
+const BASE_RETRY_DELAY_MS = 500;
+const MAX_RETRIES = 3;
+
+function isContextOverflowError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return (
+      msg.includes("prompt_too_long") ||
+      msg.includes("context_length_exceeded") ||
+      msg.includes("maximum context length") ||
+      msg.includes("context window") ||
+      msg.includes("too many tokens")
+    );
+  }
+  return false;
+}
+
+function isTransientCapacityError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return (
+      msg.includes("rate_limit") ||
+      msg.includes("429") ||
+      msg.includes("529") ||
+      msg.includes("overloaded") ||
+      msg.includes("capacity")
+    );
+  }
+  return false;
+}
+
+function isStaleConnectionError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message;
+    return msg.includes("ECONNRESET") || msg.includes("EPIPE") || msg.includes("socket hang up");
+  }
+  return false;
+}
+
+/** Exponential backoff with jitter to avoid thundering herd. */
+function retryDelayMs(attempt: number): number {
+  const exponential = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+  const jitter = Math.random() * BASE_RETRY_DELAY_MS;
+  return Math.min(exponential + jitter, 30000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Enforces the blueprint's escalation policy before allowing `overseer_escalation`.
@@ -612,6 +669,106 @@ export class ProviderOrchestrator {
         throw error;
       }
     }
+  }
+
+  /**
+   * streamChat with retry logic, source classification, and reactive compaction.
+   *
+   * - Foreground sources (execution, verification, context_building) retry on
+   *   transient capacity errors with exponential backoff + jitter.
+   * - Background sources (reporting) bail immediately on capacity errors.
+   * - Context overflow errors trigger emergency compaction and a single retry.
+   * - Stale connection errors (ECONNRESET/EPIPE) get one retry.
+   * - After MAX_RETRIES, falls back to overseer_escalation if available.
+   */
+  async streamChatWithRetry(
+    sessionId: string,
+    messages: ProviderSendInput["messages"],
+    onToken: (token: string) => void,
+    options?: {
+      providerId?: ProviderId;
+      modelRole?: ModelRole;
+      metadata?: Record<string, unknown>;
+      querySource?: QuerySource;
+      maxContextTokens?: number;
+    },
+  ): Promise<StreamResult> {
+    const source = options?.querySource ?? "execution";
+    const isForeground = FOREGROUND_SOURCES.has(source);
+    let lastError: unknown;
+    let staleRetried = false;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.streamChat(sessionId, messages, onToken, options);
+      } catch (error) {
+        lastError = error;
+
+        // Context overflow → emergency compact and retry once
+        if (isContextOverflowError(error) && options?.maxContextTokens) {
+          const compactionMessages: CompactionMessage[] = messages.map((m) => ({
+            role: m.role as "system" | "user" | "assistant",
+            content: m.content,
+          }));
+          const compacted = emergencyCompact(compactionMessages, options.maxContextTokens);
+          const compactedMessages = compacted.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          }));
+
+          publishEvent("global", "compaction.reactive", {
+            sessionId,
+            tokensBefore: compacted.tokensBefore,
+            tokensAfter: compacted.tokensAfter,
+            stage: compacted.stage,
+          });
+
+          try {
+            return await this.streamChat(sessionId, compactedMessages, onToken, options);
+          } catch (retryError) {
+            lastError = retryError;
+            break;
+          }
+        }
+
+        // Stale connection → single retry without delay
+        if (isStaleConnectionError(error) && !staleRetried) {
+          staleRetried = true;
+          continue;
+        }
+
+        // Transient capacity → retry with backoff (foreground only)
+        if (isTransientCapacityError(error)) {
+          if (!isForeground) break;
+          if (attempt < MAX_RETRIES) {
+            await sleep(retryDelayMs(attempt));
+            continue;
+          }
+        }
+
+        // Non-retriable error
+        break;
+      }
+    }
+
+    // Fallback: try overseer_escalation if we're not already using it
+    if (options?.modelRole !== "overseer_escalation") {
+      try {
+        publishEvent("global", "provider.fallback", {
+          sessionId,
+          originalRole: options?.modelRole ?? null,
+          reason: lastError instanceof Error ? lastError.message : "max_retries",
+        });
+        return await this.streamChat(sessionId, messages, onToken, {
+          ...options,
+          modelRole: "overseer_escalation",
+        });
+      } catch {
+        // Fallback also failed — throw the original error
+      }
+    }
+
+    throw lastError;
   }
 
   private async pickNextQwenAccount(exclude: Set<string>) {

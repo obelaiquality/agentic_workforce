@@ -208,6 +208,55 @@ export class MemoryService {
     };
   }
 
+  // ── Eviction ──────────────────────────────────────────────────────────
+
+  /**
+   * Evict the oldest N episodic memories.
+   * Returns the number of tokens freed (estimated).
+   * Used by context compaction as a lightweight first pass before
+   * expensive LLM-driven summarization.
+   */
+  evictOldestEpisodic(count: number): { evicted: number; tokensFreed: number } {
+    const toEvict = Math.min(count, this.episodic.length);
+    if (toEvict === 0) return { evicted: 0, tokensFreed: 0 };
+
+    const removed = this.episodic.splice(0, toEvict);
+    const tokensFreed = removed.reduce((sum, mem) => {
+      const text = mem.summary + " " + mem.lessons.join(" ");
+      return sum + Math.ceil(text.length / 4);
+    }, 0);
+
+    this.saveEpisodicMemory();
+    return { evicted: toEvict, tokensFreed };
+  }
+
+  /**
+   * Trim working memory to keep only the last N messages.
+   * Returns estimated tokens freed.
+   */
+  trimWorking(keepLast: number): { trimmed: number; tokensFreed: number } {
+    if (this.working.length <= keepLast) return { trimmed: 0, tokensFreed: 0 };
+
+    const toRemove = this.working.length - keepLast;
+    const removed = this.working.splice(0, toRemove);
+    const tokensFreed = removed.reduce(
+      (sum, msg) => sum + Math.ceil(msg.content.length / 4),
+      0,
+    );
+
+    return { trimmed: toRemove, tokensFreed };
+  }
+
+  /** Get the total count of episodic memories. */
+  episodicCount(): number {
+    return this.episodic.length;
+  }
+
+  /** Get the total count of working memory messages. */
+  workingCount(): number {
+    return this.working.length;
+  }
+
   // ── Clearing ──────────────────────────────────────────────────────────
 
   clearWorking(): void {

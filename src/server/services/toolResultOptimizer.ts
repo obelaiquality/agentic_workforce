@@ -3,10 +3,24 @@
  *
  * Each optimizer leaves small outputs untouched and only truncates / filters
  * when the content exceeds a sensible threshold.
+ *
+ * Large results that exceed PERSIST_THRESHOLD_CHARS are written to disk
+ * and replaced with a preview + file reference, so the model can later
+ * read the full output if needed.
  */
+
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { randomUUID } from "node:crypto";
 
 const ERROR_PATTERN = /error|err!|fail|fatal/i;
 const BUILD_DIAG_PATTERN = /error|warning|warn|err!/i;
+
+/** Threshold above which results are persisted to disk (100k chars). */
+const PERSIST_THRESHOLD_CHARS = 100_000;
+/** How many chars of preview to keep in context. */
+const PREVIEW_SIZE_CHARS = 10_000;
 
 /* ------------------------------------------------------------------ */
 /*  optimizeShellOutput                                               */
@@ -108,4 +122,91 @@ export function optimizeToolOutput(
     case 'build':
       return optimizeBuildOutput(output);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  persistLargeResult — write oversized output to disk                */
+/* ------------------------------------------------------------------ */
+
+export interface PersistedResult {
+  /** Path to the persisted file on disk. */
+  filepath: string;
+  /** Preview text kept in context. */
+  preview: string;
+  /** Original size in bytes. */
+  originalSize: number;
+  /** Whether the full content has more data beyond the preview. */
+  hasMore: boolean;
+}
+
+/**
+ * Get the session-specific directory for persisted tool results.
+ */
+function getToolResultDir(taskId?: string): string {
+  const base = path.join(os.homedir(), ".agentic-workforce", "sessions");
+  return path.join(base, taskId ?? "default", "tool-results");
+}
+
+/**
+ * Persist a large tool result to disk. Returns the preview text to keep
+ * in context plus metadata. Returns null if the output is below threshold.
+ */
+export function persistLargeResult(
+  output: string,
+  options?: {
+    taskId?: string;
+    label?: string;
+    threshold?: number;
+    previewSize?: number;
+  },
+): PersistedResult | null {
+  const threshold = options?.threshold ?? PERSIST_THRESHOLD_CHARS;
+  if (output.length <= threshold) return null;
+
+  const previewSize = options?.previewSize ?? PREVIEW_SIZE_CHARS;
+  const dir = getToolResultDir(options?.taskId);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const filename = `${options?.label ?? "result"}-${randomUUID().slice(0, 8)}.txt`;
+  const filepath = path.join(dir, filename);
+  fs.writeFileSync(filepath, output, "utf-8");
+
+  const preview = output.slice(0, previewSize);
+  return {
+    filepath,
+    preview,
+    originalSize: Buffer.byteLength(output),
+    hasMore: output.length > previewSize,
+  };
+}
+
+/**
+ * Optimize and optionally persist a tool result.
+ * If the output exceeds the persistence threshold, it is written to disk
+ * and the in-context content is replaced with a preview + reference.
+ */
+export function optimizeAndPersist(
+  output: string,
+  toolType: 'shell' | 'file_read' | 'search' | 'build',
+  options?: { taskId?: string; label?: string },
+): string {
+  // First, try persistence for very large results
+  const persisted = persistLargeResult(output, options);
+  if (persisted) {
+    const lines = [
+      persisted.preview,
+      "",
+      `[Full output (${formatBytes(persisted.originalSize)}) saved to: ${persisted.filepath}]`,
+    ];
+    return lines.join("\n");
+  }
+
+  // Otherwise, apply normal optimization
+  return optimizeToolOutput(output, toolType);
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

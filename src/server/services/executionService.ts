@@ -3166,6 +3166,121 @@ export class ExecutionService {
     const repairedActions: string[] = [];
     const infraFailureMessages: string[] = [];
 
+    /** Classify whether a verification command is safe to run concurrently.
+     *  Read-only checks (lint, typecheck, test) are concurrent-safe.
+     *  Install/build commands that mutate the filesystem are not. */
+    const isConcurrencySafe = (cmd: string) => {
+      const lower = cmd.toLowerCase();
+      return (
+        lower.includes("lint") ||
+        lower.includes("typecheck") ||
+        lower.includes("tsc") ||
+        lower.includes("test") ||
+        lower.includes("vitest") ||
+        lower.includes("jest") ||
+        lower.includes("eslint") ||
+        lower.includes("prettier --check")
+      );
+    };
+
+    const processVerificationResult = async (
+      command: VerificationCommandPlan,
+      toolEventResult: Awaited<ReturnType<CommandEngine["invoke"]>> | null,
+      directResult: ReturnType<typeof runShell> | null,
+      repairAttempt: boolean,
+    ) => {
+      const policyDecision = toolEventResult?.event.policyDecision || "allowed";
+      if (toolEventResult && !toolEventResult.result) {
+        const evidence = await prisma.benchmarkOutcomeEvidence.create({
+          data: {
+            runId: input.runId,
+            kind: "verify_policy_result",
+            payload: {
+              command: command.displayCommand,
+              policy_decision: policyDecision,
+              approval_id: toolEventResult.event.approvalId ?? null,
+              repair_attempt: repairAttempt,
+              repaired_files: repairedFiles,
+            },
+          },
+        });
+        artifacts.push(evidence.id);
+        if (policyDecision === "approval_required") {
+          failures.push(`approval_required:${command.displayCommand}`);
+          if (toolEventResult.event.approvalId) {
+            failures.push(`approval_request:${toolEventResult.event.approvalId}`);
+          }
+          infraFailureMessages.push(`Approval required to run "${command.displayCommand}".`);
+        } else {
+          failures.push(`policy_denied:${command.displayCommand}`);
+          infraFailureMessages.push(`Policy denied "${command.displayCommand}".`);
+        }
+        return;
+      }
+
+      const result = toolEventResult?.result || directResult;
+      if (!result) {
+        throw new Error(`Verification command did not produce a result: ${command.displayCommand}`);
+      }
+      commandResults.push({ command: command.displayCommand, result });
+      impactedTests.push(command.displayCommand);
+      if (
+        command.displayCommand.includes("lint") ||
+        command.displayCommand.includes("typecheck") ||
+        command.displayCommand.includes("build")
+      ) {
+        changedFileChecks.push(command.displayCommand);
+      }
+      const kind =
+        command.displayCommand.includes("lint") || command.displayCommand.includes("typecheck")
+          ? "lint_result"
+          : command.displayCommand.includes("build")
+          ? "build_result"
+          : "test_result";
+      const evidence = await prisma.benchmarkOutcomeEvidence.create({
+        data: {
+          runId: input.runId,
+          kind,
+          payload: {
+            command: command.displayCommand,
+            policy_decision: policyDecision,
+            approval_id: toolEventResult?.event.approvalId ?? null,
+            repair_attempt: repairAttempt,
+            repaired_files: repairedFiles,
+            ...result,
+            stdout: redactSensitiveText(result.stdout || ""),
+            stderr: redactSensitiveText(result.stderr || ""),
+          },
+        },
+      });
+      artifacts.push(evidence.id);
+      if (!result.ok) {
+        failures.push(`command_failed:${command.displayCommand}`);
+        const infraFailure = classifyInfraVerificationFailure(command.displayCommand, result);
+        if (infraFailure) {
+          failures.push(infraFailure.code);
+          infraFailureMessages.push(infraFailure.message);
+        }
+      }
+    };
+
+    const runSingleCommand = async (command: VerificationCommandPlan, repairAttempt: boolean) => {
+      const toolEventResult = ticketIdForPolicy
+        ? await this.commandEngine.invoke({
+            runId: input.runId,
+            repoId: input.repoId,
+            ticketId: ticketIdForPolicy,
+            stage: "review",
+            actor: input.actor,
+            worktreePath: input.worktreePath,
+            commandPlan: command.commandPlan,
+            toolType: "repo.verify",
+          })
+        : null;
+      const directResult = ticketIdForPolicy ? null : runShell(command.displayCommand, input.worktreePath);
+      await processVerificationResult(command, toolEventResult, directResult, repairAttempt);
+    };
+
     const runVerificationCommands = async (repairAttempt = false) => {
       failures.length = 0;
       artifacts.length = 0;
@@ -3173,93 +3288,26 @@ export class ExecutionService {
       impactedTests.length = 0;
       commandResults.length = 0;
 
+      // Partition commands into concurrent-safe batches vs serial commands
+      const concurrentBatch: VerificationCommandPlan[] = [];
+      const serialBatch: VerificationCommandPlan[] = [];
       for (const command of input.commands) {
-        const toolEventResult = ticketIdForPolicy
-          ? await this.commandEngine.invoke({
-              runId: input.runId,
-              repoId: input.repoId,
-              ticketId: ticketIdForPolicy,
-              stage: "review",
-              actor: input.actor,
-              worktreePath: input.worktreePath,
-              commandPlan: command.commandPlan,
-              toolType: "repo.verify",
-            })
-          : null;
-        const directResult = ticketIdForPolicy ? null : runShell(command.displayCommand, input.worktreePath);
-        const policyDecision = toolEventResult?.event.policyDecision || "allowed";
-        if (toolEventResult && !toolEventResult.result) {
-          const evidence = await prisma.benchmarkOutcomeEvidence.create({
-            data: {
-              runId: input.runId,
-              kind: "verify_policy_result",
-              payload: {
-                command: command.displayCommand,
-                policy_decision: policyDecision,
-                approval_id: toolEventResult.event.approvalId ?? null,
-                repair_attempt: repairAttempt,
-                repaired_files: repairedFiles,
-              },
-            },
-          });
-          artifacts.push(evidence.id);
-          if (policyDecision === "approval_required") {
-            failures.push(`approval_required:${command.displayCommand}`);
-            if (toolEventResult.event.approvalId) {
-              failures.push(`approval_request:${toolEventResult.event.approvalId}`);
-            }
-            infraFailureMessages.push(`Approval required to run "${command.displayCommand}".`);
-          } else {
-            failures.push(`policy_denied:${command.displayCommand}`);
-            infraFailureMessages.push(`Policy denied "${command.displayCommand}".`);
-          }
-          continue;
+        if (isConcurrencySafe(command.displayCommand)) {
+          concurrentBatch.push(command);
+        } else {
+          serialBatch.push(command);
         }
+      }
 
-        const result = toolEventResult?.result || directResult;
-        if (!result) {
-          throw new Error(`Verification command did not produce a result: ${command.displayCommand}`);
-        }
-        commandResults.push({ command: command.displayCommand, result });
-        impactedTests.push(command.displayCommand);
-        if (
-          command.displayCommand.includes("lint") ||
-          command.displayCommand.includes("typecheck") ||
-          command.displayCommand.includes("build")
-        ) {
-          changedFileChecks.push(command.displayCommand);
-        }
-        const kind =
-          command.displayCommand.includes("lint") || command.displayCommand.includes("typecheck")
-            ? "lint_result"
-            : command.displayCommand.includes("build")
-            ? "build_result"
-            : "test_result";
-        const evidence = await prisma.benchmarkOutcomeEvidence.create({
-          data: {
-            runId: input.runId,
-            kind,
-            payload: {
-              command: command.displayCommand,
-              policy_decision: policyDecision,
-              approval_id: toolEventResult?.event.approvalId ?? null,
-              repair_attempt: repairAttempt,
-              repaired_files: repairedFiles,
-              ...result,
-              stdout: redactSensitiveText(result.stdout || ""),
-              stderr: redactSensitiveText(result.stderr || ""),
-            },
-          },
-        });
-        artifacts.push(evidence.id);
-        if (!result.ok) {
-          failures.push(`command_failed:${command.displayCommand}`);
-          const infraFailure = classifyInfraVerificationFailure(command.displayCommand, result);
-          if (infraFailure) {
-            failures.push(infraFailure.code);
-            infraFailureMessages.push(infraFailure.message);
-          }
-        }
+      // Run serial commands first (e.g., build), then concurrent-safe in parallel
+      for (const command of serialBatch) {
+        await runSingleCommand(command, repairAttempt);
+      }
+
+      if (concurrentBatch.length > 0) {
+        await Promise.all(
+          concurrentBatch.map((command) => runSingleCommand(command, repairAttempt)),
+        );
       }
     };
 

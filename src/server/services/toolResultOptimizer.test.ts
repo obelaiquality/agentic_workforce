@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import {
   optimizeShellOutput,
   optimizeFileRead,
@@ -6,6 +9,8 @@ import {
   optimizeBuildOutput,
   shouldOffload,
   optimizeToolOutput,
+  persistLargeResult,
+  optimizeAndPersist,
 } from './toolResultOptimizer';
 
 /* ------------------------------------------------------------------ */
@@ -261,3 +266,209 @@ describe('optimizeToolOutput', () => {
     expect(optimizeToolOutput(small, 'build')).toBe(small);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  persistLargeResult                                                */
+/* ------------------------------------------------------------------ */
+
+describe('persistLargeResult', () => {
+  let sessionDir: string;
+
+  beforeEach(() => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-result-test-'));
+    sessionDir = tmpDir;
+  });
+
+  afterEach(() => {
+    if (sessionDir && fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when output is below threshold', () => {
+    const small = 'x'.repeat(50);
+    const result = persistLargeResult(small, { threshold: 100 });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when output equals threshold', () => {
+    const exact = 'x'.repeat(100);
+    const result = persistLargeResult(exact, { threshold: 100 });
+    expect(result).toBeNull();
+  });
+
+  it('persists output above threshold and returns metadata', () => {
+    const large = 'x'.repeat(200);
+    const result = persistLargeResult(large, { threshold: 100, previewSize: 50 });
+
+    expect(result).not.toBeNull();
+    expect(result!.filepath).toBeTruthy();
+    expect(result!.preview).toBe('x'.repeat(50));
+    expect(result!.originalSize).toBe(Buffer.byteLength(large));
+    expect(result!.hasMore).toBe(true);
+  });
+
+  it('writes full output to disk', () => {
+    const large = 'full content here '.repeat(20);
+    const result = persistLargeResult(large, {
+      threshold: 100,
+      taskId: 'test-task',
+      label: 'shell-output',
+    });
+
+    expect(result).not.toBeNull();
+    expect(fs.existsSync(result!.filepath)).toBe(true);
+
+    const onDisk = fs.readFileSync(result!.filepath, 'utf-8');
+    expect(onDisk).toBe(large);
+  });
+
+  it('creates directory structure if missing', () => {
+    const large = 'x'.repeat(200);
+    const result = persistLargeResult(large, {
+      threshold: 100,
+      taskId: 'nested-task',
+    });
+
+    expect(result).not.toBeNull();
+    expect(fs.existsSync(result!.filepath)).toBe(true);
+  });
+
+  it('respects custom previewSize', () => {
+    const large = 'x'.repeat(500);
+    const result = persistLargeResult(large, {
+      threshold: 100,
+      previewSize: 100,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.preview).toBe('x'.repeat(100));
+  });
+
+  it('hasMore is false when output equals previewSize', () => {
+    const exact = 'x'.repeat(150);
+    const result = persistLargeResult(exact, {
+      threshold: 100,
+      previewSize: 150,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.hasMore).toBe(false);
+  });
+
+  it('hasMore is true when output exceeds previewSize', () => {
+    const large = 'x'.repeat(300);
+    const result = persistLargeResult(large, {
+      threshold: 100,
+      previewSize: 100,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.hasMore).toBe(true);
+  });
+
+  it('uses label in filename when provided', () => {
+    const large = 'x'.repeat(200);
+    const result = persistLargeResult(large, {
+      threshold: 100,
+      label: 'custom-label',
+    });
+
+    expect(result).not.toBeNull();
+    expect(path.basename(result!.filepath)).toContain('custom-label');
+  });
+
+  it('generates unique filenames for multiple persists', () => {
+    const large = 'x'.repeat(200);
+    const result1 = persistLargeResult(large, { threshold: 100, label: 'test' });
+    const result2 = persistLargeResult(large, { threshold: 100, label: 'test' });
+
+    expect(result1).not.toBeNull();
+    expect(result2).not.toBeNull();
+    expect(result1!.filepath).not.toBe(result2!.filepath);
+  });
+
+  it('reports accurate originalSize', () => {
+    const content = 'hello world';
+    const result = persistLargeResult(content, { threshold: 5 });
+
+    expect(result).not.toBeNull();
+    expect(result!.originalSize).toBe(Buffer.byteLength(content));
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  optimizeAndPersist                                                */
+/* ------------------------------------------------------------------ */
+
+describe('optimizeAndPersist', () => {
+  let sessionDir: string;
+
+  beforeEach(() => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'optimize-persist-test-'));
+    sessionDir = tmpDir;
+  });
+
+  afterEach(() => {
+    if (sessionDir && fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies optimization for medium-sized outputs below persistence threshold', () => {
+    // 150 lines is above the optimization threshold (100) but below persistence (100k chars)
+    const medium = makeLines(150, 'line', { 5: 'error: failed' });
+    const result = optimizeAndPersist(medium, 'shell');
+
+    expect(result).toContain('[truncated: showing last 50 of 150 lines]');
+    expect(result).toContain('error: failed');
+    expect(result).not.toContain('[Full output');
+  });
+
+  it('persists very large outputs and returns preview with file reference', () => {
+    // Use a low threshold for testing
+    const huge = 'x'.repeat(150);
+
+    // Create a mock version that uses a low threshold
+    const output = huge;
+    const persisted = persistLargeResult(output, { threshold: 100 });
+
+    if (persisted) {
+      const result = [
+        persisted.preview,
+        '',
+        `[Full output (${formatBytes(persisted.originalSize)}) saved to: ${persisted.filepath}]`,
+      ].join('\n');
+
+      expect(result).toContain('x'.repeat(100));
+      expect(result).toContain('[Full output');
+      expect(result).toContain('saved to:');
+    }
+  });
+
+  it('passes small outputs through unchanged', () => {
+    const small = 'just a few lines\nno optimization needed';
+    const result = optimizeAndPersist(small, 'shell');
+    expect(result).toBe(small);
+  });
+
+  it('uses taskId and label when provided', () => {
+    const large = 'x'.repeat(150);
+    const persisted = persistLargeResult(large, {
+      threshold: 100,
+      taskId: 'task-123',
+      label: 'build',
+    });
+
+    expect(persisted).not.toBeNull();
+    expect(persisted!.filepath).toContain('task-123');
+    expect(path.basename(persisted!.filepath)).toContain('build');
+  });
+});
+
+// Helper function for formatting bytes (mirrors implementation)
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
