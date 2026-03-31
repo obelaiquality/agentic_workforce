@@ -850,4 +850,65 @@ export class CodeGraphService {
       edges: built.graph.edges,
     };
   }
+
+  /**
+   * Re-rank a context pack after manifest generation.
+   * Boosts files that are directly related to the manifest's target files
+   * (imports, tests, docs) so per-file generation gets better context.
+   */
+  async rerankForManifest(
+    repoId: string,
+    contextPack: ContextPack,
+    manifestFiles: Array<{ path: string; action: string }>,
+  ): Promise<ContextPack> {
+    const targetPaths = new Set(manifestFiles.map((f) => f.path));
+
+    // Find graph edges connected to manifest target files
+    const targetNodes = await prisma.codeGraphNode.findMany({
+      where: { repoId, path: { in: Array.from(targetPaths) } },
+    });
+    const targetNodeIds = targetNodes.map((n) => n.id);
+
+    if (targetNodeIds.length === 0) return contextPack;
+
+    const edges = await prisma.codeGraphEdge.findMany({
+      where: {
+        repoId,
+        OR: [{ fromNodeId: { in: targetNodeIds } }, { toNodeId: { in: targetNodeIds } }],
+      },
+      take: 50,
+    });
+
+    // Collect neighbor paths
+    const neighborNodeIds = new Set<string>();
+    for (const edge of edges) {
+      neighborNodeIds.add(edge.fromNodeId);
+      neighborNodeIds.add(edge.toNodeId);
+    }
+    const neighbors = neighborNodeIds.size
+      ? await prisma.codeGraphNode.findMany({
+          where: { id: { in: Array.from(neighborNodeIds) } },
+          select: { path: true, kind: true },
+        })
+      : [];
+
+    const importedPaths = new Set(neighbors.filter((n) => n.kind === "file").map((n) => n.path));
+    const relatedTests = new Set(neighbors.filter((n) => n.kind === "test").map((n) => n.path));
+    const relatedDocs = new Set(neighbors.filter((n) => n.kind === "doc").map((n) => n.path));
+
+    // Boost: move related files to front of lists, add missing ones
+    const boostList = (existing: string[], related: Set<string>, max: number) => {
+      const boosted = existing.filter((p) => related.has(p));
+      const rest = existing.filter((p) => !related.has(p));
+      const newEntries = Array.from(related).filter((p) => !existing.includes(p));
+      return [...boosted, ...newEntries, ...rest].slice(0, max);
+    };
+
+    return {
+      ...contextPack,
+      files: boostList(asStringArray(contextPack.files), importedPaths, 10),
+      tests: boostList(asStringArray(contextPack.tests), relatedTests, 10),
+      docs: boostList(asStringArray(contextPack.docs), relatedDocs, 8),
+    };
+  }
 }

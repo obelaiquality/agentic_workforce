@@ -16,6 +16,11 @@ import { detectShell } from "./shellDetect";
 import { CommandEngine } from "./commandEngine";
 import type { VerificationCommandPlan } from "./verificationPolicy";
 import { redactSensitiveText } from "./sensitiveRedaction";
+import { runEditMatcherChain } from "./editMatcherChain";
+import { getSharedFileStateCache } from "./fileStateCache";
+import { MemoryService } from "./memoryService";
+import { ShadowGitService } from "./shadowGitService";
+import { buildErrorReminder, buildJsonFormatReminder } from "./systemReminderService";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -27,6 +32,20 @@ function toRecord(value: unknown) {
 
 function truncate(text: string, max = 500) {
   return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+/**
+ * Truncate file content with a marker so the model knows the content is incomplete.
+ * Tries to break at a line boundary to avoid cutting mid-line.
+ */
+function truncateFileContent(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  // Find last newline before maxChars to avoid cutting mid-line
+  const cutpoint = content.lastIndexOf("\n", maxChars);
+  const sliceAt = cutpoint > maxChars * 0.8 ? cutpoint : maxChars;
+  const totalLines = content.split("\n").length;
+  const keptLines = content.slice(0, sliceAt).split("\n").length;
+  return `${content.slice(0, sliceAt)}\n\n... [TRUNCATED: showing ${keptLines} of ${totalLines} lines, ${content.length} total chars]`;
 }
 
 async function withTimeout<T>(label: string, ms: number, operation: Promise<T>): Promise<T> {
@@ -130,6 +149,69 @@ export function resolveDependencyBootstrapCommand(worktreePath: string) {
   return null;
 }
 
+/**
+ * Detect line endings in existing file content.
+ * Returns "CRLF" if the file uses Windows-style line endings, "LF" otherwise.
+ */
+function detectLineEndings(content: string): "CRLF" | "LF" {
+  const crlfCount = (content.match(/\r\n/g) || []).length;
+  const lfCount = (content.match(/(?<!\r)\n/g) || []).length;
+  return crlfCount > lfCount ? "CRLF" : "LF";
+}
+
+/**
+ * Normalize content to match the target line ending style.
+ * Prevents CRLF → LF corruption on Windows or vice versa.
+ */
+function normalizeLineEndings(content: string, style: "CRLF" | "LF"): string {
+  // First normalize everything to LF
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (style === "CRLF") {
+    return normalized.replace(/\n/g, "\r\n");
+  }
+  return normalized;
+}
+
+/**
+ * Write a file with staleness detection and line ending preservation.
+ * If the file existed at readTime and has been modified since, logs a warning
+ * and writes anyway (to avoid blocking execution), but records the conflict.
+ * Also invalidates the shared file state cache.
+ */
+function safeWriteFile(
+  absolutePath: string,
+  content: string,
+  readTimestamp?: number,
+): { written: boolean; stale: boolean } {
+  let stale = false;
+
+  // Detect existing line endings before staleness check
+  let lineEndings: "CRLF" | "LF" = "LF";
+  if (fs.existsSync(absolutePath)) {
+    try {
+      const currentStat = fs.statSync(absolutePath);
+      if (readTimestamp && currentStat.mtimeMs > readTimestamp) {
+        stale = true;
+      }
+      // Preserve line endings from existing file
+      const existingContent = fs.readFileSync(absolutePath, "utf8");
+      lineEndings = detectLineEndings(existingContent);
+    } catch {
+      // stat/read failed — proceed with defaults
+    }
+  }
+
+  // Normalize content to match existing file's line endings
+  const normalizedContent = normalizeLineEndings(content, lineEndings);
+  fs.writeFileSync(absolutePath, normalizedContent, "utf8");
+
+  // Invalidate cache for this file
+  const cache = getSharedFileStateCache();
+  cache.delete(absolutePath);
+
+  return { written: true, stale };
+}
+
 function ensureInsideRoot(root: string, relativePath: string) {
   const resolved = path.resolve(root, relativePath);
   const normalizedRoot = path.resolve(root);
@@ -169,6 +251,60 @@ function extractRequestedComponentName(objective: string) {
   const componentMatch = objective.match(/\badd\s+(?:a|an|the)?\s*([a-z0-9][a-z0-9\s-]*?)\s+component\b/i);
   return componentMatch ? toPascalCase(componentMatch[1]) : null;
 }
+
+// ---------------------------------------------------------------------------
+// Static system prompt fragments — rendered once, reused across calls.
+// Keeping these as stable string constants maximizes prompt cache hits
+// (identical prefix bytes across requests → cache reuse).
+// ---------------------------------------------------------------------------
+
+const MANIFEST_SYSTEM_PROMPT = [
+  "You are generating a safe, minimal coding patch manifest.",
+  "Return JSON only with this shape:",
+  '{"summary":"string","files":[{"path":"relative/path","action":"create|update","strategy":"full_file|search_replace|unified_diff","reason":"string"}],"docsChecked":["relative/path"],"tests":["command"]}',
+  "Do not use markdown fences.",
+  "Plan only the minimal set of files required to complete the objective.",
+  "Prefer minimal diffs and keep documentation updated when behavior changes.",
+  "Do not include AGENTS.md unless the objective explicitly asks to change project standards or policies.",
+  "Keep the manifest to 5 files or fewer unless the task strictly requires more.",
+  "Use search_replace for large existing files when a localized patch is safer than rewriting the full file.",
+].join("\n");
+
+const SEARCH_REPLACE_SYSTEM_PROMPT = [
+  "You are generating a focused repository patch for exactly one file.",
+  'Return JSON only with this shape: {"replacements":[{"find":"exact existing snippet","replace":"updated snippet"}],"appendBlocks":["optional exact block to append"]}',
+  "Do not use markdown fences.",
+  "Do not explain the change.",
+  "Do not return a filename, path label, or commentary.",
+  "Preserve existing imports and working structure unless the objective requires otherwise.",
+].join("\n");
+
+const FULL_FILE_SYSTEM_PROMPT = [
+  "You are generating exactly one repository file.",
+  "Return the full file contents only inside <file-content>...</file-content>.",
+  "Do not use markdown fences.",
+  "Do not explain the change.",
+  "Do not return a filename, path label, or commentary.",
+  "Preserve existing imports and working structure unless the objective requires otherwise.",
+].join("\n");
+
+const UNIFIED_DIFF_SYSTEM_PROMPT = [
+  "You are generating exactly one repository file.",
+  "Return a unified diff patch only. Start with --- and +++ lines and include only the hunks needed for this file.",
+  "Do not use markdown fences.",
+  "Do not explain the change.",
+  "Do not return a filename, path label, or commentary.",
+  "Preserve existing imports and working structure unless the objective requires otherwise.",
+].join("\n");
+
+const REPAIR_SYSTEM_PROMPT = [
+  "You are the Review stage in a coding workflow.",
+  "Return only full corrected file contents inside <file-content> tags.",
+  "Preserve working code and make the smallest correction needed to satisfy lint and tests.",
+  "If the target file is missing, create the smallest valid file needed to satisfy the failing import or verification scope.",
+  "Avoid unused variables and invalid Testing Library role queries.",
+  "Do not broaden the change beyond the failing verification scope.",
+].join("\n");
 
 type PatchManifestFile = {
   path: string;
@@ -364,11 +500,24 @@ function applySearchReplaceEdits(
     if (!replacement.find) {
       throw new Error("Replacement is missing a find block");
     }
-    if (!next.includes(replacement.find)) {
-      throw new Error(`Replacement target not found: ${truncate(replacement.find, 80)}`);
+
+    // Try exact match first (fast path)
+    if (next.includes(replacement.find)) {
+      next = next.replace(replacement.find, replacement.replace ?? "");
+      changed = true;
+      continue;
     }
-    next = next.replace(replacement.find, replacement.replace ?? "");
-    changed = true;
+
+    // Fall back to the edit matcher chain for fuzzy matching
+    // (handles whitespace differences, indentation changes, curly quotes, etc.)
+    const matchResult = runEditMatcherChain(next, replacement.find, replacement.replace ?? "");
+    if (matchResult.success) {
+      next = matchResult.content;
+      changed = true;
+      continue;
+    }
+
+    throw new Error(`Replacement target not found: ${truncate(replacement.find, 80)}`);
   }
 
   for (const block of appendBlocks) {
@@ -449,7 +598,7 @@ function readRelativeFiles(root: string, relativePaths: string[]) {
       const absolutePath = ensureInsideRoot(root, relativePath);
       return {
         path: relativePath,
-        content: fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, "utf8").slice(0, 12000) : "",
+        content: fs.existsSync(absolutePath) ? truncateFileContent(fs.readFileSync(absolutePath, "utf8"), 12000) : "",
       };
     })
     .filter((item) => item.content || item.path);
@@ -959,13 +1108,39 @@ function summarizeCommandFailureOutput(
   commandResults: Array<{ command: string; result: ReturnType<typeof runShell> }>,
   maxChars = 12000
 ) {
-  const text = commandResults
-    .filter(({ result }) => !result.ok)
-    .map(({ command, result }) => {
-      const payload = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-      return [`$ ${command}`, payload || `exit code ${result.exitCode}`].join("\n");
-    })
-    .join("\n\n");
+  const failures = commandResults.filter(({ result }) => !result.ok);
+  if (failures.length === 0) return "";
+
+  const summaries = failures.map(({ command, result }) => {
+    const output = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+    if (!output) return `$ ${command}\nexit code ${result.exitCode}`;
+
+    const lines = output.split("\n");
+
+    // Extract the most actionable lines: error messages, file:line references, assertion failures
+    const errorLines = lines.filter((l) =>
+      /error|fail|assert|expect|cannot find|not found|is not|missing|unused|undefined/i.test(l)
+    );
+
+    // For short output, keep everything
+    if (lines.length <= 30) {
+      return `$ ${command}\n${output}`;
+    }
+
+    // For long output, keep error lines + tail for context
+    const tail = lines.slice(-10);
+    const parts = [`$ ${command} (exit ${result.exitCode})`];
+    if (errorLines.length > 0) {
+      parts.push(errorLines.slice(0, 20).join("\n"));
+    }
+    parts.push("---");
+    parts.push(tail.join("\n"));
+    parts.push(`[${lines.length} total lines, ${errorLines.length} error lines]`);
+
+    return parts.join("\n");
+  });
+
+  const text = summaries.join("\n\n");
   return text.length <= maxChars ? text : `${text.slice(0, maxChars)}\n...`;
 }
 
@@ -1796,6 +1971,9 @@ function mapBundle(row: {
 }
 
 export class ExecutionService {
+  private memoryService: MemoryService | null = null;
+  private shadowGit: ShadowGitService | null = null;
+
   constructor(
     private readonly events: V2EventService,
     private readonly routerService: RouterService,
@@ -1805,6 +1983,51 @@ export class ExecutionService {
     private readonly codeGraphService: CodeGraphService,
     private readonly commandEngine?: CommandEngine
   ) {}
+
+  /**
+   * Initialize memory service for a worktree. Must be called before
+   * execution to enable cross-task learning.
+   */
+  initMemory(worktreePath: string): MemoryService {
+    this.memoryService = new MemoryService(worktreePath);
+    this.memoryService.loadEpisodicMemory();
+    return this.memoryService;
+  }
+
+  /** Get the memory service (initializes lazily if needed). */
+  private getMemory(worktreePath: string): MemoryService {
+    if (!this.memoryService) {
+      return this.initMemory(worktreePath);
+    }
+    return this.memoryService;
+  }
+
+  /**
+   * Initialize shadow git for file snapshots.
+   * Enables rollback capability when verification fails.
+   */
+  initShadowGit(worktreePath: string): ShadowGitService {
+    this.shadowGit = new ShadowGitService(worktreePath);
+    try {
+      this.shadowGit.initialize();
+    } catch {
+      // Shadow git init failure is non-critical
+      this.shadowGit = null;
+    }
+    return this.shadowGit!;
+  }
+
+  /** Get shadow git (initializes lazily if needed). */
+  private getShadowGit(worktreePath: string): ShadowGitService | null {
+    if (!this.shadowGit) {
+      try {
+        return this.initShadowGit(worktreePath);
+      } catch {
+        return null;
+      }
+    }
+    return this.shadowGit;
+  }
 
   private async collectModelOutput(input: {
     providerId: ProviderId;
@@ -1913,6 +2136,26 @@ export class ExecutionService {
         "Verification failures:",
         failureSummary,
         "",
+        // Inject system error reminder to guide recovery strategy
+        buildErrorReminder(),
+        "",
+        // Inject relevant lessons from past similar failures
+        (() => {
+          try {
+            const memory = this.getMemory(input.worktreePath);
+            const relevant = memory.getRelevantEpisodicMemories(input.objective);
+            const failureLessons = relevant
+              .filter((m) => m.outcome === "failure" || m.outcome === "partial")
+              .flatMap((m) => m.lessons)
+              .slice(0, 3);
+            return failureLessons.length > 0
+              ? `Past lessons from similar failures:\n${failureLessons.map((l) => `- ${l}`).join("\n")}`
+              : "";
+          } catch {
+            return "";
+          }
+        })(),
+        "",
         fileExists ? "Current file:" : "Current file: (missing)",
         currentContent.slice(0, 8000),
       ].join("\n");
@@ -1923,8 +2166,7 @@ export class ExecutionService {
         messages: [
           {
             role: "system",
-            content:
-              "You are the Review stage in a coding workflow. Return only full corrected file contents inside <file-content> tags. Preserve working code and make the smallest correction needed to satisfy lint and tests. If the target file is missing, create the smallest valid file needed to satisfy the failing import or verification scope. Avoid unused variables and invalid Testing Library role queries. Do not broaden the change beyond the failing verification scope.",
+            content: REPAIR_SYSTEM_PROMPT,
           },
           {
             role: "user",
@@ -2377,23 +2619,21 @@ export class ExecutionService {
     const messages = [
       {
         role: "system" as const,
-        content: [
-          "You are generating a safe, minimal coding patch manifest.",
-          "Return JSON only with this shape:",
-          '{"summary":"string","files":[{"path":"relative/path","action":"create|update","strategy":"full_file|search_replace|unified_diff","reason":"string"}],"docsChecked":["relative/path"],"tests":["command"]}',
-          "Do not use markdown fences.",
-          "Plan only the minimal set of files required to complete the objective.",
-          "Prefer minimal diffs and keep documentation updated when behavior changes.",
-          "Do not include AGENTS.md unless the objective explicitly asks to change project standards or policies.",
-          "Keep the manifest to 5 files or fewer unless the task strictly requires more.",
-          "Use search_replace for large existing files when a localized patch is safer than rewriting the full file.",
-        ].join("\n"),
+        content: MANIFEST_SYSTEM_PROMPT + "\n" + buildJsonFormatReminder(),
       },
       {
         role: "user" as const,
         content: JSON.stringify(
           {
             objective: input.objective,
+            // Inject episodic memory from past tasks for cross-task learning
+            ...((() => {
+              const memory = this.getMemory(input.worktreePath);
+              const composition = memory.compose(input.objective);
+              return composition.episodicContext
+                ? { previousExperience: composition.episodicContext }
+                : {};
+            })()),
             repoRules: {
               patchRules: repoGuidelines?.patchRules || [],
               docRules: repoGuidelines?.docRules || [],
@@ -2570,6 +2810,7 @@ export class ExecutionService {
     }
 
     const writes: Array<{ path: string; content: string }> = [];
+    const failedFiles: Array<{ path: string; error: string }> = [];
     await input.onStage?.("expanding_manifest", { fileCount: normalizedManifestFiles.length });
     const requestedComponent = extractRequestedComponentName(input.input.objective);
     const deterministicStatusBadgeObjective =
@@ -2586,13 +2827,14 @@ export class ExecutionService {
       /\butils?\b/i.test(input.input.objective);
 
     for (const filePlan of normalizedManifestFiles) {
+      try {
       await input.onStage?.("generating_file", {
         path: filePlan.path,
         action: filePlan.action,
         strategy: filePlan.strategy || null,
       });
       const absolutePath = ensureInsideRoot(input.input.worktreePath, filePlan.path);
-      const currentContent = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, "utf8").slice(0, 12000) : "";
+      const currentContent = fs.existsSync(absolutePath) ? truncateFileContent(fs.readFileSync(absolutePath, "utf8"), 12000) : "";
       const editStrategy = chooseEditStrategy({
         filePath: filePlan.path,
         currentContent,
@@ -2652,17 +2894,10 @@ export class ExecutionService {
           role: "system" as const,
           content: [
             editStrategy === "search_replace"
-              ? "You are generating a focused repository patch for exactly one file."
-              : "You are generating exactly one repository file.",
-            editStrategy === "search_replace"
-              ? 'Return JSON only with this shape: {"replacements":[{"find":"exact existing snippet","replace":"updated snippet"}],"appendBlocks":["optional exact block to append"]}'
+              ? SEARCH_REPLACE_SYSTEM_PROMPT
               : editStrategy === "unified_diff"
-              ? "Return a unified diff patch only. Start with --- and +++ lines and include only the hunks needed for this file."
-              : "Return the full file contents only inside <file-content>...</file-content>.",
-            "Do not use markdown fences.",
-            "Do not explain the change.",
-            "Do not return a filename, path label, or commentary.",
-            "Preserve existing imports and working structure unless the objective requires otherwise.",
+              ? UNIFIED_DIFF_SYSTEM_PROMPT
+              : FULL_FILE_SYSTEM_PROMPT,
             generationHints,
           ].join("\n"),
         },
@@ -2703,14 +2938,33 @@ export class ExecutionService {
                       "Use replacements for the smallest safe edit.",
                       "Each find block must exactly match existing text from the current file.",
                       "Use appendBlocks only for new additions that do not replace existing text.",
+                      "",
+                      "Example output:",
+                      '{"replacements":[{"find":"function greet() {\\n  return \\"hello\\";\\n}","replace":"function greet(name: string) {\\n  return `hello ${name}`;\\n}"}],"appendBlocks":[]}',
                     ]
                   : editStrategy === "unified_diff"
                   ? [
                       "Return a minimal unified diff for this file only.",
                       "Use exact existing lines for context so the patch applies cleanly.",
                       "Do not include commentary or fences.",
+                      "",
+                      "Example output:",
+                      "--- a/src/utils.ts",
+                      "+++ b/src/utils.ts",
+                      "@@ -1,3 +1,3 @@",
+                      " export function greet() {",
+                      '-  return "hello";',
+                      "+  return `hello world`;",
+                      " }",
                     ]
-                  : ["Return one complete valid file."],
+                  : [
+                      "Return one complete valid file.",
+                      "",
+                      "Example output:",
+                      "<file-content>",
+                      'export function greet() { return "hello"; }',
+                      "</file-content>",
+                    ],
             },
             null,
             2
@@ -2791,12 +3045,43 @@ export class ExecutionService {
             modelRole: "review_deep",
           });
           if (editStrategy === "search_replace") {
-            const payload = parseSearchReplacePayload(repaired);
-            const applied = applySearchReplaceEdits(currentContent, payload.replacements, payload.appendBlocks);
-            if (!applied.changed) {
-              throw new Error(`Model did not produce an applicable search/replace patch for ${filePlan.path}`);
+            try {
+              const payload = parseSearchReplacePayload(repaired);
+              const applied = applySearchReplaceEdits(currentContent, payload.replacements, payload.appendBlocks);
+              if (!applied.changed) {
+                throw new Error(`Model did not produce an applicable search/replace patch for ${filePlan.path}`);
+              }
+              content = applied.content;
+            } catch {
+              // search_replace repair also failed — fall back to full_file generation
+              const fullFileFallback = await input.collectResponse(
+                [
+                  {
+                    role: "system",
+                    content: [
+                      FULL_FILE_SYSTEM_PROMPT,
+                      generationHints,
+                    ].join("\n"),
+                  },
+                  {
+                    role: "user",
+                    content: JSON.stringify({
+                      objective: input.input.objective,
+                      file: { ...filePlan, strategy: "full_file" },
+                      currentFile: { path: filePlan.path, exists: Boolean(currentContent), content: currentContent },
+                      supportingFiles,
+                    }, null, 2),
+                  },
+                ],
+                {
+                  temperature: 0,
+                  maxTokens,
+                  reasoningMode: "off",
+                  modelRole: "review_deep",
+                }
+              );
+              content = normalizeGeneratedFileContent(fullFileFallback);
             }
-            content = applied.content;
           } else if (editStrategy === "unified_diff") {
             try {
               const patchText = extractUnifiedDiff(repaired);
@@ -2860,6 +3145,25 @@ export class ExecutionService {
         path: filePlan.path,
         bytes: Buffer.byteLength(content, "utf8"),
       });
+      } catch (fileError) {
+        // Individual file failure — track it but continue with remaining files.
+        // This prevents one file's generation failure from aborting the entire manifest.
+        failedFiles.push({
+          path: filePlan.path,
+          error: fileError instanceof Error ? fileError.message : String(fileError),
+        });
+        await input.onStage?.("file_generation_failed", {
+          path: filePlan.path,
+          error: fileError instanceof Error ? fileError.message : "Unknown error",
+        });
+      }
+    }
+
+    // If ALL files failed, throw to signal complete failure
+    if (writes.length === 0 && failedFiles.length > 0) {
+      throw new Error(
+        `All ${failedFiles.length} file(s) failed to generate: ${failedFiles.map((f) => `${f.path}: ${f.error}`).join("; ")}`,
+      );
     }
 
     return {
@@ -2994,11 +3298,26 @@ export class ExecutionService {
       }
 
       const changedFiles: string[] = [];
+      const shadowGit = this.getShadowGit(input.worktreePath);
       for (const write of plannedPatch.writes) {
         const absolutePath = ensureInsideRoot(input.worktreePath, write.path);
         fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
         fs.writeFileSync(absolutePath, write.content, "utf8");
         changedFiles.push(write.path.replace(/\\/g, "/"));
+
+        // Snapshot each written file for rollback capability
+        if (shadowGit) {
+          try {
+            shadowGit.snapshot({
+              filePath: write.path,
+              content: write.content,
+              stepId: attempt?.id || input.runId,
+              description: `Applied ${write.path}`,
+            });
+          } catch {
+            // Shadow git snapshot failure is non-critical
+          }
+        }
       }
 
       await updateStage("patch_applied", {
@@ -3403,7 +3722,19 @@ export class ExecutionService {
       attempt.changedFiles.length <= 6 &&
       !hasInfraVerificationFailure(failures)
     ) {
+      // Track failure fingerprints for convergence detection.
+      // If the same failure set appears twice, the repair loop is stuck.
+      const seenFailureFingerprints = new Set<string>();
+      const makeFailureFingerprint = (fails: string[]) => [...fails].sort().join("|");
+
       for (let round = 0; round < 3 && failures.length > 0; round += 1) {
+        const fingerprint = makeFailureFingerprint(failures);
+        if (seenFailureFingerprints.has(fingerprint)) {
+          // Same failures seen before — repair loop is stuck, break early
+          break;
+        }
+        seenFailureFingerprints.add(fingerprint);
+
         const repairedBatch = await this.attemptVerificationRepair({
           worktreePath: input.worktreePath,
           changedFiles: asStringArray(attempt.changedFiles),
@@ -3467,6 +3798,20 @@ export class ExecutionService {
           completedAt: new Date(),
         },
       });
+    }
+
+    // Commit task outcome to episodic memory for cross-task learning
+    try {
+      const memory = this.getMemory(input.worktreePath);
+      memory.commitTaskOutcome({
+        objective: attempt?.patchSummary || input.metadata?.objective as string || "unknown",
+        changedFiles: Array.isArray(attempt?.changedFiles) ? asStringArray(attempt.changedFiles) : [],
+        passed: bundle.pass,
+        failures: failures.length > 0 ? failures : undefined,
+        repairedFiles: repairedFiles.length > 0 ? repairedFiles : undefined,
+      });
+    } catch {
+      // Memory commit is non-critical — don't fail verification
     }
 
     await this.upsertRunProjection(input.runId, {

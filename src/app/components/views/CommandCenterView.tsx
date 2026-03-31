@@ -34,6 +34,7 @@ import { getMissionTaskDetailV8 } from "../../lib/apiClient";
 import { executionModeLabel, modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { Chip, Panel, PanelHeader } from "../UI";
 import { OutcomeDebriefDrawer } from "../mission/OutcomeDebriefDrawer";
+import { ProjectMemoryPanel } from "../mission/ProjectMemoryPanel";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
 
@@ -1722,6 +1723,7 @@ function CommandContextDrawer({
     { key: "task" as const, label: "Task Detail", visible: Boolean(selectedWorkflow) },
     { key: "approval" as const, label: "Approvals", visible: approvals.length > 0 },
     { key: "run" as const, label: "Run Detail", visible: Boolean(mission.runSummary) },
+    { key: "memory" as const, label: "Memory", visible: Boolean(mission.selectedRepo) },
   ].filter((item) => item.visible);
 
   const activeMode = availableModes.some((item) => item.key === mode) ? mode : "overseer";
@@ -2091,6 +2093,16 @@ function CommandContextDrawer({
                 </>
               );
             })()}
+          </div>
+        ) : activeMode === "memory" ? (
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            <ProjectMemoryPanel
+              worktreePath={
+                mission.selectedRepo?.managedWorktreeRoot
+                  ? `${mission.selectedRepo.managedWorktreeRoot}/active`
+                  : null
+              }
+            />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">

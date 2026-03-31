@@ -307,10 +307,29 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
     const decoder = new TextDecoder();
     let buffer = "";
     let usage: ProviderSendOutput["usage"] | undefined;
+    // Per-chunk timeout: if no data arrives for this long, consider the stream stalled.
+    // Longer than initial timeout since model may pause during reasoning.
+    const chunkTimeoutMs = Math.max(config.timeoutMs, 60000);
+
+    /**
+     * Read a chunk with timeout. If the stream stalls (no data for chunkTimeoutMs),
+     * throw so the caller can fall back to non-streaming or retry.
+     */
+    const readWithTimeout = async () => {
+      return Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`Stream stalled: no data received for ${chunkTimeoutMs}ms`)),
+            chunkTimeoutMs,
+          );
+        }),
+      ]);
+    };
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithTimeout();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });

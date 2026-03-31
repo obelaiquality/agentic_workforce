@@ -61,6 +61,14 @@ function collapseWhitespace(s: string): string {
   return s.replace(/[ \t]+/g, " ");
 }
 
+/** Normalize curly/smart quotes to straight ASCII quotes. */
+function normalizeQuotes(s: string): string {
+  return s
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")  // curly single quotes → straight
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')  // curly double quotes → straight
+    .replace(/[\u2013\u2014]/g, "-");              // en/em dashes → hyphen
+}
+
 /** Build a mapping from collapsed-string index back to original-string index. */
 function buildCollapseMap(original: string): number[] {
   const map: number[] = [];
@@ -92,6 +100,30 @@ export function exactMatch(content: string, searchText: string): EditMatch | nul
     startIndex: idx,
     endIndex: idx + searchText.length,
     matchedText: content.slice(idx, idx + searchText.length),
+  };
+}
+
+export function quoteNormalizedMatch(
+  content: string,
+  searchText: string,
+): EditMatch | null {
+  const normalizedSearch = normalizeQuotes(searchText);
+  const normalizedContent = normalizeQuotes(content);
+
+  // If normalization didn't change anything, skip (exactMatch already tried)
+  if (normalizedSearch === searchText && normalizedContent === content) return null;
+
+  const idx = normalizedContent.indexOf(normalizedSearch);
+  if (idx === -1) return null;
+
+  // The index in normalized space maps 1:1 to original space
+  // (quote normalization preserves string length for single-char replacements)
+  return {
+    matcherLevel: 2,
+    matcherName: "quoteNormalizedMatch",
+    startIndex: idx,
+    endIndex: idx + normalizedSearch.length,
+    matchedText: content.slice(idx, idx + normalizedSearch.length),
   };
 }
 
@@ -404,6 +436,7 @@ export function wholeBlockMatch(
 
 const matcherChain: Array<(content: string, searchText: string) => EditMatch | null> = [
   exactMatch,
+  quoteNormalizedMatch,
   whitespaceNormalizedMatch,
   indentFlexibleMatch,
   lineTrimmedMatch,

@@ -1,7 +1,11 @@
 /**
  * Adaptive context compaction to prevent context overflow in long sessions.
- * All functions are pure — no side effects, no DB access.
+ * Core functions are pure — no side effects, no DB access.
+ * Memory-aware compaction (compactWithMemory) optionally commits summaries
+ * to episodic memory before dropping assistant reasoning.
  */
+
+import type { MemoryService } from "./memoryService";
 
 export interface CompactionMessage {
   role: "system" | "user" | "assistant";
@@ -262,4 +266,63 @@ export function emergencyCompact(
     tokensBefore,
     tokensAfter: totalTokens(current),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Memory-aware compaction
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact messages with memory integration.
+ * Before dropping assistant reasoning (stage 2+), extracts a summary
+ * and commits it to episodic memory so the information is preserved
+ * across the compaction boundary.
+ *
+ * This is the recommended entry point when a MemoryService is available.
+ */
+export function compactWithMemory(
+  messages: CompactionMessage[],
+  maxContextTokens: number,
+  memoryService: MemoryService,
+  tracker?: CompactionTracker,
+): CompactionResult | null {
+  const pressure = computePressure(messages, maxContextTokens);
+
+  // If we're going to compact at stage 2+ (reasoning compression),
+  // extract summaries from the content that will be dropped
+  if (pressure >= 0.8) {
+    const len = messages.length;
+    const droppableAssistant = messages.filter(
+      (m, i) => !m.pinned && m.role === "assistant" && i < len - 3,
+    );
+
+    if (droppableAssistant.length > 0) {
+      // Extract key information from assistant messages before they're compacted
+      const keywords = ["decision:", "result:", "output:", "conclusion:", "error:", "fix:"];
+      const extractedLines: string[] = [];
+
+      for (const msg of droppableAssistant) {
+        const lines = msg.content.split("\n");
+        const keyLines = lines.filter((line) =>
+          keywords.some((kw) => line.toLowerCase().includes(kw)),
+        );
+        extractedLines.push(...keyLines.slice(0, 3));
+      }
+
+      if (extractedLines.length > 0) {
+        memoryService.commitCompactionSummary({
+          droppedMessageCount: droppableAssistant.length,
+          stage: pressure >= 0.99 ? 5 : pressure >= 0.9 ? 4 : pressure >= 0.85 ? 3 : 2,
+          pressure,
+          sessionContext: extractedLines.slice(0, 5).join("; "),
+        });
+      }
+    }
+  }
+
+  // Proceed with normal compaction (with or without circuit breaker)
+  if (tracker) {
+    return compactWithCircuitBreaker(messages, maxContextTokens, tracker);
+  }
+  return compactMessages(messages, maxContextTokens);
 }

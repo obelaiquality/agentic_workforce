@@ -11,6 +11,7 @@ import { registerChannelRoutes } from "./routes/channelRoutes";
 import { registerMissionRoutes } from "./routes/missionRoutes";
 import { registerProjectRoutes } from "./routes/projectRoutes";
 import { registerRuntimeRoutes } from "./routes/runtimeRoutes";
+import { registerMemoryRoutes } from "./routes/memoryRoutes";
 import { registerSettingsRoutes } from "./routes/settingsRoutes";
 import {
   isAuthorizedLocalApiRequest,
@@ -242,6 +243,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     repoService,
     ticketService,
     v2EventService,
+  });
+
+  registerMemoryRoutes({
+    app,
+    repoService,
   });
 
   registerSettingsRoutes({

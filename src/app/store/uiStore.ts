@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 
 type Section = "live" | "codebase" | "console" | "projects" | "settings" | "overseer" | "runs" | "benchmarks";
 type WorkflowStatusFilter = "all" | "backlog" | "in_progress" | "needs_review" | "completed";
-type CommandDrawerMode = "overseer" | "task" | "approval" | "run";
+type CommandDrawerMode = "overseer" | "task" | "approval" | "run" | "memory";
 type WorkflowViewMode = "board" | "list";
 type CodebaseScope = "context" | "tests" | "docs" | "all";
 type SettingsFocusTarget = "providers" | "execution_profiles" | "accounts" | null;
