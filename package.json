@@ -2,7 +2,7 @@
   "name": "agentic-workforce",
   "main": "electron/main.mjs",
   "private": false,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local-first desktop coding agent for real repositories with verified execution and evidence-rich review.",
   "author": "Neilslab",
   "license": "MIT",
