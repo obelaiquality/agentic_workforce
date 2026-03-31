@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   exactMatch,
   whitespaceNormalizedMatch,
+  quoteNormalizedMatch,
   indentFlexibleMatch,
   lineTrimmedMatch,
   fuzzyLineMatch,
@@ -298,5 +299,102 @@ describe("runEditMatcherChain", () => {
     expect(result.success).toBe(true);
     // exactMatch finds first occurrence
     expect(result.content).toBe("ccc bbb aaa");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// quoteNormalizedMatch
+// ---------------------------------------------------------------------------
+
+describe("quoteNormalizedMatch", () => {
+  it("matches curly single quotes against straight", () => {
+    const content = "const msg = 'hello world';";
+    const search = "const msg = \u2018hello world\u2019;"; // curly quotes
+    const result = quoteNormalizedMatch(content, search);
+    expect(result).not.toBeNull();
+    expect(result!.matcherLevel).toBe(2);
+    expect(result!.matcherName).toBe("quoteNormalizedMatch");
+  });
+
+  it("matches curly double quotes against straight", () => {
+    const content = 'console.log("test");';
+    const search = 'console.log(\u201Ctest\u201D);'; // curly double quotes
+    const result = quoteNormalizedMatch(content, search);
+    expect(result).not.toBeNull();
+    expect(result!.matcherLevel).toBe(2);
+  });
+
+  it("returns null when content differs beyond quotes", () => {
+    const content = "const x = 1;";
+    const search = "const y = 2;"; // different content
+    const result = quoteNormalizedMatch(content, search);
+    expect(result).toBeNull();
+  });
+
+  it("handles em-dash vs hyphen", () => {
+    const content = "// TODO: fix this-now";
+    const search = "// TODO: fix this\u2014now"; // em-dash U+2014
+    const result = quoteNormalizedMatch(content, search);
+    expect(result).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// levenshteinDistance with maxDistance
+// ---------------------------------------------------------------------------
+
+describe("levenshteinDistance with maxDistance", () => {
+  it("returns Infinity when length difference exceeds maxDistance", () => {
+    const a = "short";
+    const b = "much longer string";
+    const result = levenshteinDistance(a, b, 5);
+    expect(result).toBe(Infinity);
+  });
+
+  it("returns Infinity when actual distance exceeds maxDistance", () => {
+    const a = "hello";
+    const b = "zzzzz";
+    // Distance is 5, max is 2
+    const result = levenshteinDistance(a, b, 2);
+    expect(result).toBe(Infinity);
+  });
+
+  it("returns actual distance when within maxDistance", () => {
+    const a = "kitten";
+    const b = "sitten";
+    // Distance is 1, max is 2
+    const result = levenshteinDistance(a, b, 2);
+    expect(result).toBe(1);
+  });
+
+  it("backward compatible (no maxDistance = full computation)", () => {
+    const a = "saturday";
+    const b = "sunday";
+    const withMax = levenshteinDistance(a, b);
+    const withoutMax = levenshteinDistance(a, b, undefined);
+    expect(withMax).toBe(3);
+    expect(withoutMax).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// levenshteinSimilarity with minSimilarity
+// ---------------------------------------------------------------------------
+
+describe("levenshteinSimilarity with minSimilarity", () => {
+  it("returns 0 when below minSimilarity threshold", () => {
+    const a = "hello";
+    const b = "zzzzz";
+    // These are very different, similarity would be low
+    const result = levenshteinSimilarity(a, b, 0.8);
+    expect(result).toBe(0);
+  });
+
+  it("returns actual similarity when above threshold", () => {
+    const a = "hello";
+    const b = "hallo";
+    // Distance is 1, length is 5, similarity = 1 - 1/5 = 0.8
+    const result = levenshteinSimilarity(a, b, 0.7);
+    expect(result).toBeCloseTo(0.8);
   });
 });

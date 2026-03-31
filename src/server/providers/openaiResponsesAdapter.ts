@@ -313,8 +313,23 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
     let fallbackText = "";
     let emittedTokens = false;
 
+    // Per-chunk timeout to detect stalled streams
+    const chunkTimeoutMs = Math.max(config.timeoutMs, 60000);
+    const readWithTimeout = async () => {
+      return Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`Stream stalled: no data received for ${chunkTimeoutMs}ms`)),
+            chunkTimeoutMs,
+          );
+        }),
+      ]);
+    };
+
+    try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithTimeout();
       if (done) {
         break;
       }
@@ -376,6 +391,10 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
           }
         }
       }
+    }
+
+    } finally {
+      reader.releaseLock();
     }
 
     if (!emittedTokens && fallbackText) {

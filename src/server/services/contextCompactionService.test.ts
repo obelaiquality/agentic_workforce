@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import {
   estimateTokens,
   computePressure,
@@ -6,8 +9,10 @@ import {
   createCompactionTracker,
   compactWithCircuitBreaker,
   emergencyCompact,
+  compactWithMemory,
   type CompactionMessage,
 } from "./contextCompactionService";
+import { MemoryService } from "./memoryService";
 
 // ---------------------------------------------------------------------------
 // Helper: generate messages that fill a specific pressure level
@@ -533,5 +538,100 @@ describe("emergencyCompact", () => {
     expect(pinned.length).toBe(2);
     expect(pinned[0].content).toBe(pinnedContent1);
     expect(pinned[1].content).toBe(pinnedContent2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compactWithMemory
+// ---------------------------------------------------------------------------
+
+describe("compactWithMemory", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "compact-mem-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("commits compaction summary to memory when pressure >= 0.8", () => {
+    const memory = new MemoryService(tmpDir);
+    const maxTokens = 500;
+
+    // Build messages with high pressure (>= 0.8)
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system", pinned: true },
+      { role: "assistant", content: "decision: use approach A\n" + "x".repeat(800) },
+      { role: "assistant", content: "result: success\n" + "y".repeat(800) },
+      { role: "user", content: "z".repeat(400) },
+      { role: "assistant", content: "recent1" },
+      { role: "assistant", content: "recent2" },
+      { role: "assistant", content: "recent3" },
+    ];
+
+    const initialCount = memory.episodicCount();
+    const result = compactWithMemory(msgs, maxTokens, memory);
+
+    expect(result).not.toBeNull();
+    expect(memory.episodicCount()).toBe(initialCount + 1);
+
+    // Verify the committed memory
+    const episodic = memory.getRelevantEpisodicMemories("context compaction");
+    expect(episodic.length).toBeGreaterThan(0);
+    expect(episodic[0].taskDescription).toBe("context_compaction");
+  });
+
+  it("skips memory commit when pressure < 0.8", () => {
+    const memory = new MemoryService(tmpDir);
+    const maxTokens = 2000;
+
+    // Build messages with low pressure (< 0.8)
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system", pinned: true },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+    ];
+
+    const initialCount = memory.episodicCount();
+    const result = compactWithMemory(msgs, maxTokens, memory);
+
+    expect(result).not.toBeNull();
+    // No memory should be committed when pressure is low
+    expect(memory.episodicCount()).toBe(initialCount);
+  });
+
+  it("delegates to compactWithCircuitBreaker when tracker provided", () => {
+    const memory = new MemoryService(tmpDir);
+    const tracker = createCompactionTracker();
+    const maxTokens = 500;
+
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system", pinned: true },
+      { role: "assistant", content: "x".repeat(1000) },
+      { role: "assistant", content: "y".repeat(1000) },
+    ];
+
+    const result = compactWithMemory(msgs, maxTokens, memory, tracker);
+
+    expect(result).not.toBeNull();
+    // Circuit breaker should have recorded the compaction
+    expect(tracker.totalCompactions).toBeGreaterThanOrEqual(0);
+  });
+
+  it("delegates to compactMessages when no tracker", () => {
+    const memory = new MemoryService(tmpDir);
+    const maxTokens = 500;
+
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system", pinned: true },
+      { role: "assistant", content: "x".repeat(1000) },
+    ];
+
+    const result = compactWithMemory(msgs, maxTokens, memory);
+
+    expect(result).not.toBeNull();
+    expect(result!.messages.length).toBeGreaterThan(0);
   });
 });

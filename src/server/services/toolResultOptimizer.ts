@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { safeWriteFile } from "./executionService";
 
 const ERROR_PATTERN = /error|err!|fail|fatal/i;
 const BUILD_DIAG_PATTERN = /error|warning|warn|err!/i;
@@ -169,7 +170,7 @@ export function persistLargeResult(
 
   const filename = `${options?.label ?? "result"}-${randomUUID().slice(0, 8)}.txt`;
   const filepath = path.join(dir, filename);
-  fs.writeFileSync(filepath, output, "utf-8");
+  safeWriteFile(filepath, output);
 
   const preview = output.slice(0, previewSize);
   return {

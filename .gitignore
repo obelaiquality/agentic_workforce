@@ -25,6 +25,10 @@ coverage/
 *.log
 npm-debug.log*
 
+# Redirected command output
+stderr.txt
+stdout.txt
+
 # OS
 .DS_Store
 Thumbs.db

@@ -15,12 +15,17 @@ import { CodeGraphService } from "./codeGraphService";
 import { detectShell } from "./shellDetect";
 import { CommandEngine } from "./commandEngine";
 import type { VerificationCommandPlan } from "./verificationPolicy";
-import { redactSensitiveText } from "./sensitiveRedaction";
+import { redactSensitiveText, sanitizeUnicode } from "./sensitiveRedaction";
+import { optimizeAndPersist } from "./toolResultOptimizer";
 import { runEditMatcherChain } from "./editMatcherChain";
 import { getSharedFileStateCache } from "./fileStateCache";
 import { MemoryService } from "./memoryService";
 import { ShadowGitService } from "./shadowGitService";
-import { buildErrorReminder, buildJsonFormatReminder } from "./systemReminderService";
+import { buildErrorReminder, buildJsonFormatReminder, shouldInjectReminder, injectReminders } from "./systemReminderService";
+import { truncateFileContent as truncateFileContentBase } from "./codebaseHelpers";
+import { DoomLoopDetector } from "./doomLoopDetector";
+import { recordFileAccess } from "./contextCompactionService";
+import { shortErrorStack } from "../errors";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -35,17 +40,18 @@ function truncate(text: string, max = 500) {
 }
 
 /**
- * Truncate file content with a marker so the model knows the content is incomplete.
- * Tries to break at a line boundary to avoid cutting mid-line.
+ * Truncate file content for prompt inclusion.
+ * Delegates core slicing to codebaseHelpers.truncateFileContent and adds
+ * Unicode sanitization + informative TRUNCATED marker on top.
  */
 function truncateFileContent(content: string, maxChars: number): string {
-  if (content.length <= maxChars) return content;
-  // Find last newline before maxChars to avoid cutting mid-line
-  const cutpoint = content.lastIndexOf("\n", maxChars);
-  const sliceAt = cutpoint > maxChars * 0.8 ? cutpoint : maxChars;
-  const totalLines = content.split("\n").length;
-  const keptLines = content.slice(0, sliceAt).split("\n").length;
-  return `${content.slice(0, sliceAt)}\n\n... [TRUNCATED: showing ${keptLines} of ${totalLines} lines, ${content.length} total chars]`;
+  const sanitized = sanitizeUnicode(content);
+  const lineLimit = Math.ceil(maxChars / 40); // ~40 chars per line average
+  const { content: result, truncated } = truncateFileContentBase(sanitized, lineLimit, maxChars);
+  if (!truncated) return result;
+  const totalLines = sanitized.split("\n").length;
+  const keptLines = result.split("\n").length;
+  return `${result}\n\n... [TRUNCATED: showing ${keptLines} of ${totalLines} lines, ${sanitized.length} total chars]`;
 }
 
 async function withTimeout<T>(label: string, ms: number, operation: Promise<T>): Promise<T> {
@@ -89,11 +95,11 @@ function runShell(command: string, cwd: string) {
   }
 }
 
-function combinedShellOutput(result: { stdout: string; stderr: string }) {
+export function combinedShellOutput(result: { stdout: string; stderr: string }) {
   return `${result.stderr || ""}\n${result.stdout || ""}`.trim().toLowerCase();
 }
 
-function classifyInfraVerificationFailure(command: string, result: { stdout: string; stderr: string; exitCode: number }) {
+export function classifyInfraVerificationFailure(command: string, result: { stdout: string; stderr: string; exitCode: number }) {
   const output = combinedShellOutput(result);
   if (!output) return null;
 
@@ -130,7 +136,7 @@ function classifyInfraVerificationFailure(command: string, result: { stdout: str
   return null;
 }
 
-function hasInfraVerificationFailure(failures: string[]) {
+export function hasInfraVerificationFailure(failures: string[]) {
   return failures.some(
     (failure) =>
       failure.startsWith("infra_missing_tool:") ||
@@ -153,7 +159,7 @@ export function resolveDependencyBootstrapCommand(worktreePath: string) {
  * Detect line endings in existing file content.
  * Returns "CRLF" if the file uses Windows-style line endings, "LF" otherwise.
  */
-function detectLineEndings(content: string): "CRLF" | "LF" {
+export function detectLineEndings(content: string): "CRLF" | "LF" {
   const crlfCount = (content.match(/\r\n/g) || []).length;
   const lfCount = (content.match(/(?<!\r)\n/g) || []).length;
   return crlfCount > lfCount ? "CRLF" : "LF";
@@ -163,7 +169,7 @@ function detectLineEndings(content: string): "CRLF" | "LF" {
  * Normalize content to match the target line ending style.
  * Prevents CRLF → LF corruption on Windows or vice versa.
  */
-function normalizeLineEndings(content: string, style: "CRLF" | "LF"): string {
+export function normalizeLineEndings(content: string, style: "CRLF" | "LF"): string {
   // First normalize everything to LF
   const normalized = content.replace(/\r\n/g, "\n");
   if (style === "CRLF") {
@@ -178,7 +184,7 @@ function normalizeLineEndings(content: string, style: "CRLF" | "LF"): string {
  * and writes anyway (to avoid blocking execution), but records the conflict.
  * Also invalidates the shared file state cache.
  */
-function safeWriteFile(
+export function safeWriteFile(
   absolutePath: string,
   content: string,
   readTimestamp?: number,
@@ -221,7 +227,7 @@ function ensureInsideRoot(root: string, relativePath: string) {
   return resolved;
 }
 
-function extractJsonObject(text: string) {
+export function extractJsonObject(text: string) {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced?.[1] || trimmed;
@@ -253,10 +259,71 @@ function extractRequestedComponentName(objective: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Execution configuration constants — extracted from magic numbers for
+// tuning and documentation. Override via environment variables where noted.
+// ---------------------------------------------------------------------------
+
+/** Max chars of a file's content to include in generation prompts. */
+const MAX_CURRENT_FILE_CHARS = 12000;
+
+/** Max chars per supporting file in per-file generation context. */
+const MAX_SUPPORTING_FILE_CHARS = 5000;
+
+/** Max chars of file content in repair prompts. */
+const MAX_REPAIR_FILE_CHARS = 8000;
+
+/** Max files in a manifest before requiring explicit override. */
+const MAX_MANIFEST_FILES = 5;
+
+/** Max context pack files/tests/docs to include in manifest prompt. */
+const MAX_CONTEXT_FILES = 8;
+const MAX_CONTEXT_TESTS = 6;
+const MAX_CONTEXT_DOCS = 6;
+const MAX_CONTEXT_RULES = 8;
+const MAX_CONTEXT_WHY = 6;
+
+/** Max supporting files to include per file generation. */
+const MAX_SUPPORTING_FILES = 6;
+
+// ---------------------------------------------------------------------------
 // Static system prompt fragments — rendered once, reused across calls.
 // Keeping these as stable string constants maximizes prompt cache hits
 // (identical prefix bytes across requests → cache reuse).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Agent behavior guidelines — applied to all system prompts.
+// Inspired by production prompt engineering patterns that measurably
+// reduce false completions (~30% FC rate → <17%) and improve code quality.
+// ---------------------------------------------------------------------------
+
+const AGENT_BEHAVIOR_GUIDELINES = [
+  // Verification before completion (reduces false completion rate)
+  "Before reporting a task complete, verify it actually works: run the test, execute the script, check the output.",
+  "Minimum complexity means no gold-plating, not skipping the finish line.",
+  "If you cannot verify (no test exists, cannot run the code), say so explicitly rather than claiming success.",
+  "",
+  // Faithful outcome reporting (prevents false claims)
+  "Report outcomes faithfully: if tests fail, say so with the relevant output; if you did not run a verification step, say that rather than implying it succeeded.",
+  "Never claim 'all tests pass' when output shows failures, never suppress or simplify failing checks to manufacture a green result, and never characterize incomplete or broken work as done.",
+  "When a check did pass or a task is complete, state it plainly — do not hedge confirmed results with unnecessary disclaimers.",
+  "",
+  // Collaborator mindset
+  "If you notice the request is based on a misconception, or spot a bug adjacent to what was asked about, say so.",
+  "You are a collaborator, not just an executor — users benefit from your judgment, not just your compliance.",
+  "",
+  // Comment policy (reduces noise)
+  "Default to writing no comments. Only add one when the WHY is non-obvious: a hidden constraint, a subtle invariant, a workaround for a specific bug.",
+  "Do not explain WHAT the code does since well-named identifiers already do that.",
+  "Do not remove existing comments unless you are removing the code they describe or you know they are wrong.",
+  "",
+  // Conciseness anchors (reduces output token waste)
+  "Keep text between tool calls to 25 words or fewer.",
+  "Keep final responses to 100 words or fewer unless the task requires more detail.",
+  "",
+  // Tool result preservation (context may be compacted)
+  "When working with tool results, note any important information in your response, as old tool results may be cleared from context to free up space.",
+].join("\n");
 
 const MANIFEST_SYSTEM_PROMPT = [
   "You are generating a safe, minimal coding patch manifest.",
@@ -268,6 +335,8 @@ const MANIFEST_SYSTEM_PROMPT = [
   "Do not include AGENTS.md unless the objective explicitly asks to change project standards or policies.",
   "Keep the manifest to 5 files or fewer unless the task strictly requires more.",
   "Use search_replace for large existing files when a localized patch is safer than rewriting the full file.",
+  "",
+  AGENT_BEHAVIOR_GUIDELINES,
 ].join("\n");
 
 const SEARCH_REPLACE_SYSTEM_PROMPT = [
@@ -304,6 +373,9 @@ const REPAIR_SYSTEM_PROMPT = [
   "If the target file is missing, create the smallest valid file needed to satisfy the failing import or verification scope.",
   "Avoid unused variables and invalid Testing Library role queries.",
   "Do not broaden the change beyond the failing verification scope.",
+  "",
+  // Faithful reporting is critical in repair: don't claim fixed when it isn't
+  "Report the repair outcome faithfully. If the fix is partial or uncertain, say so.",
 ].join("\n");
 
 type PatchManifestFile = {
@@ -338,7 +410,7 @@ type GeneratedPatchPlan = {
   files: PatchManifestFile[];
 };
 
-function parsePatchManifest(text: string): ParsedPatchManifest {
+export function parsePatchManifest(text: string): ParsedPatchManifest {
   const plan = extractJsonObject(text);
   return {
     summary: plan.summary || truncate(text, 180),
@@ -598,7 +670,7 @@ function readRelativeFiles(root: string, relativePaths: string[]) {
       const absolutePath = ensureInsideRoot(root, relativePath);
       return {
         path: relativePath,
-        content: fs.existsSync(absolutePath) ? truncateFileContent(fs.readFileSync(absolutePath, "utf8"), 12000) : "",
+        content: fs.existsSync(absolutePath) ? (() => { recordFileAccess(absolutePath); return truncateFileContent(fs.readFileSync(absolutePath, "utf8"), 12000); })() : "",
       };
     })
     .filter((item) => item.content || item.path);
@@ -2047,18 +2119,26 @@ export class ExecutionService {
         Number(process.env.EXECUTION_MODEL_STEP_TIMEOUT_MS || 60000)
       )
     );
+
+    // Inject interval-based system reminders when message count warrants it
+    let messages = input.messages;
+    if (shouldInjectReminder(messages.length)) {
+      messages = injectReminders({ messages, trigger: "interval" }) as typeof messages;
+    }
+
     await withTimeout(
       `model step (${input.modelRole})`,
       timeoutMs,
-      this.providerOrchestrator.streamChat(
+      this.providerOrchestrator.streamChatWithRetry(
         randomUUID(),
-        input.messages,
+        messages,
         (token) => {
           output += token;
         },
         {
           providerId: input.providerId,
           modelRole: input.modelRole,
+          querySource: "execution",
           metadata: {
             model: roleBinding.model,
             temperature: input.temperature ?? Math.min(roleBinding.temperature, 0.1),
@@ -2151,13 +2231,14 @@ export class ExecutionService {
             return failureLessons.length > 0
               ? `Past lessons from similar failures:\n${failureLessons.map((l) => `- ${l}`).join("\n")}`
               : "";
-          } catch {
+          } catch (e) {
+            publishEvent("global", "memory.retrieval.failed", { error: String(e) });
             return "";
           }
         })(),
         "",
         fileExists ? "Current file:" : "Current file: (missing)",
-        currentContent.slice(0, 8000),
+        truncateFileContent(currentContent, MAX_REPAIR_FILE_CHARS),
       ].join("\n");
 
       const firstPass = await this.collectModelOutput({
@@ -2179,10 +2260,11 @@ export class ExecutionService {
 
       try {
         const content = normalizeGeneratedFileContent(firstPass);
-        fs.writeFileSync(absolutePath, content, "utf8");
+        safeWriteFile(absolutePath, content);
         repairedFiles.push(filePath);
         continue;
-      } catch {
+      } catch (e) {
+        publishEvent("global", "execution.generation.firstpass_failed", { path: filePath, error: String(e) });
         if (![".ts", ".tsx", ".js", ".jsx", ".md", ".css"].includes(extension)) {
           continue;
         }
@@ -2199,7 +2281,7 @@ export class ExecutionService {
           },
           {
             role: "user",
-            content: `Re-emit the full corrected contents for ${filePath} only.\n\nRepair rules:\n${focusedHints}\n\nVerification failures:\n${failureSummary}\n\nCurrent file:\n${currentContent.slice(0, 8000)}`,
+            content: `Re-emit the full corrected contents for ${filePath} only.\n\nRepair rules:\n${focusedHints}\n\nVerification failures:\n${failureSummary}\n\nCurrent file:\n${truncateFileContent(currentContent, MAX_REPAIR_FILE_CHARS)}`,
           },
         ],
         maxTokens: Math.min(maxTokens + 300, 1800),
@@ -2207,7 +2289,7 @@ export class ExecutionService {
       });
 
       const repairedContent = normalizeGeneratedFileContent(repairPass);
-      fs.writeFileSync(absolutePath, repairedContent, "utf8");
+      safeWriteFile(absolutePath, repairedContent);
       repairedFiles.push(filePath);
     }
 
@@ -2319,7 +2401,7 @@ export class ExecutionService {
       if (!changed) {
         continue;
       }
-      fs.writeFileSync(absolutePath, content, "utf8");
+      safeWriteFile(absolutePath, content);
       repairedFiles.push(path.relative(input.worktreePath, absolutePath).replace(/\\/g, "/"));
     }
 
@@ -2646,11 +2728,11 @@ export class ExecutionService {
               executionPolicy: blueprintExecutionPolicy,
             },
             contextPack: {
-              files: input.contextPack.files.slice(0, 8),
-              tests: input.contextPack.tests.slice(0, 6),
-              docs: input.contextPack.docs.slice(0, 6),
-              rules: input.contextPack.rules.slice(0, 8),
-              why: input.contextPack.why.slice(0, 6),
+              files: input.contextPack.files.slice(0, MAX_CONTEXT_FILES),
+              tests: input.contextPack.tests.slice(0, MAX_CONTEXT_TESTS),
+              docs: input.contextPack.docs.slice(0, MAX_CONTEXT_DOCS),
+              rules: input.contextPack.rules.slice(0, MAX_CONTEXT_RULES),
+              why: input.contextPack.why.slice(0, MAX_CONTEXT_WHY),
               confidence: input.contextPack.confidence,
             },
             files: filePayload,
@@ -2669,7 +2751,7 @@ export class ExecutionService {
       const effectiveBinding =
         effectiveRole === input.modelRole ? roleBinding : await this.providerOrchestrator.getModelRoleBinding(effectiveRole);
       let output = "";
-      await this.providerOrchestrator.streamChat(
+      await this.providerOrchestrator.streamChatWithRetry(
         randomUUID(),
         promptMessages,
         (token) => {
@@ -2678,6 +2760,7 @@ export class ExecutionService {
         {
           providerId: effectiveBinding.providerId,
           modelRole: effectiveRole,
+          querySource: "execution",
           metadata: {
             model: effectiveBinding.model,
             temperature: overrides?.temperature ?? Math.min(effectiveBinding.temperature, 0.1),
@@ -2705,7 +2788,8 @@ export class ExecutionService {
 
     try {
       manifest = parsePatchManifest(firstPass);
-    } catch {
+    } catch (e) {
+      publishEvent("global", "execution.manifest.parse_failed", { error: String(e) });
       const repairMessages = [
         {
           role: "system" as const,
@@ -2755,6 +2839,18 @@ export class ExecutionService {
       manifest,
       candidateTests: input.contextPack.tests,
     });
+
+    // Re-rank context pack to boost files related to the manifest targets
+    try {
+      const rerankedPack = await this.codeGraphService.rerankForManifest(
+        input.repoId,
+        input.contextPack,
+        manifest.files.map((f) => ({ path: f.path, action: f.action })),
+      );
+      input = { ...input, contextPack: rerankedPack };
+    } catch (e) {
+      publishEvent("global", "codegraph.rerank.failed", { repoId: input.repoId, error: String(e) });
+    }
 
     return this.expandPatchManifest({
       manifest,
@@ -2850,7 +2946,7 @@ export class ExecutionService {
       });
       const supportingFiles = readRelativeFiles(input.input.worktreePath, supportingPaths).map((item) => {
         const generated = writes.find((write) => write.path === item.path);
-        return generated ? { path: item.path, content: generated.content.slice(0, 5000) } : { ...item, content: item.content.slice(0, 5000) };
+        return generated ? { path: item.path, content: truncateFileContent(generated.content, MAX_SUPPORTING_FILE_CHARS) } : { ...item, content: truncateFileContent(item.content, MAX_SUPPORTING_FILE_CHARS) };
       });
       const maxTokens = estimateFileGenerationMaxTokens(filePlan.path, currentContent, filePlan.action);
       const isTestFile = /\.(test|spec)\.[jt]sx?$/.test(filePlan.path);
@@ -3005,7 +3101,8 @@ export class ExecutionService {
           } else {
             content = normalizeGeneratedFileContent(firstPass);
           }
-        } catch {
+        } catch (e) {
+        publishEvent("global", "execution.generation.strategy_failed", { path: filePlan.path, error: String(e) });
         const repairMessages = [
           {
             role: "system" as const,
@@ -3052,8 +3149,8 @@ export class ExecutionService {
                 throw new Error(`Model did not produce an applicable search/replace patch for ${filePlan.path}`);
               }
               content = applied.content;
-            } catch {
-              // search_replace repair also failed — fall back to full_file generation
+            } catch (e) {
+              publishEvent("global", "execution.generation.sr_repair_failed", { path: filePlan.path, error: String(e) });
               const fullFileFallback = await input.collectResponse(
                 [
                   {
@@ -3091,7 +3188,8 @@ export class ExecutionService {
                 currentContent,
                 patchText,
               });
-            } catch {
+            } catch (e) {
+              publishEvent("global", "execution.generation.diff_repair_failed", { path: filePlan.path, error: String(e) });
               const fallback = await input.collectResponse(
                 [
                   {
@@ -3302,7 +3400,7 @@ export class ExecutionService {
       for (const write of plannedPatch.writes) {
         const absolutePath = ensureInsideRoot(input.worktreePath, write.path);
         fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-        fs.writeFileSync(absolutePath, write.content, "utf8");
+        safeWriteFile(absolutePath, write.content);
         changedFiles.push(write.path.replace(/\\/g, "/"));
 
         // Snapshot each written file for rollback capability
@@ -3398,7 +3496,7 @@ export class ExecutionService {
 
       return mapAttempt(updated);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? shortErrorStack(error, 5) : String(error);
       const currentAttempt = await prisma.executionAttempt.findUnique({
         where: { id: attempt.id },
         select: { metadata: true, routingDecisionId: true },
@@ -3567,8 +3665,8 @@ export class ExecutionService {
             repair_attempt: repairAttempt,
             repaired_files: repairedFiles,
             ...result,
-            stdout: redactSensitiveText(result.stdout || ""),
-            stderr: redactSensitiveText(result.stderr || ""),
+            stdout: optimizeAndPersist(redactSensitiveText(result.stdout || ""), "shell", { taskId: input.runId }),
+            stderr: optimizeAndPersist(redactSensitiveText(result.stderr || ""), "shell", { taskId: input.runId }),
           },
         },
       });
@@ -3722,18 +3820,15 @@ export class ExecutionService {
       attempt.changedFiles.length <= 6 &&
       !hasInfraVerificationFailure(failures)
     ) {
-      // Track failure fingerprints for convergence detection.
-      // If the same failure set appears twice, the repair loop is stuck.
-      const seenFailureFingerprints = new Set<string>();
-      const makeFailureFingerprint = (fails: string[]) => [...fails].sort().join("|");
+      // Use DoomLoopDetector for convergence detection via MD5 fingerprinting.
+      const doomDetector = new DoomLoopDetector(10, 3);
 
       for (let round = 0; round < 3 && failures.length > 0; round += 1) {
-        const fingerprint = makeFailureFingerprint(failures);
-        if (seenFailureFingerprints.has(fingerprint)) {
-          // Same failures seen before — repair loop is stuck, break early
+        doomDetector.record("repair", { failures: [...failures].sort().join("|") });
+        if (doomDetector.isLooping()) {
+          // Doom loop detected — same failure pattern repeating, break early
           break;
         }
-        seenFailureFingerprints.add(fingerprint);
 
         const repairedBatch = await this.attemptVerificationRepair({
           worktreePath: input.worktreePath,

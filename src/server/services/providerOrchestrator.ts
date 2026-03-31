@@ -12,6 +12,7 @@ import { publishEvent } from "../eventBus";
 import { ProviderFactory } from "../providers/factory";
 import { estimateNextUsableAt } from "./quotaEstimator";
 import { emergencyCompact, type CompactionMessage } from "./contextCompactionService";
+import { ModelInferenceError, shortErrorStack } from "../errors";
 
 /** Query source classification for retry behavior. */
 export type QuerySource = "execution" | "verification" | "context_building" | "reporting";
@@ -22,7 +23,7 @@ const FOREGROUND_SOURCES = new Set<QuerySource>(["execution", "verification", "c
 const BASE_RETRY_DELAY_MS = 500;
 const MAX_RETRIES = 3;
 
-function isContextOverflowError(error: unknown): boolean {
+export function isContextOverflowError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
     return (
@@ -36,7 +37,7 @@ function isContextOverflowError(error: unknown): boolean {
   return false;
 }
 
-function isTransientCapacityError(error: unknown): boolean {
+export function isTransientCapacityError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
     return (
@@ -50,7 +51,7 @@ function isTransientCapacityError(error: unknown): boolean {
   return false;
 }
 
-function isStaleConnectionError(error: unknown): boolean {
+export function isStaleConnectionError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message;
     return msg.includes("ECONNRESET") || msg.includes("EPIPE") || msg.includes("socket hang up");
@@ -59,7 +60,7 @@ function isStaleConnectionError(error: unknown): boolean {
 }
 
 /** Exponential backoff with jitter to avoid thundering herd. */
-function retryDelayMs(attempt: number): number {
+export function retryDelayMs(attempt: number): number {
   const exponential = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
   const jitter = Math.random() * BASE_RETRY_DELAY_MS;
   return Math.min(exponential + jitter, 30000);
@@ -763,12 +764,18 @@ export class ProviderOrchestrator {
           ...options,
           modelRole: "overseer_escalation",
         });
-      } catch {
-        // Fallback also failed — throw the original error
+      } catch (e) {
+        publishEvent("global", "provider.fallback.failed", { sessionId, error: String(e) });
       }
     }
 
-    throw lastError;
+    const providerId = options?.providerId ?? "unknown";
+    const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new ModelInferenceError(
+      `Inference failed after retries: ${errorMsg}`,
+      providerId,
+      options?.modelRole,
+    );
   }
 
   private async pickNextQwenAccount(exclude: Set<string>) {

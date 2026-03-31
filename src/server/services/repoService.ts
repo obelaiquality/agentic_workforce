@@ -295,8 +295,8 @@ function inferCommands(repoRoot: string, languages: string[]) {
       if (scripts.build) buildCommands.add("npm run build");
       if (scripts.lint) lintCommands.add("npm run lint");
       if (scripts.typecheck) lintCommands.add("npm run typecheck");
-    } catch {
-      // Ignore malformed package.json and fall back.
+    } catch (e) {
+      publishEvent("global", "repo.package_json.malformed", { repoRoot, error: String(e) });
     }
   }
 
@@ -1269,7 +1269,8 @@ export class RepoService {
         truncated: lines.length > limit,
         available: true,
       };
-    } catch {
+    } catch (e) {
+      publishEvent("global", "repo.diff.read_failed", { path: normalizedPath, error: String(e) });
       return {
         path: normalizedPath,
         status,

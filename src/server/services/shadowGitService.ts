@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { safeWriteFile } from "./executionService";
 
 export interface ShadowSnapshot {
   stepId: string;
@@ -63,7 +64,7 @@ export class ShadowGitService {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(fullPath, content, "utf8");
+    safeWriteFile(fullPath, content);
 
     const execOpts = { cwd: this.snapshotDir, encoding: "utf8" as const };
 

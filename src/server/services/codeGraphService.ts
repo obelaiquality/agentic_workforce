@@ -660,7 +660,7 @@ export class CodeGraphService {
     const ranked = nodes
       .map((node) => ({ node, score: scoreNode({ ...node, metadata: toRecord(node.metadata) }, tokens, queryMode) }))
       .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score)
+      .sort((left, right) => right.score - left.score || left.node.path.localeCompare(right.node.path))
       .slice(0, 24);
 
     const topNodeIds = ranked.map((entry) => entry.node.id);
@@ -711,8 +711,8 @@ export class CodeGraphService {
           docs = shaped.docs.slice(0, 8);
           symbols = shaped.symbols.slice(0, 16);
         }
-      } catch {
-        // Shaper failure is non-fatal — keep deterministic selection
+      } catch (e) {
+        publishEvent("global", "codegraph.shaper.failed", { repoId: input.repoId, error: String(e) });
       }
     }
 

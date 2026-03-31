@@ -37,7 +37,7 @@ type RoleRuntimeConfig = {
   backendId: OnPremInferenceBackendId;
 };
 
-function p95(values: number[]) {
+export function p95(values: number[]) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
@@ -411,7 +411,8 @@ export class InferenceTuningService {
       if (!modelsResponse.ok) {
         failures += 1;
       }
-    } catch {
+    } catch (e) {
+      publishEvent("global", "inference.probe.failed", { backendId: backend.id, phase: "models", error: String(e) });
       failures += 1;
     }
 
@@ -463,7 +464,8 @@ export class InferenceTuningService {
         latencies.push(elapsedMs);
         ttfts.push(Math.max(1, Math.round(elapsedMs * 0.6)));
         tokPerSec.push(Number(tps.toFixed(2)));
-      } catch {
+      } catch (e) {
+        publishEvent("global", "inference.probe.failed", { backendId: backend.id, phase: "sample", error: String(e) });
         failures += 1;
       }
     }
@@ -1066,7 +1068,8 @@ export class InferenceTuningService {
       await this.startBackend({ actor: "health_monitor", backendId });
       state.consecutiveFailures = 0;
       state.status = "healthy";
-    } catch {
+    } catch (e) {
+      publishEvent("global", "inference.backend.restart_failed", { backendId, error: String(e) });
       state.status = "down";
     }
   }

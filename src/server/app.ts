@@ -44,6 +44,7 @@ import { V2CommandService } from "./services/v2CommandService";
 import { V2EventService } from "./services/v2EventService";
 import { V2QueryService } from "./services/v2QueryService";
 import { getSidecarClient } from "./sidecar/manager";
+import { sanitizeUnicode } from "./services/sensitiveRedaction";
 
 export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   await initDatabase();
@@ -79,7 +80,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   const codeGraphService = new CodeGraphService();
 
   codeGraphService.setContextShaper(async (input) => {
-    const prompt = [
+    const prompt = sanitizeUnicode([
       "You are a context selector. Given an objective and candidate file lists, return a JSON object with the most relevant subset.",
       `Objective: ${input.objective}`,
       `Candidate files: ${JSON.stringify(input.candidateFiles)}`,
@@ -88,13 +89,13 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       `Candidate symbols: ${JSON.stringify(input.candidateSymbols)}`,
       "Return ONLY a JSON object: { files: [...], tests: [...], docs: [...], symbols: [...] }",
       "Keep only items directly relevant to the objective. Remove noise.",
-    ].join("\n");
+    ].join("\n"));
 
-    const result = await providerOrchestrator.streamChat(
+    const result = await providerOrchestrator.streamChatWithRetry(
       `context-shaper-${Date.now()}`,
       [{ role: "user", content: prompt }],
       () => {},
-      { modelRole: "utility_fast" },
+      { modelRole: "utility_fast", querySource: "context_building" },
     );
 
     const match = result.text.match(/\{[\s\S]*\}/);

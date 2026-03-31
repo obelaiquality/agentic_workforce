@@ -57,6 +57,18 @@ jobs:
       - name: Run validate suite
         run: npm run validate
 
+      - name: Generate coverage report
+        run: npx vitest run --coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   desktop-smoke:
     runs-on: ubuntu-latest
     needs: validate

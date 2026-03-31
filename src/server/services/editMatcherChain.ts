@@ -25,30 +25,58 @@ export interface EditMatchResult {
 // Levenshtein helpers
 // ---------------------------------------------------------------------------
 
-export function levenshteinDistance(a: string, b: string): number {
+/**
+ * Levenshtein distance with optional early bailout.
+ * When maxDistance is provided, returns Infinity as soon as the minimum
+ * possible distance exceeds the threshold — avoids O(m*n) on large strings.
+ */
+export function levenshteinDistance(a: string, b: string, maxDistance?: number): number {
   const m = a.length;
   const n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () =>
-    Array(n + 1).fill(0),
-  );
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  // Quick length-based bailout
+  if (maxDistance !== undefined && Math.abs(m - n) > maxDistance) {
+    return Infinity;
+  }
+
+  // Use single-row DP for memory efficiency (O(n) instead of O(m*n))
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  let curr = new Array<number>(n + 1);
+
   for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+
     for (let j = 1; j <= n; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost,
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost,
       );
+      if (curr[j] < rowMin) rowMin = curr[j];
     }
+
+    // Early bailout: if the minimum value in this row already
+    // exceeds maxDistance, no subsequent row can produce a smaller result
+    if (maxDistance !== undefined && rowMin > maxDistance) {
+      return Infinity;
+    }
+
+    [prev, curr] = [curr, prev];
   }
-  return dp[m][n];
+
+  return prev[n];
 }
 
-export function levenshteinSimilarity(a: string, b: string): number {
+export function levenshteinSimilarity(a: string, b: string, minSimilarity?: number): number {
   if (a.length === 0 && b.length === 0) return 1;
-  const dist = levenshteinDistance(a, b);
+  // Convert minimum similarity to maximum distance for early bailout
+  const maxDist = minSimilarity !== undefined
+    ? Math.floor((1 - minSimilarity) * Math.max(a.length, b.length))
+    : undefined;
+  const dist = levenshteinDistance(a, b, maxDist);
+  if (dist === Infinity) return 0;
   return 1 - dist / Math.max(a.length, b.length);
 }
 
@@ -366,7 +394,7 @@ export function similarityMatch(
   for (let winSize = minWin; winSize <= maxWin; winSize++) {
     for (let i = 0; i <= content.length - winSize; i++) {
       const window = content.slice(i, i + winSize);
-      const sim = levenshteinSimilarity(window, searchText);
+      const sim = levenshteinSimilarity(window, searchText, threshold);
       if (sim > bestSim) {
         bestSim = sim;
         bestIdx = i;
@@ -382,7 +410,7 @@ export function similarityMatch(
   for (let winSize = minWin; winSize <= maxWin; winSize++) {
     if (bestIdx + winSize > content.length) continue;
     const window = content.slice(bestIdx, bestIdx + winSize);
-    const sim = levenshteinSimilarity(window, searchText);
+    const sim = levenshteinSimilarity(window, searchText, threshold);
     if (sim > recalcBest) {
       recalcBest = sim;
       bestWinSize = winSize;

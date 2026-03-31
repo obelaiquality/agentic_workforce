@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { publishEvent } from "../eventBus";
 import type {
   ChannelEventRecord,
   ChatMessageDto,
@@ -906,6 +907,30 @@ export class MissionControlService {
       projectState,
       codeGraphStatus,
       shareReport,
+      memoryStats: (() => {
+        try {
+          if (!project) return null;
+          const worktreePath = `${project.managedWorktreeRoot}/active`;
+          const { MemoryService } = require("./memoryService");
+          const memSvc = new MemoryService(worktreePath);
+          memSvc.loadEpisodicMemory();
+          const all = memSvc.getRelevantEpisodicMemories("");
+          return {
+            episodicCount: memSvc.episodicCount(),
+            successCount: all.filter((m: { outcome: string }) => m.outcome === "success").length,
+            failureCount: all.filter((m: { outcome: string }) => m.outcome === "failure").length,
+            partialCount: all.filter((m: { outcome: string }) => m.outcome === "partial").length,
+            newestCreatedAt: all.length > 0
+              ? all.reduce((newest: { createdAt: string }, m: { createdAt: string }) =>
+                  new Date(m.createdAt) > new Date(newest.createdAt) ? m : newest
+                ).createdAt
+              : null,
+          };
+        } catch (e) {
+          publishEvent("global", "mission.memory.failed", { error: String(e) });
+          return null;
+        }
+      })(),
       lastUpdatedAt: project?.updatedAt || null,
       overseer: {
         sessions,

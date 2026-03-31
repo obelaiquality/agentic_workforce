@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml"><img src="https://github.com/obelaiquality/agentic_workforce/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/obelaiquality/agentic_workforce"><img src="https://codecov.io/gh/obelaiquality/agentic_workforce/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://github.com/obelaiquality/agentic_workforce/releases"><img src="https://img.shields.io/github/v/release/obelaiquality/agentic_workforce?display_name=tag&label=latest%20release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/obelaiquality/agentic_workforce" alt="License"></a>
   <a href="docs/install.md"><img src="https://img.shields.io/badge/desktop-1.0-0f766e" alt="Desktop 1.0"></a>
@@ -148,12 +149,12 @@ More detail: [Install](docs/install.md) · [Support matrix](docs/support-matrix.
 - **Local model runtime** with MLX-LM (Apple Silicon), Ollama (cross-platform), vLLM, SGLang, llama.cpp, or TensorRT-LLM
 - **OpenAI escalation** for complex tasks with configurable model roles and budget controls
 - **CLI companion** for connect, plan, run, and report flows against the same local API
-- **493 unit/integration tests** and multi-tier E2E validation (stable desktop, follow-up scenarios, comprehensive lifecycle, packaged smoke)
+- **858 unit/integration tests** and multi-tier E2E validation (stable desktop, follow-up scenarios, comprehensive lifecycle, packaged smoke)
 
 ## Testing
 
 ```bash
-npm run validate                          # 493 unit tests, lint, typecheck, builds
+npm run validate                          # 858 unit tests, lint, typecheck, builds
 npm run test:e2e:desktop-stable           # Stable desktop acceptance (UI + execution)
 npm run test:e2e:followup:status-badge    # Follow-up scenario
 npm run test:e2e:nightly                  # Broader regression coverage
@@ -164,7 +165,7 @@ npm run demo:capture && npm run demo:render  # Regenerate README GIF
 
 | Platform | Unit tests | Desktop E2E | Status |
 | --- | --- | --- | --- |
-| macOS (Apple Silicon) | 493/493 | Full pass (local + OpenAI) | Primary platform |
+| macOS (Apple Silicon) | 858/858 | Full pass (local + OpenAI) | Primary platform |
 | Ubuntu/Debian | CI pass | CI pass (xvfb) | CI-validated |
 | macOS (Intel) | Expected pass | Not yet verified | **Help wanted** |
 | Windows | Expected pass | Not yet verified | **Help wanted** |

@@ -202,7 +202,7 @@ export class ChatService {
       (typeof metadata.preferredModelRole === "string" ? (metadata.preferredModelRole as ModelRole) : "coder_default");
 
     let accumulated = "";
-    const streamResult = await this.providerOrchestrator.streamChat(
+    const streamResult = await this.providerOrchestrator.streamChatWithRetry(
       sessionId,
       providerMessages,
       (token) => {

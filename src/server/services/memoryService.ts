@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { safeWriteFile } from "./executionService";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -139,7 +140,7 @@ export class MemoryService {
       fs.mkdirSync(this.memoryDirAbsolute, { recursive: true });
     }
     const filePath = path.join(this.memoryDirAbsolute, "episodic.json");
-    fs.writeFileSync(filePath, JSON.stringify(this.episodic, null, 2), "utf-8");
+    safeWriteFile(filePath, JSON.stringify(this.episodic, null, 2));
   }
 
   // ── Episodic memory ────────────────────────────────────────────────────

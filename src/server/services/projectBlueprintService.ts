@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../db";
 import type { ProjectBlueprint, RepoGuidelineProfile } from "../../shared/contracts";
+import { sanitizeUnicode } from "./sensitiveRedaction";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -15,10 +16,10 @@ function readIfExists(filePath: string, maxChars = 24000) {
   if (!fs.existsSync(filePath)) {
     return null;
   }
-  return fs.readFileSync(filePath, "utf8").slice(0, maxChars);
+  return sanitizeUnicode(fs.readFileSync(filePath, "utf8")).slice(0, maxChars);
 }
 
-function firstParagraph(text: string) {
+export function firstParagraph(text: string) {
   const cleaned = text
     .replace(/^#.+$/gm, "")
     .split(/\n\s*\n/g)
@@ -55,7 +56,7 @@ function unique(items: string[]) {
   return Array.from(new Set(items.filter(Boolean)));
 }
 
-function inferProductIntent(text: string, fallbackName: string) {
+export function inferProductIntent(text: string, fallbackName: string) {
   const paragraph = firstParagraph(text);
   if (paragraph) {
     return paragraph.slice(0, 280);
@@ -63,7 +64,7 @@ function inferProductIntent(text: string, fallbackName: string) {
   return `${fallbackName} should ship reliable code changes with verification and documentation discipline.`;
 }
 
-function inferSuccessCriteria(guidelines: RepoGuidelineProfile | null) {
+export function inferSuccessCriteria(guidelines: RepoGuidelineProfile | null) {
   const criteria = [
     "Implement the requested change with minimal diffs.",
     "Verify impacted behavior before promotion.",
@@ -79,7 +80,7 @@ function inferSuccessCriteria(guidelines: RepoGuidelineProfile | null) {
   return unique(criteria);
 }
 
-function inferConstraints(text: string) {
+export function inferConstraints(text: string) {
   const constraints: string[] = [];
   if (/minimal diffs?/i.test(text)) constraints.push("Prefer minimal diffs.");
   if (/worktree|safe copy|safe linked copy/i.test(text)) constraints.push("Operate inside the managed worktree only.");
@@ -88,7 +89,7 @@ function inferConstraints(text: string) {
   return unique(constraints);
 }
 
-function classifyConfidence(input: { guidelineConfidence?: number | null; sourceRefs: string[] }) {
+export function classifyConfidence(input: { guidelineConfidence?: number | null; sourceRefs: string[] }) {
   const score = input.guidelineConfidence ?? 0;
   if (score >= 0.75 || input.sourceRefs.length >= 4) {
     return "high" as const;

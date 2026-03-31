@@ -7,6 +7,9 @@ import {
   cosineSimilarity,
   truncateToChars,
   MemoryService,
+  temporalDecay,
+  memoryAgeDays,
+  memoryAgeLabel,
 } from "./memoryService";
 
 function makeTmpDir(): string {
@@ -507,6 +510,157 @@ describe("MemoryService", () => {
 
       svc.clearWorking();
       expect(svc.workingCount()).toBe(0);
+    });
+  });
+
+  // ── commitTaskOutcome ──────────────────────────────────────────────
+
+  describe("commitTaskOutcome", () => {
+    it("success outcome creates memory with correct fields", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitTaskOutcome({
+        objective: "Add login form with validation",
+        changedFiles: ["src/Login.tsx", "src/App.tsx"],
+        passed: true,
+      });
+
+      expect(mem.outcome).toBe("success");
+      expect(mem.taskDescription).toBe("Add login form with validation");
+      expect(mem.keyFiles).toEqual(["src/Login.tsx", "src/App.tsx"]);
+      expect(mem.summary).toContain("Successfully completed");
+      expect(mem.summary).toContain("2 file(s)");
+    });
+
+    it("failure outcome extracts lessons from failure patterns", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitTaskOutcome({
+        objective: "Run database migration",
+        changedFiles: ["schema.sql"],
+        passed: false,
+        failures: [
+          "command_failed: npm test",
+          "infra_missing_tool: prisma not found",
+          "approval_required: protected file",
+        ],
+      });
+
+      expect(mem.outcome).toBe("failure");
+      expect(mem.lessons.length).toBeGreaterThan(0);
+      expect(mem.lessons.some((l) => l.includes("Verification commands failed"))).toBe(true);
+      expect(mem.lessons.some((l) => l.includes("Infrastructure setup was needed"))).toBe(true);
+      expect(mem.lessons.some((l) => l.includes("Approval was required"))).toBe(true);
+    });
+
+    it("partial outcome when repairedFiles exist", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitTaskOutcome({
+        objective: "Update API endpoint",
+        changedFiles: ["src/api.ts"],
+        passed: false,
+        repairedFiles: ["src/api.ts"],
+      });
+
+      expect(mem.outcome).toBe("partial");
+      expect(mem.lessons.some((l) => l.includes("Static/model repair fixed"))).toBe(true);
+      expect(mem.lessons.some((l) => l.includes("src/api.ts"))).toBe(true);
+    });
+
+    it("auto-generated summary when no summary provided", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitTaskOutcome({
+        objective: "Fix bug in auth module",
+        changedFiles: ["src/auth.ts"],
+        passed: true,
+      });
+
+      expect(mem.summary).toContain("Successfully completed");
+      expect(mem.summary).toContain("Fix bug in auth module");
+      expect(mem.summary).toContain("1 file(s)");
+    });
+  });
+
+  // ── commitCompactionSummary ────────────────────────────────────────
+
+  describe("commitCompactionSummary", () => {
+    it("records compaction metadata (stage, pressure, droppedMessageCount)", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitCompactionSummary({
+        droppedMessageCount: 5,
+        stage: 3,
+        pressure: 0.85,
+      });
+
+      expect(mem.taskDescription).toBe("context_compaction");
+      expect(mem.outcome).toBe("success");
+      expect(mem.summary).toContain("stage 3");
+      expect(mem.summary).toContain("85% pressure");
+      expect(mem.summary).toContain("5 message(s)");
+      expect(mem.lessons.length).toBeGreaterThan(0);
+      expect(mem.lessons[0]).toContain("Compaction stage 3");
+    });
+
+    it("includes sessionContext when provided", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitCompactionSummary({
+        droppedMessageCount: 3,
+        stage: 2,
+        pressure: 0.8,
+        sessionContext: "decision: use approach B; result: success",
+      });
+
+      expect(mem.summary).toContain("Context: decision: use approach B");
+      expect(mem.summary).toContain("result: success");
+    });
+
+    it("taskDescription is always context_compaction", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.commitCompactionSummary({
+        droppedMessageCount: 2,
+        stage: 4,
+        pressure: 0.92,
+      });
+
+      expect(mem.taskDescription).toBe("context_compaction");
+    });
+  });
+
+  // ── temporal decay and age ─────────────────────────────────────────
+
+  describe("temporal decay and age", () => {
+    it("temporalDecay returns 1.0 for today", () => {
+      const now = new Date().toISOString();
+      const decay = temporalDecay(now);
+      expect(decay).toBe(1.0);
+    });
+
+    it("temporalDecay returns ~0.5 at 30 days", () => {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const decay = temporalDecay(thirtyDaysAgo);
+      expect(decay).toBeCloseTo(0.5, 1);
+    });
+
+    it("temporalDecay returns >= 0.12 (minimum) at 365 days", () => {
+      const yearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+      const decay = temporalDecay(yearAgo);
+      expect(decay).toBeGreaterThanOrEqual(0.12);
+      expect(decay).toBeLessThanOrEqual(0.13);
+    });
+
+    it("memoryAgeDays returns 0 for now", () => {
+      const now = new Date().toISOString();
+      const age = memoryAgeDays(now);
+      expect(age).toBe(0);
+    });
+
+    it("memoryAgeLabel returns today, yesterday, N days ago", () => {
+      const now = new Date().toISOString();
+      expect(memoryAgeLabel(now)).toBe("today");
+
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      expect(memoryAgeLabel(yesterday)).toBe("yesterday");
+
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+      expect(memoryAgeLabel(fiveDaysAgo)).toBe("5 days ago");
     });
   });
 });

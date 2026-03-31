@@ -947,6 +947,13 @@ export interface MissionControlSnapshot {
     selectedSessionId: string | null;
     messages: ChatMessageDto[];
   };
+  memoryStats: {
+    episodicCount: number;
+    successCount: number;
+    failureCount: number;
+    partialCount: number;
+    newestCreatedAt: string | null;
+  } | null;
   lastUpdatedAt: string | null;
 }
 

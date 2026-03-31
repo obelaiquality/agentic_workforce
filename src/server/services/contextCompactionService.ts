@@ -5,7 +5,9 @@
  * to episodic memory before dropping assistant reasoning.
  */
 
+import fs from "node:fs";
 import type { MemoryService } from "./memoryService";
+import { truncateFileContent } from "./codebaseHelpers";
 
 export interface CompactionMessage {
   role: "system" | "user" | "assistant";
@@ -321,8 +323,68 @@ export function compactWithMemory(
   }
 
   // Proceed with normal compaction (with or without circuit breaker)
-  if (tracker) {
-    return compactWithCircuitBreaker(messages, maxContextTokens, tracker);
+  const result = tracker
+    ? compactWithCircuitBreaker(messages, maxContextTokens, tracker)
+    : compactMessages(messages, maxContextTokens);
+
+  // Post-compaction file recovery: restore recently accessed files after stage 2+
+  if (result && result.stage >= 2) {
+    const restored = restoreRecentFiles(recentFileAccesses, {
+      maxFiles: 5,
+      totalBudget: 50_000,
+      perFileBudget: 5_000,
+    });
+    if (restored.length > 0) {
+      result.messages.push({
+        role: "user",
+        content: `[Context recovery — ${restored.length} recently accessed file(s)]\n\n${restored.join("\n\n")}`,
+      });
+      result.tokensAfter = totalTokens(result.messages);
+    }
   }
-  return compactMessages(messages, maxContextTokens);
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Post-compaction file recovery
+// ---------------------------------------------------------------------------
+
+const recentFileAccesses: string[] = [];
+
+/** Record a file access for post-compaction recovery. Keeps last 20 unique paths. */
+export function recordFileAccess(filePath: string): void {
+  const idx = recentFileAccesses.indexOf(filePath);
+  if (idx >= 0) recentFileAccesses.splice(idx, 1);
+  recentFileAccesses.unshift(filePath);
+  if (recentFileAccesses.length > 20) recentFileAccesses.length = 20;
+}
+
+/** Restore recently accessed files within budget constraints. */
+function restoreRecentFiles(
+  paths: string[],
+  budget: { maxFiles: number; totalBudget: number; perFileBudget: number },
+): string[] {
+  const restored: string[] = [];
+  let totalChars = 0;
+
+  for (const filePath of paths.slice(0, budget.maxFiles)) {
+    if (totalChars >= budget.totalBudget) break;
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const { content } = truncateFileContent(raw, 125, budget.perFileBudget);
+      restored.push(`File: ${filePath}\n${content}`);
+      totalChars += content.length;
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  return restored;
+}
+
+/** Reset recent file accesses (for testing). */
+export function resetFileAccesses(): void {
+  recentFileAccesses.length = 0;
 }
