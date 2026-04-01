@@ -97,6 +97,36 @@ function normalizeQuotes(s: string): string {
     .replace(/[\u2013\u2014]/g, "-");              // en/em dashes → hyphen
 }
 
+/**
+ * Detect quote style in source text and apply it to target text.
+ * When a file uses curly/smart quotes, preserve that style in replacements.
+ */
+export function preserveQuoteStyle(sourceText: string, targetText: string): string {
+  const hasCurlySingle = /[\u2018\u2019]/.test(sourceText);
+  const hasCurlyDouble = /[\u201C\u201D]/.test(sourceText);
+
+  let result = targetText;
+
+  if (hasCurlyDouble) {
+    // Track position to determine opening vs closing
+    result = result.replace(/"/g, (_match, offset: number) => {
+      const before = result[offset - 1];
+      const isOpening = !before || /[\s(\[{]/.test(before);
+      return isOpening ? "\u201C" : "\u201D";
+    });
+  }
+
+  if (hasCurlySingle) {
+    result = result.replace(/'/g, (_match, offset: number) => {
+      const before = result[offset - 1];
+      const isOpening = !before || /[\s(\[{]/.test(before);
+      return isOpening ? "\u2018" : "\u2019";
+    });
+  }
+
+  return result;
+}
+
 /** Build a mapping from collapsed-string index back to original-string index. */
 function buildCollapseMap(original: string): number[] {
   const map: number[] = [];
@@ -482,9 +512,14 @@ export function runEditMatcherChain(
   for (const matcher of matcherChain) {
     const match = matcher(content, searchText);
     if (match) {
+      // When quote normalization was needed, preserve the file's quote style
+      const effectiveReplace =
+        match.matcherName === "quoteNormalizedMatch"
+          ? preserveQuoteStyle(match.matchedText, replaceText)
+          : replaceText;
       const newContent =
         content.slice(0, match.startIndex) +
-        replaceText +
+        effectiveReplace +
         content.slice(match.endIndex);
       return { success: true, content: newContent, match };
     }

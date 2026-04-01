@@ -5,14 +5,16 @@ export function EmptyState({
   heading,
   description,
   action,
+  "data-testid": dataTestId,
 }: {
   icon: ReactNode;
   heading: string;
   description: string;
   action?: ReactNode;
+  "data-testid"?: string;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
+    <div data-testid={dataTestId} className="flex flex-col items-center justify-center gap-4 py-20 text-center">
       <div className="rounded-full border border-white/10 bg-white/[0.03] p-4">
         {icon}
       </div>

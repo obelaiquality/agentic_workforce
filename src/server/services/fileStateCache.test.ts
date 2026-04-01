@@ -302,4 +302,75 @@ describe("FileStateCache", () => {
       expect(smallCache.totalSizeBytes).toBe(90);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Read tracking and staleness detection
+  // ---------------------------------------------------------------------------
+
+  describe("read tracking and staleness detection", () => {
+    it("recordRead stores lastReadAt on existing entry", () => {
+      cache.set("/test/file.ts", "content");
+      const before = Date.now();
+      cache.recordRead("/test/file.ts");
+      const after = Date.now();
+      const ts = cache.getLastReadTimestamp("/test/file.ts");
+      expect(ts).toBeGreaterThanOrEqual(before);
+      expect(ts).toBeLessThanOrEqual(after);
+    });
+
+    it("recordRead is no-op when file not cached", () => {
+      cache.recordRead("/test/uncached.ts");
+      expect(cache.getLastReadTimestamp("/test/uncached.ts")).toBeUndefined();
+    });
+
+    it("getLastReadTimestamp returns undefined for unread file", () => {
+      cache.set("/test/file.ts", "content");
+      expect(cache.getLastReadTimestamp("/test/file.ts")).toBeUndefined();
+    });
+
+    it("getLastReadTimestamp returns timestamp after recordRead", () => {
+      cache.set("/test/file.ts", "content");
+      cache.recordRead("/test/file.ts");
+      expect(cache.getLastReadTimestamp("/test/file.ts")).toBeDefined();
+      expect(typeof cache.getLastReadTimestamp("/test/file.ts")).toBe("number");
+    });
+
+    it("isStaleSinceRead returns false when never read", () => {
+      cache.set("/test/file.ts", "content");
+      expect(cache.isStaleSinceRead("/test/file.ts", Date.now() + 1000)).toBe(false);
+    });
+
+    it("isStaleSinceRead returns false when mtime <= lastRead", () => {
+      cache.set("/test/file.ts", "content");
+      cache.recordRead("/test/file.ts");
+      const readTime = cache.getLastReadTimestamp("/test/file.ts")!;
+      expect(cache.isStaleSinceRead("/test/file.ts", readTime)).toBe(false);
+      expect(cache.isStaleSinceRead("/test/file.ts", readTime - 100)).toBe(false);
+    });
+
+    it("isStaleSinceRead returns true when mtime > lastRead", () => {
+      cache.set("/test/file.ts", "content");
+      cache.recordRead("/test/file.ts");
+      const readTime = cache.getLastReadTimestamp("/test/file.ts")!;
+      expect(cache.isStaleSinceRead("/test/file.ts", readTime + 1000)).toBe(true);
+    });
+
+    it("isStaleSinceRead returns false when content matches (cloud sync fallback)", () => {
+      cache.set("/test/file.ts", "original content");
+      cache.recordRead("/test/file.ts");
+      const readTime = cache.getLastReadTimestamp("/test/file.ts")!;
+      expect(
+        cache.isStaleSinceRead("/test/file.ts", readTime + 1000, "original content"),
+      ).toBe(false);
+    });
+
+    it("set preserves lastReadAt from prior entry", () => {
+      cache.set("/test/file.ts", "v1");
+      cache.recordRead("/test/file.ts");
+      const readTime = cache.getLastReadTimestamp("/test/file.ts");
+      expect(readTime).toBeDefined();
+      cache.set("/test/file.ts", "v2");
+      expect(cache.getLastReadTimestamp("/test/file.ts")).toBe(readTime);
+    });
+  });
 });

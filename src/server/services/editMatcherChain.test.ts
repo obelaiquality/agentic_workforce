@@ -12,6 +12,7 @@ import {
   levenshteinDistance,
   levenshteinSimilarity,
   runEditMatcherChain,
+  preserveQuoteStyle,
 } from "./editMatcherChain";
 
 // ---------------------------------------------------------------------------
@@ -396,5 +397,73 @@ describe("levenshteinSimilarity with minSimilarity", () => {
     // Distance is 1, length is 5, similarity = 1 - 1/5 = 0.8
     const result = levenshteinSimilarity(a, b, 0.7);
     expect(result).toBeCloseTo(0.8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// preserveQuoteStyle
+// ---------------------------------------------------------------------------
+
+describe("preserveQuoteStyle", () => {
+  it("converts straight singles to curly when source has curly", () => {
+    const source = "He said \u2018hello\u2019";
+    const target = "He said 'goodbye'";
+    const result = preserveQuoteStyle(source, target);
+    expect(result).toContain("\u2018");
+    expect(result).toContain("\u2019");
+    expect(result).not.toContain("'");
+  });
+
+  it("converts straight doubles to curly when source has curly", () => {
+    const source = 'She wrote \u201CHi\u201D';
+    const target = 'She wrote "Bye"';
+    const result = preserveQuoteStyle(source, target);
+    expect(result).toContain("\u201C");
+    expect(result).toContain("\u201D");
+    expect(result).not.toContain('"');
+  });
+
+  it("is no-op when source has straight quotes", () => {
+    const source = "He said 'hello'";
+    const target = "He said 'goodbye'";
+    const result = preserveQuoteStyle(source, target);
+    expect(result).toBe(target);
+  });
+
+  it("handles opening vs closing placement", () => {
+    const source = "\u201Cfirst\u201D and \u201Csecond\u201D";
+    const target = '"first" and "second"';
+    const result = preserveQuoteStyle(source, target);
+    // Should have opening quotes before words and closing after
+    expect(result).toBe("\u201Cfirst\u201D and \u201Csecond\u201D");
+  });
+
+  it("runEditMatcherChain preserves curly quotes via quoteNormalizedMatch", () => {
+    // File content uses curly quotes
+    const content = 'The title is \u201CHello World\u201D today';
+    // Search uses straight quotes (model output)
+    const search = 'The title is "Hello World" today';
+    // Replacement also uses straight quotes
+    const replace = 'The title is "Goodbye World" today';
+
+    const result = runEditMatcherChain(content, search, replace);
+    expect(result.success).toBe(true);
+    expect(result.match?.matcherName).toBe("quoteNormalizedMatch");
+    // The replacement should preserve curly quotes
+    expect(result.content).toContain("\u201C");
+    expect(result.content).toContain("\u201D");
+    expect(result.content).toContain("Goodbye World");
+  });
+
+  it("runEditMatcherChain does not apply preservation for exact matches", () => {
+    const content = 'The title is "Hello World" today';
+    const search = 'The title is "Hello World" today';
+    const replace = 'The title is "Goodbye World" today';
+
+    const result = runEditMatcherChain(content, search, replace);
+    expect(result.success).toBe(true);
+    expect(result.match?.matcherName).toBe("exactMatch");
+    // Exact match should use replacement verbatim
+    expect(result.content).toBe(replace);
   });
 });

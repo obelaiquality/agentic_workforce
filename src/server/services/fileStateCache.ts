@@ -15,6 +15,8 @@ export interface FileState {
   timestamp: number;
   /** Byte length of content, cached to avoid recomputation. */
   sizeBytes: number;
+  /** When the agent last read this file (for staleness detection). */
+  lastReadAt?: number;
 }
 
 export interface FileStateCacheOptions {
@@ -61,6 +63,9 @@ export class FileStateCache {
     const key = this.normalizeKey(filePath);
     const sizeBytes = Buffer.byteLength(content);
 
+    // Capture lastReadAt before removing existing entry
+    const existingLastReadAt = this.cache.get(key)?.lastReadAt;
+
     // Remove existing entry first (updates size accounting)
     if (this.cache.has(key)) {
       this.delete(filePath);
@@ -82,6 +87,7 @@ export class FileStateCache {
       content,
       timestamp: timestamp ?? Date.now(),
       sizeBytes,
+      lastReadAt: existingLastReadAt,
     };
     this.cache.set(key, entry);
     this.currentSizeBytes += sizeBytes;
@@ -117,6 +123,46 @@ export class FileStateCache {
   /** Get all cached file paths. */
   keys(): string[] {
     return Array.from(this.cache.keys());
+  }
+
+  /** Record that the agent read this file at the current time. */
+  recordRead(filePath: string): void {
+    const key = this.normalizeKey(filePath);
+    const entry = this.cache.get(key);
+    if (entry) {
+      entry.lastReadAt = Date.now();
+      // LRU: move to end
+      this.cache.delete(key);
+      this.cache.set(key, entry);
+    }
+    // If not cached, do nothing — the file will be cached on next set()
+  }
+
+  /** Get the timestamp of the last agent read, or undefined. */
+  getLastReadTimestamp(filePath: string): number | undefined {
+    return this.cache.get(this.normalizeKey(filePath))?.lastReadAt;
+  }
+
+  /**
+   * Check if the file has been externally modified since the agent last read it.
+   * Uses content comparison as fallback for cloud sync / antivirus false positives
+   * (file mtime changes but content is identical).
+   */
+  isStaleSinceRead(
+    filePath: string,
+    currentMtimeMs: number,
+    currentContent?: string,
+  ): boolean {
+    const key = this.normalizeKey(filePath);
+    const entry = this.cache.get(key);
+    const lastRead = entry?.lastReadAt;
+    if (lastRead === undefined) return false; // Never read → not stale
+    if (currentMtimeMs <= lastRead) return false; // Not modified since read
+    // Content fallback: mtime differs but content may be identical (cloud sync, AV)
+    if (currentContent !== undefined && entry) {
+      if (entry.content === currentContent) return false;
+    }
+    return true;
   }
 
   private evictOldest(): void {

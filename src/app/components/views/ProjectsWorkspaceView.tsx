@@ -155,7 +155,7 @@ export function ProjectsWorkspaceView({
   return (
     <div className="space-y-4">
       <Dialog open={projectDialogOpen} onOpenChange={handleProjectDialogOpenChange}>
-        <DialogContent className="max-w-3xl border-white/10 bg-[#121216] text-zinc-100">
+        <DialogContent data-testid="projects-starter-dialog" className="max-w-3xl border-white/10 bg-[#121216] text-zinc-100">
           <DialogHeader>
             <DialogTitle>{projectDialogTitle}</DialogTitle>
             <DialogDescription className="text-zinc-400">{projectDialogDescription}</DialogDescription>
@@ -229,6 +229,7 @@ export function ProjectsWorkspaceView({
           { key: "connect_new" as const, label: "Connect New" },
         ]).map((tab) => (
           <button
+            data-testid={`projects-tab-${tab.key.replace("_", "-")}`}
             key={tab.key}
             onClick={() => setProjectsTab(tab.key)}
             className={`flex-1 py-2 rounded-md text-xs font-medium transition-colors ${
@@ -243,7 +244,7 @@ export function ProjectsWorkspaceView({
       {projectsTab === "my_projects" && (
         <>
           {activeRepo ? (
-            <Panel>
+            <Panel data-testid="projects-active-project">
               <div className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -261,6 +262,7 @@ export function ProjectsWorkspaceView({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
+                    data-testid="projects-go-to-work"
                     onClick={openWork}
                     className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
                   >
@@ -280,6 +282,7 @@ export function ProjectsWorkspaceView({
                   </button>
                   {activeProjectIsBlank ? (
                     <button
+                      data-testid="projects-apply-starter"
                       onClick={openStarterDialogForActiveProject}
                       disabled={isActing}
                       className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/30"
@@ -289,6 +292,7 @@ export function ProjectsWorkspaceView({
                   ) : null}
                   {(activeRepo || blueprint) ? (
                     <button
+                      data-testid="projects-blueprint-toggle"
                       onClick={() => setShowBlueprint((v) => !v)}
                       className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-zinc-200 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20"
                     >
@@ -315,14 +319,16 @@ export function ProjectsWorkspaceView({
           )}
 
           {showBlueprint && (activeRepo || blueprint || projectSetupState) ? (
-            <ProjectBlueprintPanel
-              blueprint={blueprint}
-              hasActiveRepo={Boolean(activeRepo)}
-              isActing={isActing}
-              onUpdate={updateBlueprint}
-              onRegenerate={regenerateBlueprint}
-              compact={false}
-            />
+            <div data-testid="projects-blueprint-panel">
+              <ProjectBlueprintPanel
+                blueprint={blueprint}
+                hasActiveRepo={Boolean(activeRepo)}
+                isActing={isActing}
+                onUpdate={updateBlueprint}
+                onRegenerate={regenerateBlueprint}
+                compact={false}
+              />
+            </div>
           ) : null}
 
           {recentRepos.length > 0 && (
@@ -375,6 +381,7 @@ export function ProjectsWorkspaceView({
           <div className="p-4 space-y-4">
             <div className="flex flex-wrap gap-2">
               <button
+                data-testid="projects-choose-local"
                 onClick={chooseLocalRepo}
                 disabled={isActing}
                 className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/30"
@@ -383,6 +390,7 @@ export function ProjectsWorkspaceView({
                 {isConnectingLocal ? "Opening Repo..." : "Choose Local Repo"}
               </button>
               <button
+                data-testid="projects-new-project"
                 onClick={openNewProjectDialog}
                 disabled={isActing}
                 className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/30"

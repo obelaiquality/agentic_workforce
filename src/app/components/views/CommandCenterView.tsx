@@ -412,7 +412,7 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
               <AutonomyActivityPanel mission={mission} onOpenSettings={() => setActiveSection("settings")} />
             )}
 
-            <Panel className="border-white/8">
+            <Panel data-testid="work-task-board" className="border-white/8">
               <PanelHeader
                 title={
                   <span className="inline-flex items-center gap-2">
@@ -422,7 +422,7 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                 }
               >
                 <div className="flex items-center gap-2">
-                  <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/[0.03] p-1">
+                  <div data-testid="work-view-toggle" className="inline-flex items-center rounded-lg border border-white/10 bg-white/[0.03] p-1">
                     <button
                       onClick={() => setWorkflowViewMode("board")}
                       className={cn(
@@ -608,6 +608,7 @@ function OverseerCommandCard({
 
         <div className="overflow-hidden rounded-[22px] border border-white/10 bg-[#161618] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
           <textarea
+            data-testid="work-task-input"
             value={mission.input}
             onChange={(event) => mission.setInput(event.target.value)}
             placeholder={mission.activeProjectIsBlank ? "Describe what you want to build..." : "Describe the next change..."}
@@ -618,6 +619,7 @@ function OverseerCommandCard({
           <div className="flex items-center justify-between gap-3 border-t border-white/6 bg-black/20 px-4 py-2.5">
             <div className="flex items-center gap-2 min-w-0">
               <select
+                data-testid="work-profile-selector"
                 value={mission.selectedExecutionProfileId}
                 onChange={(event) => mission.setExecutionProfile(event.target.value)}
                 disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
@@ -652,6 +654,7 @@ function OverseerCommandCard({
                 </button>
               ) : null}
               <button
+                data-testid="work-primary-action"
                 onClick={primaryAction}
                 disabled={mission.isActing || !hasInput || !mission.selectedRepo}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-1.5 text-xs font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] hover:bg-cyan-500 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-cyan-400/30"
@@ -961,7 +964,7 @@ function WorkEmptyState({
   appModeNotice: MissionData["appModeNotice"];
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-8 py-12">
+    <div data-testid="work-empty-state" className="flex flex-col items-center justify-center gap-8 py-12">
       <div className="flex flex-col items-center gap-4 text-center">
         <img src="/assets/agentic-workforce-shell.svg" alt="" className="h-12 w-12 opacity-60" aria-hidden="true" />
         <div className="space-y-2">
@@ -995,6 +998,7 @@ function WorkEmptyState({
       </div>
 
       <button
+        data-testid="work-connect-repo"
         type="button"
         onClick={openProjects}
         className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-medium text-white shadow-[0_0_18px_rgba(6,182,212,0.16)] transition hover:bg-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-400/30"
@@ -1104,6 +1108,7 @@ function WorkflowLane({
 
   return (
     <div
+      data-testid={`work-lane-${lane.key}`}
       ref={dropRef}
       className={cn(
         "overflow-hidden rounded-2xl border transition-all",

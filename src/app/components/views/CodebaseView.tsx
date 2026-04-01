@@ -1035,6 +1035,7 @@ export function CodebaseView({
   if (!repoId) {
     return (
       <EmptyState
+        data-testid="codebase-empty"
         icon={<Code2 className="h-6 w-6 text-zinc-500" />}
         heading="No project connected"
         description="Connect a project to browse files, tests, and docs impacted by your tasks."
@@ -1043,7 +1044,7 @@ export function CodebaseView({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div data-testid="codebase-root" className="flex flex-col gap-5">
       <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -1062,7 +1063,7 @@ export function CodebaseView({
             </div>
 
             {normalizedContextPaths.length > 0 || normalizedTestPaths.length > 0 || normalizedDocPaths.length > 0 ? (
-              <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+              <div data-testid="codebase-scope-toggle" className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                 <button
                   onClick={() => setCodebaseScope("context")}
                   disabled={normalizedContextPaths.length === 0}
@@ -1170,7 +1171,7 @@ export function CodebaseView({
       </div>
 
       <div className="flex gap-4" style={{ minHeight: 500 }}>
-        <div className="w-80 shrink-0 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)] flex flex-col">
+        <div data-testid="codebase-file-tree" className="w-80 shrink-0 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)] flex flex-col">
           <div className="px-3 py-3 border-b border-white/6 text-[10px] text-zinc-500 uppercase tracking-[0.18em] font-medium flex items-center gap-2">
             <FolderTree className="w-3.5 h-3.5 text-cyan-400" />
             Files
@@ -1276,7 +1277,7 @@ export function CodebaseView({
           </div>
         </div>
 
-        <div className="sticky top-4 flex max-h-[calc(100vh-7rem)] min-w-0 flex-1 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)]">
+        <div data-testid="codebase-file-viewer" className="sticky top-4 flex max-h-[calc(100vh-7rem)] min-w-0 flex-1 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)]">
           {selectedPath && file ? (
             <>
               <div className="flex min-h-0 flex-1 flex-col">

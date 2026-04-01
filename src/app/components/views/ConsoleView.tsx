@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Check, ChevronDown, ChevronRight, Filter } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Filter, Terminal } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
 import type { ApiEventStream } from "../../lib/apiClient";
 import { getMissionConsoleV8, openMissionConsoleStreamV8, requestDependencyBootstrapV9 } from "../../lib/apiClient";
@@ -399,6 +399,7 @@ export function ConsoleView({
   if (!projectId) {
     return (
       <EmptyState
+        data-testid="console-empty"
         icon={<Terminal className="h-6 w-6 text-zinc-500" />}
         heading="No project connected"
         description="Connect a project to stream live execution, verification, and provider events."
@@ -421,7 +422,7 @@ export function ConsoleView({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div data-testid="console-root" className="flex flex-col gap-5">
       <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2 flex-wrap">
@@ -469,6 +470,7 @@ export function ConsoleView({
             ) : null}
             <div ref={filterRef} className="relative">
               <button
+                data-testid="console-filter-trigger"
                 type="button"
                 onClick={() => setFilterOpen((open) => !open)}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-zinc-300 transition hover:bg-white/[0.06]"
@@ -557,7 +559,7 @@ export function ConsoleView({
           <span className="ml-auto text-[10px] font-mono text-zinc-600">{query.isLoading ? "loading" : `${filtered.length} entries`}</span>
         </div>
 
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
+        <div data-testid="console-event-stream" ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
           {filtered.length === 0 ? (
             <div className="py-8 text-center">
               <div className="text-sm text-zinc-300">{query.isLoading ? "Loading event stream…" : "No real events yet for this view"}</div>

@@ -10,6 +10,8 @@ import {
   compactWithCircuitBreaker,
   emergencyCompact,
   compactWithMemory,
+  snipCompact,
+  computeCacheTopologyMap,
   type CompactionMessage,
 } from "./contextCompactionService";
 import { MemoryService } from "./memoryService";
@@ -48,6 +50,101 @@ function makeMessages(
 
   return messages;
 }
+
+// ---------------------------------------------------------------------------
+// snipCompact (stage 0 — zero-cost time-based pruning)
+// ---------------------------------------------------------------------------
+
+describe("snipCompact", () => {
+  it("skips when pressure is below minPressure", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ];
+    const result = snipCompact(msgs, 100_000);
+    expect(result.messages).toHaveLength(2);
+    expect(result.tokensAfter).toBe(result.tokensBefore);
+  });
+
+  it("preserves pinned messages regardless of position", () => {
+    const msgs: CompactionMessage[] = [];
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: "user", content: "x".repeat(500) });
+      msgs.push({ role: "assistant", content: "y".repeat(500) });
+    }
+    msgs[0].pinned = true;
+    const result = snipCompact(msgs, 2000);
+    expect(result.messages.some((m) => m.pinned)).toBe(true);
+  });
+
+  it("preserves system messages", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "You are a coding agent. ".repeat(50) },
+    ];
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: "user", content: "task ".repeat(100) });
+      msgs.push({ role: "assistant", content: "done ".repeat(100) });
+    }
+    const result = snipCompact(msgs, 3000);
+    expect(result.messages.some((m) => m.role === "system")).toBe(true);
+  });
+
+  it("keeps last N turns", () => {
+    const msgs: CompactionMessage[] = [];
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: "user", content: `user-${i} ${"x".repeat(200)}` });
+      msgs.push({ role: "assistant", content: `asst-${i} ${"y".repeat(200)}` });
+    }
+    const result = snipCompact(msgs, 3000, { protectedTailTurns: 3 });
+    expect(result.messages.length).toBeLessThan(msgs.length);
+    const lastUserContent = result.messages
+      .filter((m) => m.role === "user")
+      .map((m) => m.content);
+    expect(lastUserContent.some((c) => c.startsWith("user-19"))).toBe(true);
+    expect(lastUserContent.some((c) => c.startsWith("user-18"))).toBe(true);
+    expect(lastUserContent.some((c) => c.startsWith("user-17"))).toBe(true);
+  });
+
+  it("drops old non-pinned non-system messages beyond the window", () => {
+    const msgs: CompactionMessage[] = [];
+    for (let i = 0; i < 30; i++) {
+      msgs.push({ role: "user", content: `user-${i} ${"x".repeat(200)}` });
+      msgs.push({ role: "assistant", content: `asst-${i} ${"y".repeat(200)}` });
+    }
+    const result = snipCompact(msgs, 5000, { protectedTailTurns: 5 });
+    expect(result.messages.length).toBeLessThan(msgs.length);
+    expect(result.messages.some((m) => m.content.startsWith("user-0"))).toBe(false);
+  });
+
+  it("returns stage 0", () => {
+    const msgs: CompactionMessage[] = [];
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: "user", content: "x".repeat(300) });
+      msgs.push({ role: "assistant", content: "y".repeat(300) });
+    }
+    const result = snipCompact(msgs, 3000);
+    expect(result.stage).toBe(0);
+  });
+
+  it("compactMessages applies snip before stage 1", () => {
+    const msgs: CompactionMessage[] = [];
+    for (let i = 0; i < 25; i++) {
+      msgs.push({ role: "user", content: `old-task-${i} ${"x".repeat(200)}` });
+      msgs.push({ role: "assistant", content: `old-result-${i} ${"y".repeat(200)}` });
+    }
+    for (let i = 0; i < 5; i++) {
+      msgs.push({ role: "user", content: `recent-${i}` });
+      msgs.push({ role: "assistant", content: `done-${i}` });
+    }
+    const totalChars = msgs.reduce((s, m) => s + m.content.length, 0);
+    const totalTok = Math.ceil(totalChars / 4);
+    const maxCtx = Math.ceil(totalTok / 0.65);
+
+    const result = compactMessages(msgs, maxCtx);
+    expect(result.messages.length).toBeLessThan(msgs.length);
+    expect(result.messages.some((m) => m.content.startsWith("recent-4"))).toBe(true);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // estimateTokens
@@ -633,5 +730,45 @@ describe("compactWithMemory", () => {
 
     expect(result).not.toBeNull();
     expect(result!.messages.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeCacheTopologyMap
+// ---------------------------------------------------------------------------
+
+describe("computeCacheTopologyMap", () => {
+  it("marks first system message as cached", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ];
+    const map = computeCacheTopologyMap(msgs);
+    expect(map.get(0)!.inCachedRegion).toBe(true);
+  });
+
+  it("marks first user message as cached", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "first user msg" },
+      { role: "assistant", content: "reply" },
+    ];
+    const map = computeCacheTopologyMap(msgs);
+    expect(map.get(1)!.inCachedRegion).toBe(true);
+  });
+
+  it("marks later messages as non-cached", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "second" },
+      { role: "assistant", content: "reply2" },
+    ];
+    const map = computeCacheTopologyMap(msgs);
+    expect(map.get(2)!.inCachedRegion).toBe(false);
+    expect(map.get(3)!.inCachedRegion).toBe(false);
+    expect(map.get(4)!.inCachedRegion).toBe(false);
   });
 });

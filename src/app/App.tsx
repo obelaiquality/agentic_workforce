@@ -133,7 +133,7 @@ export default function App() {
     : { label: "Needs attention", className: "border-white/10 bg-white/[0.04] text-zinc-200" };
   return (
     <PreflightGate>
-      <div className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
+      <div data-testid="app-root" className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
         <style>{`
           .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
           .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
@@ -141,7 +141,7 @@ export default function App() {
           .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
         `}</style>
 
-        <header className="h-11 border-b border-white/5 bg-black/50 flex items-center px-4 justify-between z-50 shrink-0 relative">
+        <header data-testid="app-header" className="h-11 border-b border-white/5 bg-black/50 flex items-center px-4 justify-between z-50 shrink-0 relative">
           <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-purple-500/25 to-transparent" />
 
           <div className="flex items-center gap-5 min-w-0">
@@ -188,13 +188,14 @@ export default function App() {
                 tone="subtle"
                 className="border-0 bg-transparent p-0"
               />
-              <span>{headerStatus.label}</span>
+              <span data-testid="app-header-status">{headerStatus.label}</span>
             </div>
             <div ref={profileMenuRef} className="relative shrink-0">
               <button
                 type="button"
                 onClick={() => setProfileMenuOpen((open) => !open)}
                 className="relative flex items-center gap-1 rounded-full border border-white/12 bg-black/40 px-1 py-1 shadow-[0_0_14px_rgba(34,211,238,0.12)] overflow-hidden transition-all hover:border-cyan-400/30 hover:shadow-[0_0_16px_rgba(34,211,238,0.18)] focus:outline-none focus:ring-2 focus:ring-cyan-400/30"
+                data-testid="app-quick-settings-trigger"
                 aria-label="Open quick settings"
                 title="Open quick settings"
                 aria-expanded={profileMenuOpen}
@@ -233,7 +234,7 @@ export default function App() {
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          <aside className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0 transition-[width] duration-200">
+          <aside data-testid="app-sidebar" className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0 transition-[width] duration-200">
             <div className="p-2 flex flex-col gap-1 pt-3">
               {SIDEBAR_ITEMS.map((item) => (
                 <SidebarItem
@@ -242,6 +243,7 @@ export default function App() {
                   label={item.label}
                   active={sidebarSection === item.key}
                   onClick={() => setActiveSection(item.key)}
+                  testId={`sidebar-${item.key}`}
                 />
               ))}
             </div>
@@ -252,6 +254,7 @@ export default function App() {
                   <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Project</span>
                 </div>
                 <select
+                  data-testid="sidebar-project-selector"
                   value={mission.selectedRepo?.id || ""}
                   onChange={(event) => {
                     const repoId = event.target.value;
@@ -286,11 +289,12 @@ export default function App() {
                 label="Settings"
                 active={sidebarSection === "settings"}
                 onClick={() => setActiveSection("settings")}
+                testId="sidebar-settings"
               />
             </div>
           </aside>
 
-          <main className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
+          <main data-testid="app-main-content" className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
             {labsMode && (
               <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-300">
                 <span className="font-semibold uppercase tracking-wider">Labs</span>
@@ -424,15 +428,18 @@ function SidebarItem({
   label,
   active,
   onClick,
+  testId,
 }: {
   icon: React.ReactNode;
   label: string;
   active?: boolean;
   onClick?: () => void;
+  testId?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      data-testid={testId}
       className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-all duration-150 w-full group relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/20 ${
         active ? "bg-purple-500/10 text-purple-300" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
       }`}

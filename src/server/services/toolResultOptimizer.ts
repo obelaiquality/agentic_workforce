@@ -206,6 +206,49 @@ export function optimizeAndPersist(
   return optimizeToolOutput(output, toolType);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Cache topology awareness                                          */
+/* ------------------------------------------------------------------ */
+
+export interface CacheTopologyHint {
+  /** Index of the message in the conversation. */
+  messageIndex: number;
+  /** Whether this message is in the cached prefix region. */
+  inCachedRegion: boolean;
+  /** Whether this message has a cache breakpoint marker. */
+  hasCacheBreakpoint: boolean;
+}
+
+/**
+ * Cache-topology-aware tool result compaction.
+ *
+ * - Messages in the cached region are returned unchanged to preserve
+ *   the API's prompt cache prefix.
+ * - Messages at cache breakpoints keep first/last 200 chars as anchors
+ *   with the middle replaced by a summary marker.
+ * - Other messages are optimized normally.
+ */
+export function microCompactToolResult(
+  output: string,
+  toolType: 'shell' | 'file_read' | 'search' | 'build',
+  topology?: CacheTopologyHint,
+): string {
+  if (!topology) return optimizeToolOutput(output, toolType);
+
+  // Never touch messages in the cached prefix region
+  if (topology.inCachedRegion) return output;
+
+  // At cache breakpoints, preserve structure with anchor text
+  if (topology.hasCacheBreakpoint && output.length > 500) {
+    const head = output.slice(0, 200);
+    const tail = output.slice(-200);
+    const omitted = output.length - 400;
+    return `${head}\n[cache-anchored: ${omitted} chars omitted]\n${tail}`;
+  }
+
+  return optimizeToolOutput(output, toolType);
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

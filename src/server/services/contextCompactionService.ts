@@ -152,6 +152,68 @@ function applyEmergency(messages: CompactionMessage[]): CompactionMessage[] {
 }
 
 // ---------------------------------------------------------------------------
+// Stage 0: Snip compact (zero-cost time-based pruning)
+// ---------------------------------------------------------------------------
+
+export interface SnipCompactOptions {
+  /** Number of recent turns (user+assistant pairs) to always keep. Default 10. */
+  protectedTailTurns?: number;
+  /** Pressure threshold below which snip is skipped. Default 0.5. */
+  minPressure?: number;
+}
+
+/**
+ * Zero-cost message pruning. Drops old messages beyond a sliding window
+ * without summarization or API calls. Preserves pinned and system messages.
+ */
+export function snipCompact(
+  messages: CompactionMessage[],
+  maxContextTokens: number,
+  options?: SnipCompactOptions,
+): CompactionResult {
+  const protectedTailTurns = options?.protectedTailTurns ?? 10;
+  const minPressure = options?.minPressure ?? 0.5;
+  const tokensBefore = totalTokens(messages);
+  const pressure = computePressure(messages, maxContextTokens);
+
+  if (pressure < minPressure) {
+    return { messages: [...messages], stage: 0, pressure, tokensBefore, tokensAfter: tokensBefore };
+  }
+
+  // Count turns from the end. A turn boundary = a user message.
+  // If fewer turns exist than protectedTailTurns, protect everything.
+  let turnCount = 0;
+  let protectedStartIndex = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      turnCount++;
+      if (turnCount >= protectedTailTurns) {
+        protectedStartIndex = i;
+        break;
+      }
+    }
+  }
+
+  // Keep: all pinned, all system, and everything from protectedStartIndex onward
+  const kept = messages.filter(
+    (m, i) => m.pinned || m.role === "system" || i >= protectedStartIndex,
+  );
+
+  if (kept.length === messages.length) {
+    return { messages: kept, stage: 0, pressure, tokensBefore, tokensAfter: tokensBefore };
+  }
+
+  const tokensAfter = totalTokens(kept);
+  return {
+    messages: kept,
+    stage: 0,
+    pressure: computePressure(kept, maxContextTokens),
+    tokensBefore,
+    tokensAfter,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main compaction entry point
 // ---------------------------------------------------------------------------
 
@@ -176,6 +238,23 @@ export function compactMessages(
   let current = [...messages];
   let pressure = computePressure(current, maxContextTokens);
   let appliedStage = 0;
+
+  // Stage 0: snip compact — zero-cost pruning of old messages
+  const snipResult = snipCompact(current, maxContextTokens);
+  if (snipResult.tokensAfter < snipResult.tokensBefore) {
+    current = snipResult.messages;
+    pressure = snipResult.pressure;
+    // If snip alone brought pressure below stage 1 threshold, return early
+    if (pressure < stages[0].threshold) {
+      return {
+        messages: current,
+        stage: 0,
+        pressure,
+        tokensBefore,
+        tokensAfter: totalTokens(current),
+      };
+    }
+  }
 
   if (pressure < stages[0].threshold) {
     return {
@@ -288,13 +367,43 @@ export function compactWithMemory(
   memoryService: MemoryService,
   tracker?: CompactionTracker,
 ): CompactionResult | null {
-  const pressure = computePressure(messages, maxContextTokens);
+  let currentMessages = [...messages];
+
+  // Stage 0: snip compact with memory extraction for dropped messages
+  const snipResult = snipCompact(currentMessages, maxContextTokens);
+  if (snipResult.tokensAfter < snipResult.tokensBefore) {
+    const droppedAssistant = currentMessages.filter(
+      (m) => !snipResult.messages.includes(m) && m.role === "assistant",
+    );
+    if (droppedAssistant.length > 0) {
+      const keywords = ["decision:", "result:", "output:", "conclusion:", "error:", "fix:"];
+      const extractedLines: string[] = [];
+      for (const msg of droppedAssistant) {
+        const lines = msg.content.split("\n");
+        const keyLines = lines.filter((line) =>
+          keywords.some((kw) => line.toLowerCase().includes(kw)),
+        );
+        extractedLines.push(...keyLines.slice(0, 3));
+      }
+      if (extractedLines.length > 0) {
+        memoryService.commitCompactionSummary({
+          droppedMessageCount: droppedAssistant.length,
+          stage: 0,
+          pressure: snipResult.pressure,
+          sessionContext: extractedLines.slice(0, 5).join("; "),
+        });
+      }
+    }
+    currentMessages = snipResult.messages;
+  }
+
+  const pressure = computePressure(currentMessages, maxContextTokens);
 
   // If we're going to compact at stage 2+ (reasoning compression),
   // extract summaries from the content that will be dropped
   if (pressure >= 0.8) {
-    const len = messages.length;
-    const droppableAssistant = messages.filter(
+    const len = currentMessages.length;
+    const droppableAssistant = currentMessages.filter(
       (m, i) => !m.pinned && m.role === "assistant" && i < len - 3,
     );
 
@@ -324,8 +433,8 @@ export function compactWithMemory(
 
   // Proceed with normal compaction (with or without circuit breaker)
   const result = tracker
-    ? compactWithCircuitBreaker(messages, maxContextTokens, tracker)
-    : compactMessages(messages, maxContextTokens);
+    ? compactWithCircuitBreaker(currentMessages, maxContextTokens, tracker)
+    : compactMessages(currentMessages, maxContextTokens);
 
   // Post-compaction file recovery: restore recently accessed files after stage 2+
   if (result && result.stage >= 2) {
@@ -387,4 +496,38 @@ function restoreRecentFiles(
 /** Reset recent file accesses (for testing). */
 export function resetFileAccesses(): void {
   recentFileAccesses.length = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Cache topology estimation
+// ---------------------------------------------------------------------------
+
+import type { CacheTopologyHint } from "./toolResultOptimizer";
+
+/**
+ * Estimate which messages are in the API's cached prefix region.
+ * System prompts and the first user message are typically cached;
+ * modifying them breaks the cache prefix and causes cost spikes.
+ */
+export function computeCacheTopologyMap(
+  messages: CompactionMessage[],
+): Map<number, CacheTopologyHint> {
+  const map = new Map<number, CacheTopologyHint>();
+  let firstUserSeen = false;
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const isSystem = msg.role === "system";
+    const isFirstUser = msg.role === "user" && !firstUserSeen;
+
+    if (isFirstUser) firstUserSeen = true;
+
+    map.set(i, {
+      messageIndex: i,
+      inCachedRegion: isSystem || isFirstUser,
+      hasCacheBreakpoint: msg.pinned === true,
+    });
+  }
+
+  return map;
 }

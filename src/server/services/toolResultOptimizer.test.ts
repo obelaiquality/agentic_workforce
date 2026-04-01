@@ -11,6 +11,7 @@ import {
   optimizeToolOutput,
   persistLargeResult,
   optimizeAndPersist,
+  microCompactToolResult,
 } from './toolResultOptimizer';
 
 /* ------------------------------------------------------------------ */
@@ -472,3 +473,54 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/* ------------------------------------------------------------------ */
+/*  microCompactToolResult (cache topology awareness)                 */
+/* ------------------------------------------------------------------ */
+
+describe('microCompactToolResult', () => {
+  it('returns output unchanged when in cached region', () => {
+    const output = 'x'.repeat(500);
+    const result = microCompactToolResult(output, 'shell', {
+      messageIndex: 0,
+      inCachedRegion: true,
+      hasCacheBreakpoint: false,
+    });
+    expect(result).toBe(output);
+  });
+
+  it('preserves anchors at cache breakpoint', () => {
+    const output = 'HEAD'.repeat(50) + 'MIDDLE'.repeat(100) + 'TAIL'.repeat(50);
+    const result = microCompactToolResult(output, 'shell', {
+      messageIndex: 5,
+      inCachedRegion: false,
+      hasCacheBreakpoint: true,
+    });
+    expect(result).toContain('HEAD');
+    expect(result).toContain('TAIL');
+    expect(result).toContain('cache-anchored');
+    expect(result.length).toBeLessThan(output.length);
+  });
+
+  it('applies normal optimization for non-cached messages', () => {
+    // Create output > 100 lines to trigger shell optimization
+    const lines = Array.from({ length: 120 }, (_, i) => `line ${i}`);
+    const output = lines.join('\n');
+    const result = microCompactToolResult(output, 'shell', {
+      messageIndex: 10,
+      inCachedRegion: false,
+      hasCacheBreakpoint: false,
+    });
+    expect(result).toContain('truncated');
+    expect(result.length).toBeLessThan(output.length);
+  });
+
+  it('handles empty output gracefully', () => {
+    const result = microCompactToolResult('', 'shell', {
+      messageIndex: 0,
+      inCachedRegion: false,
+      hasCacheBreakpoint: false,
+    });
+    expect(result).toBe('');
+  });
+});

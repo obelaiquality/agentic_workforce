@@ -976,6 +976,7 @@ export function SettingsControlView() {
             { key: "advanced" as const, label: "Advanced" },
           ]).map((item) => (
             <button
+              data-testid={`settings-view-${item.key}`}
               key={item.key}
               onClick={() => setView(item.key)}
               className={`px-4 py-2 rounded-md text-xs font-medium transition-colors ${view === item.key ? "bg-white/[0.08] text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}`}
@@ -1000,7 +1001,7 @@ export function SettingsControlView() {
           }
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <Panel>
+            <Panel data-testid="settings-runtime-mode">
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-white">Runtime Mode</div>
@@ -1032,7 +1033,7 @@ export function SettingsControlView() {
               </div>
             </Panel>
 
-            <Panel>
+            <Panel data-testid="settings-api-keys">
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-white">API Keys</div>
@@ -1074,7 +1075,7 @@ export function SettingsControlView() {
               </div>
             </Panel>
 
-            <Panel>
+            <Panel data-testid="settings-active-profile">
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-white">Active Profile</div>

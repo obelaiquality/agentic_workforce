@@ -13,6 +13,14 @@ import { ProviderFactory } from "../providers/factory";
 import { estimateNextUsableAt } from "./quotaEstimator";
 import { emergencyCompact, type CompactionMessage } from "./contextCompactionService";
 import { ModelInferenceError, shortErrorStack } from "../errors";
+import {
+  createDetectorState,
+  recordObservation,
+  detectBreak,
+  resetBaseline,
+  markCompaction,
+  type CacheBreakDetectorState,
+} from "./promptCacheBreakDetector";
 
 /** Query source classification for retry behavior. */
 export type QuerySource = "execution" | "verification" | "context_building" | "reporting";
@@ -110,6 +118,8 @@ interface StreamResult {
 }
 
 export class ProviderOrchestrator {
+  private cacheBreakState: CacheBreakDetectorState = createDetectorState();
+
   constructor(private readonly factory: ProviderFactory) {}
 
   getProviderAdapter(providerId: ProviderId) {
@@ -479,6 +489,19 @@ export class ProviderOrchestrator {
         modelRole: options?.modelRole || null,
         previousResponseId: session?.previousResponseId || null,
       });
+
+      // Record cache observation for break detection
+      if (usage) {
+        const cacheReadTokens = (usage as Record<string, unknown>).cacheReadInputTokens as number | undefined;
+        if (cacheReadTokens !== undefined) {
+          recordObservation(this.cacheBreakState, cacheReadTokens);
+          const breakEvent = detectBreak(this.cacheBreakState, cacheReadTokens);
+          if (breakEvent) {
+            publishEvent("global", "cache.break.detected", breakEvent);
+          }
+        }
+      }
+
       return {
         text,
         accountId: "",
@@ -724,8 +747,12 @@ export class ProviderOrchestrator {
             stage: compacted.stage,
           });
 
+          markCompaction(this.cacheBreakState);
+
           try {
-            return await this.streamChat(sessionId, compactedMessages, onToken, options);
+            const result = await this.streamChat(sessionId, compactedMessages, onToken, options);
+            resetBaseline(this.cacheBreakState);
+            return result;
           } catch (retryError) {
             lastError = retryError;
             break;

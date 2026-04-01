@@ -33,9 +33,9 @@ export function Chip({
   );
 }
 
-export function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
+export function Panel({ children, className, "data-testid": dataTestId }: { children: React.ReactNode; className?: string; "data-testid"?: string }) {
   return (
-    <section className={cn("bg-[#121214] border border-white/10 rounded-xl overflow-hidden shadow-2xl shadow-black/50 flex flex-col", className)}>
+    <section data-testid={dataTestId} className={cn("bg-[#121214] border border-white/10 rounded-xl overflow-hidden shadow-2xl shadow-black/50 flex flex-col", className)}>
       {children}
     </section>
   );
