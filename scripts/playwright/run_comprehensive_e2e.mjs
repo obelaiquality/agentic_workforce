@@ -26,7 +26,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron } from "playwright-core";
 
-const root = "/Users/neilslab/agentic_workforce";
+const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.join(root, "output", "playwright", `comprehensive-e2e-${timestamp}`);
 

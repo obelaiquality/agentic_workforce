@@ -25,7 +25,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron } from "playwright-core";
 import { loadLocalEnv, resolveE2eRuntimePreset } from "./env-utils.mjs";
 
-const root = "/Users/neilslab/agentic_workforce";
+const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 loadLocalEnv(root);
 const scenarioArg = process.argv.find((_, i, arr) => arr[i - 1] === "--scenario") || "status-badge";
 const runtimePreset = resolveE2eRuntimePreset("openai_all");

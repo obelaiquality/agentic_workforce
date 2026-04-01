@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron } from "playwright-core";
 import { loadLocalEnv, resolveE2eRuntimePreset } from "./env-utils.mjs";
 
-const root = "/Users/neilslab/agentic_workforce";
+const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 loadLocalEnv(root);
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.join(root, "output", "playwright", `local-attach-existing-${timestamp}`);
