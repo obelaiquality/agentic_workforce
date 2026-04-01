@@ -11,6 +11,23 @@ The format follows a simple release structure:
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-01
+
+### Added
+- Snip compact: zero-cost time-based message pruning at 50% context pressure, applied before expensive compaction stages.
+- File staleness detection: read-time tracking in FileStateCache with content-hash fallback for cloud sync false positives.
+- Prompt cache break detection: EMA-based baseline tracking with cause diagnosis (system prompt changed, tool schema changed, compaction occurred).
+- Hierarchical abort controllers: WeakRef-based parent-child abort cascade with isolated child abort and clean GC.
+- Quote preservation in edits: curly/smart quote style detection and preservation when edits match via quote normalization.
+- Micro-compact cache topology awareness: skip cached-region messages during tool result optimization to preserve API cache prefix.
+- Comprehensive Electron E2E UI test suite: 6 Playwright scripts (navigation smoke, settings deep, projects deep, work deep, codebase deep, console deep) with 47 assertions across all 5 sidebar views.
+- data-testid instrumentation across all view components (App, Settings, Console, Codebase, Projects, Work) for stable E2E selectors.
+- Panel component now forwards data-testid prop.
+- 60 new unit tests (918 total across 57 files).
+
+### Fixed
+- Missing Terminal icon import in ConsoleView that caused React crash on navigation.
+
 ## [1.0.0] - 2026-03-29
 
 ### Added
