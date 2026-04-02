@@ -225,6 +225,18 @@ export class OpenAiResponsesAdapter implements LlmProviderAdapter {
           effort: reasoningEffort,
         },
         stream,
+        ...(input.tools && input.tools.length > 0
+          ? {
+              tools: input.tools.map((tool) => ({
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                },
+              })),
+            }
+          : {}),
       },
     };
   }

@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { createLogger } from "../logger";
 import { safeWriteFile } from "./executionService";
+
+const log = createLogger("Memory");
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -119,6 +122,9 @@ export class MemoryService {
   private working: WorkingMemoryMessage[] = [];
   private config: MemoryConfig;
   private memoryDirAbsolute: string;
+
+  /** In-flight prefetch cache for async memory loading */
+  private prefetchCache = new Map<string, Promise<EpisodicMemory[]>>();
 
   constructor(projectRoot: string, config?: Partial<MemoryConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -390,5 +396,170 @@ export class MemoryService {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
+  }
+
+  // ── Async Prefetch ────────────────────────────────────────────────────
+
+  /**
+   * Start async prefetch of relevant memories.
+   * Call this early (e.g., when starting a run, before streaming) — it runs in background.
+   *
+   * Prefetch is non-blocking: fire and forget, await later with awaitPrefetch().
+   * Errors in prefetch are caught and logged, preventing crashes.
+   *
+   * @param input - Run context for memory loading
+   */
+  startPrefetch(input: {
+    runId: string;
+    objective: string;
+    activeFiles?: string[];
+  }): void {
+    const key = input.runId;
+
+    // Already prefetching for this run
+    if (this.prefetchCache.has(key)) {
+      return;
+    }
+
+    // Start async load in background
+    const prefetchPromise = this.loadEpisodicMemoriesAsync(input).catch((err) => {
+      log.error(`Prefetch failed for run ${input.runId}:`, err);
+      // Return empty array on error to prevent crashes
+      return [] as EpisodicMemory[];
+    });
+
+    this.prefetchCache.set(key, prefetchPromise);
+  }
+
+  /**
+   * Await prefetched memories. If prefetch wasn't started, falls back to sync load.
+   *
+   * @param runId - The run identifier
+   * @returns Array of relevant episodic memories
+   */
+  async awaitPrefetch(runId: string): Promise<EpisodicMemory[]> {
+    const cached = this.prefetchCache.get(runId);
+
+    if (cached) {
+      const result = await cached;
+      this.prefetchCache.delete(runId); // Clean up after consumption
+      return result;
+    }
+
+    // Fallback: prefetch wasn't started, load synchronously
+    // This ensures awaitPrefetch() always works, even if startPrefetch() wasn't called
+    log.warn(`awaitPrefetch called for ${runId} without prior startPrefetch — loading synchronously`);
+    return this.loadEpisodicMemoriesAsync({ runId, objective: "" });
+  }
+
+  /**
+   * Cancel a prefetch (e.g., on run abort).
+   * Cleans up the prefetch cache entry without awaiting the promise.
+   *
+   * @param runId - The run identifier
+   */
+  cancelPrefetch(runId: string): void {
+    this.prefetchCache.delete(runId);
+  }
+
+  /**
+   * Internal: async memory loading implementation.
+   * Loads relevant episodic memories based on objective and active files.
+   *
+   * This is separated from getRelevantEpisodicMemories() to support async prefetch.
+   */
+  private async loadEpisodicMemoriesAsync(input: {
+    runId: string;
+    objective: string;
+    activeFiles?: string[];
+  }): Promise<EpisodicMemory[]> {
+    // Ensure episodic memory is loaded from disk
+    if (this.episodic.length === 0) {
+      this.loadEpisodicMemory();
+    }
+
+    // If no objective provided (fallback case), return all memories up to topK
+    if (!input.objective || input.objective.trim() === "") {
+      return this.episodic.slice(-this.config.relevanceTopK);
+    }
+
+    // Score memories by relevance to objective
+    const queryTokens = tokenize(input.objective);
+
+    // Include active files in query if provided
+    if (input.activeFiles && input.activeFiles.length > 0) {
+      const fileTokens = input.activeFiles.flatMap((f) => tokenize(f));
+      queryTokens.push(...fileTokens);
+    }
+
+    const scored = this.episodic.map((mem) => {
+      const memTokens = tokenize(mem.taskDescription + " " + mem.summary);
+
+      // Also score based on key files overlap
+      let fileBoost = 0;
+      if (input.activeFiles && input.activeFiles.length > 0) {
+        const activeFileSet = new Set(input.activeFiles);
+        const matchingFiles = mem.keyFiles.filter((f) => activeFileSet.has(f));
+        fileBoost = matchingFiles.length > 0 ? 0.3 : 0;
+      }
+
+      const similarity = cosineSimilarity(queryTokens, memTokens);
+      const decay = temporalDecay(mem.createdAt);
+      const score = similarity * decay + fileBoost;
+
+      return { mem, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+
+    return scored.slice(0, this.config.relevanceTopK).map((s) => s.mem);
+  }
+
+  /**
+   * Format memories as a system prompt section.
+   * Use this to inject prefetched memories into the LLM prompt.
+   *
+   * @param memories - Array of episodic memories to format
+   * @returns Formatted string for system prompt, or empty string if no memories
+   */
+  formatMemoriesForPrompt(memories: EpisodicMemory[]): string {
+    if (memories.length === 0) {
+      return "";
+    }
+
+    const formatted = memories
+      .map((m, i) => {
+        const age = memoryAgeLabel(m.createdAt);
+        const stale = memoryAgeDays(m.createdAt) > 7;
+        const outcomeTag = m.outcome === "failure" ? " [FAILED]" : m.outcome === "partial" ? " [PARTIAL]" : "";
+
+        let line = `${i + 1}. (${age}${outcomeTag}) ${m.summary}`;
+
+        if (m.lessons.length > 0) {
+          line += ` — Lessons: ${m.lessons.join("; ")}`;
+        }
+
+        if (stale) {
+          line += " [Note: this memory may be outdated — verify against current code]";
+        }
+
+        return line;
+      })
+      .join("\n");
+
+    return `## Relevant Past Experiences\n${formatted}`;
+  }
+
+  /**
+   * Get prefetch cache stats (for debugging/monitoring).
+   */
+  getPrefetchStats(): {
+    inFlightCount: number;
+    runIds: string[];
+  } {
+    return {
+      inFlightCount: this.prefetchCache.size,
+      runIds: Array.from(this.prefetchCache.keys()),
+    };
   }
 }

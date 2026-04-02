@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import type {
+  AgenticEvent,
   ChannelEventRecord,
   ChatMessageDto,
   ChatSessionDto,
@@ -31,6 +32,7 @@ import { RepoService } from "./repoService";
 import { RouterService } from "./routerService";
 import { TicketService } from "./ticketService";
 import { V2QueryService } from "./v2QueryService";
+import { SubtaskService, createPrismaSubtaskPersistence } from "./subtaskService";
 
 interface GetSnapshotInput {
   projectId?: string | null;
@@ -193,6 +195,404 @@ function buildTimeline(commands: V2CommandLogItem[], approvals: V2PolicyPendingI
     .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
     .slice(0, 24)
     .reverse();
+}
+
+function mapAgenticTimelineEvent(row: { id: string; kind: string; payload: unknown; createdAt: Date }) {
+  const payload = toRecord(row.payload);
+  const event = toRecord(payload.event);
+  const taskId =
+    (typeof payload.ticketId === "string" ? payload.ticketId : null) ||
+    (typeof payload.ticket_id === "string" ? payload.ticket_id : null) ||
+    undefined;
+
+  let phase: MissionControlSnapshot["runPhase"] = "parallel_running";
+  let severity: "INFO" | "WARNING" | "ERROR" = "INFO";
+  let message = row.kind.replace(/_/g, " ");
+
+  switch (row.kind) {
+    case "tool_approval_needed":
+      phase = "single_task_validation";
+      severity = "WARNING";
+      message = typeof event.message === "string" ? event.message : "Agentic tool approval required.";
+      break;
+    case "tool_denied":
+    case "doom_loop_detected":
+    case "budget_warning":
+      severity = "WARNING";
+      message = typeof event.reason === "string" ? event.reason : message;
+      break;
+    case "execution_aborted":
+    case "error":
+      phase = "error";
+      severity = "ERROR";
+      message =
+        (typeof event.reason === "string" ? event.reason : null) ||
+        (typeof event.error === "string" ? event.error : null) ||
+        "Agentic execution failed.";
+      break;
+    case "execution_complete":
+      phase = "completed";
+      message = typeof event.finalMessage === "string" ? summarize(event.finalMessage, 96) : "Agentic execution completed.";
+      break;
+    case "context_compacted":
+      message = "Context compacted to keep the run moving.";
+      break;
+    case "escalating":
+      message =
+        typeof event.toRole === "string" ? `Escalated to ${event.toRole.replace(/_/g, " ")}.` : "Escalated agent role.";
+      break;
+    case "iteration_start":
+      message =
+        typeof event.iteration === "number" ? `Iteration ${event.iteration} started.` : "Agentic iteration started.";
+      break;
+    default:
+      message = summarize(message, 96);
+      break;
+  }
+
+  return {
+    id: row.id,
+    phase,
+    severity,
+    kind: `agentic.${row.kind}`,
+    timestamp: row.createdAt.toISOString(),
+    message,
+    task_id: taskId,
+  };
+}
+
+function buildAgenticRunSnapshot(input: {
+  runId: string;
+  ticketId: string | null;
+  projectId: string | null;
+  runSummary: ExecutionRunSummary | null;
+  rows: Array<{ id: string; runId: string | null; kind: string; payload: unknown; createdAt: Date }>;
+}): MissionControlSnapshot["agenticRun"] {
+  if (!input.runId) {
+    return null;
+  }
+
+  const recentEvents = input.rows
+    .slice(-12)
+    .map((row) => {
+      const payload = toRecord(row.payload);
+      const event = toRecord(payload.event);
+      return {
+        id: row.id,
+        runId: input.runId,
+        ticketId:
+          (typeof payload.ticketId === "string" ? payload.ticketId : null) ||
+          (typeof payload.ticket_id === "string" ? payload.ticket_id : null) ||
+          input.ticketId,
+        projectId:
+          (typeof payload.projectId === "string" ? payload.projectId : null) ||
+          (typeof payload.project_id === "string" ? payload.project_id : null) ||
+          input.projectId,
+        type: row.kind as AgenticEvent["type"],
+        createdAt: row.createdAt.toISOString(),
+        payload: event,
+      };
+    });
+
+  let iterationCount = 0;
+  let toolCallCount = 0;
+  let approvalCount = 0;
+  let deniedCount = 0;
+  let compactionCount = 0;
+  let doomLoopCount = 0;
+  let escalationCount = 0;
+  let thinkingTokenCount = 0;
+  let lastReason: string | null = null;
+  let latestRole = input.runSummary?.modelRole ?? null;
+  let lastAssistantText =
+    (typeof input.runSummary?.metadata?.final_message === "string" ? input.runSummary?.metadata?.final_message : null) ?? null;
+  const metadata = toRecord(input.runSummary?.metadata);
+  const budget = toRecord(metadata.budget);
+  const pendingToolCalls = new Map<string, { iteration: number; name: string; args: Record<string, unknown>; timestamp: string }>();
+  const toolCalls: NonNullable<MissionControlSnapshot["agenticRun"]>["toolCalls"] = [];
+  const compactionEvents: NonNullable<MissionControlSnapshot["agenticRun"]>["compactionEvents"] = [];
+  const escalations: NonNullable<MissionControlSnapshot["agenticRun"]>["escalations"] = [];
+  const doomLoops: NonNullable<MissionControlSnapshot["agenticRun"]>["doomLoops"] = [];
+  const skillEvents = new Map<string, NonNullable<MissionControlSnapshot["agenticRun"]>["skillEvents"][number]>();
+  const hookEvents: NonNullable<MissionControlSnapshot["agenticRun"]>["hookEvents"] = [];
+  const memoryExtractions: NonNullable<MissionControlSnapshot["agenticRun"]>["memoryExtractions"] = [];
+  const thinkingLog: string[] = [];
+  const tokenTimeline: Array<{ iteration: number; tokens: number; timestamp: string }> = [];
+  let phase = metadata.agentic_plan_phase === "planning" ||
+    metadata.agentic_plan_phase === "plan_review" ||
+    metadata.agentic_plan_phase === "executing" ||
+    metadata.agentic_plan_phase === "completed" ||
+    metadata.agentic_plan_phase === "failed" ||
+    metadata.agentic_plan_phase === "aborted"
+      ? metadata.agentic_plan_phase
+      : ("executing" as const);
+  const plan = metadata.agenticPlan && typeof metadata.agenticPlan === "object"
+    ? metadata.agenticPlan as NonNullable<MissionControlSnapshot["agenticRun"]>["plan"]
+    : null;
+
+  for (const row of input.rows) {
+    const payload = toRecord(row.payload);
+    const event = toRecord(payload.event);
+
+    if (row.kind === "iteration_start" && typeof event.iteration === "number") {
+      iterationCount = Math.max(iterationCount, event.iteration);
+    }
+    if (row.kind === "tool_use_started") {
+      toolCallCount += 1;
+      pendingToolCalls.set(String(event.id || row.id), {
+        iteration: iterationCount || 1,
+        name: typeof event.name === "string" ? event.name : row.kind,
+        args: toRecord(event.input),
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "tool_approval_needed") {
+      approvalCount += 1;
+      if (typeof event.message === "string") {
+        lastReason = event.message;
+      }
+      toolCalls.push({
+        id: typeof event.id === "string" ? event.id : row.id,
+        iteration: iterationCount || 1,
+        name: typeof event.name === "string" ? event.name : "unknown",
+        args: {},
+        result: {
+          type: "approval_required",
+          approvalId: typeof event.approvalId === "string" ? event.approvalId : "",
+          message: typeof event.message === "string" ? event.message : "Approval required",
+        },
+        policyDecision: "approval_required",
+        durationMs: 0,
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "tool_denied") {
+      deniedCount += 1;
+      toolCalls.push({
+        id: typeof event.id === "string" ? event.id : row.id,
+        iteration: iterationCount || 1,
+        name: typeof event.name === "string" ? event.name : "unknown",
+        args: {},
+        result: {
+          type: "error",
+          error: Array.isArray(event.reasons) ? event.reasons.join("; ") : "Denied by policy",
+        },
+        policyDecision: "deny",
+        durationMs: 0,
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "context_compacted") {
+      compactionCount += 1;
+      compactionEvents.push({
+        iteration: iterationCount || 1,
+        stage: typeof event.stage === "number" || typeof event.stage === "string" ? event.stage : "unknown",
+        tokensBefore: typeof event.tokensBefore === "number" ? event.tokensBefore : 0,
+        tokensAfter: typeof event.tokensAfter === "number" ? event.tokensAfter : 0,
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "doom_loop_detected") {
+      doomLoopCount += 1;
+      if (typeof event.reason === "string") {
+        lastReason = event.reason;
+      }
+      doomLoops.push({
+        iteration: iterationCount || 1,
+        reason: typeof event.reason === "string" ? event.reason : "Loop detected",
+        suggestion: typeof event.suggestion === "string" ? event.suggestion : "",
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "escalating") {
+      escalationCount += 1;
+      if (typeof event.toRole === "string") {
+        latestRole = event.toRole as ExecutionRunSummary["modelRole"];
+      }
+      escalations.push({
+        iteration: iterationCount || 1,
+        fromRole: event.fromRole as NonNullable<MissionControlSnapshot["agenticRun"]>["escalations"][number]["fromRole"],
+        toRole: event.toRole as NonNullable<MissionControlSnapshot["agenticRun"]>["escalations"][number]["toRole"],
+        reason: typeof event.reason === "string" ? event.reason : "",
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "execution_aborted" && typeof event.reason === "string") {
+      lastReason = event.reason;
+      phase = "aborted";
+    }
+    if (row.kind === "error" && typeof event.error === "string") {
+      lastReason = event.error;
+      phase = "failed";
+    }
+    if (row.kind === "execution_complete") {
+      if (typeof event.finalMessage === "string") {
+        lastAssistantText = event.finalMessage;
+      }
+      if (typeof event.totalIterations === "number") {
+        iterationCount = Math.max(iterationCount, event.totalIterations);
+      }
+      if (typeof event.totalToolCalls === "number") {
+        toolCallCount = Math.max(toolCallCount, event.totalToolCalls);
+      }
+      phase = "completed";
+    }
+    if (row.kind === "tool_result") {
+      const id = typeof event.id === "string" ? event.id : row.id;
+      const pending = pendingToolCalls.get(id);
+      const rawResult = toRecord(event.result);
+      toolCalls.push({
+        id,
+        iteration: pending?.iteration || iterationCount || 1,
+        name: typeof event.name === "string" ? event.name : pending?.name || "unknown",
+        args: pending?.args || {},
+        result:
+          rawResult.type === "success"
+            ? {
+                type: "success",
+                content: typeof rawResult.content === "string" ? rawResult.content : "",
+                metadata: toRecord(rawResult.metadata),
+              }
+            : rawResult.type === "approval_required"
+            ? {
+                type: "approval_required",
+                approvalId: typeof rawResult.approvalId === "string" ? rawResult.approvalId : "",
+                message: typeof rawResult.message === "string" ? rawResult.message : "",
+              }
+            : {
+                type: "error",
+                error: typeof rawResult.error === "string" ? rawResult.error : "Tool execution failed",
+                metadata: toRecord(rawResult.metadata),
+              },
+        policyDecision:
+          rawResult.type === "approval_required"
+            ? "approval_required"
+            : rawResult.type === "error" && rawResult.error?.toString().includes("denied by policy")
+            ? "deny"
+            : "allow",
+        durationMs: typeof event.durationMs === "number" ? event.durationMs : 0,
+        timestamp: row.createdAt.toISOString(),
+      });
+      pendingToolCalls.delete(id);
+    }
+    if (row.kind === "assistant_thinking" && typeof event.value === "string") {
+      thinkingLog.push(event.value);
+      thinkingTokenCount += Math.ceil(event.value.length / 4);
+    }
+    if (row.kind === "budget_warning") {
+      const consumed = typeof event.consumed === "number" ? event.consumed : null;
+      if (consumed !== null) {
+        tokenTimeline.push({
+          iteration: iterationCount || 1,
+          tokens: consumed,
+          timestamp: row.createdAt.toISOString(),
+        });
+      }
+    }
+    if (row.kind === "plan_started") phase = "planning";
+    if (row.kind === "plan_submitted") phase = "plan_review";
+    if (row.kind === "plan_approved") phase = "executing";
+    if (row.kind === "plan_rejected") phase = "failed";
+    if (row.kind === "plan_refine_requested" || row.kind === "plan_question_answered") phase = "planning";
+    if (row.kind === "skill_invoked") {
+      const id = typeof event.invocationId === "string" ? event.invocationId : row.id;
+      skillEvents.set(id, {
+        invocationId: id,
+        skillId: typeof event.skillId === "string" ? event.skillId : "",
+        skillName: typeof event.skillName === "string" ? event.skillName : "skill",
+        status: "running",
+        output: null,
+        childRunId: null,
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "skill_completed" || row.kind === "skill_failed") {
+      const id = typeof event.invocationId === "string" ? event.invocationId : row.id;
+      const current = skillEvents.get(id) || {
+        invocationId: id,
+        skillId: "",
+        skillName: "skill",
+        status: "running" as const,
+        output: null,
+        childRunId: null,
+        timestamp: row.createdAt.toISOString(),
+      };
+      skillEvents.set(id, {
+        ...current,
+        status: row.kind === "skill_completed" ? "completed" : "failed",
+        output:
+          typeof event.output === "string"
+            ? event.output
+            : typeof event.error === "string"
+            ? event.error
+            : null,
+      });
+    }
+    if (row.kind === "hook_executed") {
+      hookEvents.push({
+        hookId: typeof event.hookId === "string" ? event.hookId : "",
+        hookName: typeof event.hookName === "string" ? event.hookName : "hook",
+        eventType: (typeof event.eventType === "string" ? event.eventType : "Notification") as NonNullable<MissionControlSnapshot["agenticRun"]>["hookEvents"][number]["eventType"],
+        success: event.success === true,
+        output: null,
+        error: null,
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+    if (row.kind === "memory_extracted") {
+      memoryExtractions.push({
+        memoryId: typeof event.memoryId === "string" ? event.memoryId : row.id,
+        summary: typeof event.summary === "string" ? event.summary : "",
+        timestamp: row.createdAt.toISOString(),
+      });
+    }
+  }
+  const status =
+    input.runSummary?.status === "completed"
+      ? "completed"
+      : input.runSummary?.status === "aborted"
+      ? "aborted"
+      : input.runSummary?.status === "failed"
+      ? "failed"
+      : input.runSummary?.status
+      ? "running"
+      : "idle";
+
+  return {
+    runId: input.runId,
+    status,
+    phase,
+    plan,
+    iterationCount,
+    toolCallCount,
+    approvalCount,
+    deniedCount,
+    compactionCount,
+    doomLoopCount,
+    escalationCount,
+    thinkingTokenCount,
+    lastAssistantText,
+    lastReason,
+    latestRole,
+    budget: {
+      tokensConsumed: typeof metadata.total_tokens === "number" ? metadata.total_tokens : null,
+      maxTokens: typeof budget.maxTokens === "number" ? budget.maxTokens : null,
+      costUsdConsumed: typeof metadata.total_cost_usd === "number" ? metadata.total_cost_usd : null,
+      maxCostUsd: typeof budget.maxCostUsd === "number" ? budget.maxCostUsd : null,
+      iterationsConsumed: iterationCount || null,
+      maxIterations: typeof metadata.max_iterations === "number" ? metadata.max_iterations : null,
+      tokenTimeline,
+    },
+    recentEvents,
+    toolCalls,
+    compactionEvents,
+    escalations,
+    doomLoops,
+    skillEvents: Array.from(skillEvents.values()),
+    hookEvents,
+    memoryExtractions,
+    thinkingLog: thinkingLog.length > 0 ? thinkingLog.join("\n") : null,
+  };
 }
 
 function buildSpotlight(
@@ -569,7 +969,8 @@ export class MissionControlService {
     private readonly routerService: RouterService,
     private readonly contextService: ContextService,
     private readonly codeGraphService: CodeGraphService,
-    private readonly githubService: GitHubService
+    private readonly githubService: GitHubService,
+    private readonly dreamStatusProvider?: () => { running: boolean; lastDreamAt: string | null; dreamCount: number }
   ) {}
 
   private async autoHealStaleReviewTickets(repoId: string) {
@@ -698,7 +1099,7 @@ export class MissionControlService {
       : null;
     const runSummary = mapRunSummary(runProjection, persistedRoutingDecision);
 
-    const [workflowState, verification, shareReport, recentChannelAuditRows, recentSubagentRows] = await Promise.all([
+    const [workflowState, verification, shareReport, recentChannelAuditRows, recentSubagentRows, agenticRunRows] = await Promise.all([
       selectedTicket ? this.contextService.getWorkflowState(selectedTicket.id) : Promise.resolve(null),
       inferredRunId ? this.codeGraphService.getVerificationBundle(inferredRunId) : Promise.resolve(null),
       inferredRunId ? this.githubService.getShareReport(inferredRunId) : Promise.resolve(null as ShareableRunReport | null),
@@ -726,6 +1127,18 @@ export class MissionControlService {
             },
             orderBy: { createdAt: "desc" },
             take: 12,
+          })
+        : Promise.resolve([]),
+      inferredRunId
+        ? prisma.runEvent.findMany({
+            where: {
+              runId: inferredRunId,
+              kind: {
+                not: "subagent_activity",
+              },
+            },
+            orderBy: { createdAt: "asc" },
+            take: 120,
           })
         : Promise.resolve([]),
     ]);
@@ -769,7 +1182,10 @@ export class MissionControlService {
 
     const packFiles = contextPack?.files ?? [];
     const changedFiles = asStringArray(runSummary?.metadata?.changed_files);
-    const timeline = buildTimeline(commands, relevantApprovals);
+    const agenticTimeline = agenticRunRows.map(mapAgenticTimelineEvent);
+    const timeline = [...buildTimeline(commands, relevantApprovals), ...agenticTimeline]
+      .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
+      .slice(-36);
     const laneCounts = laneRows.reduce((map, lane) => {
       map.set(lane.ticketId, (map.get(lane.ticketId) ?? 0) + 1);
       return map;
@@ -902,6 +1318,13 @@ export class MissionControlService {
       codebaseFiles: buildCodebaseFiles(changedFiles, contextPack, runSummary?.modelRole || null),
       consoleLogs: buildConsoleLogs(commands, relevantApprovals),
       experimentalAutonomy,
+      agenticRun: buildAgenticRunSnapshot({
+        runId: inferredRunId || "",
+        ticketId: selectedTicket?.id || null,
+        projectId: project?.id || null,
+        runSummary,
+        rows: agenticRunRows,
+      }),
       approvals: buildApprovals(relevantApprovals, selectedTicket?.id || null),
       guidelines,
       projectState,
@@ -924,6 +1347,13 @@ export class MissionControlService {
               ? all.reduce((newest: { createdAt: string }, m: { createdAt: string }) =>
                   new Date(m.createdAt) > new Date(newest.createdAt) ? m : newest
                 ).createdAt
+              : null,
+            dreamStatus: this.dreamStatusProvider
+              ? {
+                  running: this.dreamStatusProvider().running,
+                  lastDreamAt: this.dreamStatusProvider().lastDreamAt,
+                  dreamCount: this.dreamStatusProvider().dreamCount,
+                }
               : null,
           };
         } catch (e) {
@@ -1014,6 +1444,9 @@ export class MissionControlService {
       : [];
 
     const comments = await this.ticketService.listTicketComments(ticket.id, 50);
+    const subtasks = await new SubtaskService(createPrismaSubtaskPersistence()).listSubtasks(ticket.id, {
+      includeCompleted: true,
+    });
 
     const activityNotes = ticketEvents
       .slice()
@@ -1054,6 +1487,7 @@ export class MissionControlService {
         changedFileChecks: snapshot.verification?.changedFileChecks ?? [],
       }),
       route: snapshot.selectedTicket?.id === ticket.id ? snapshot.routeSummary : null,
+      subtasks,
       executionProfileOverrideId: executionProfileOverrideId ?? null,
       executionProfileSnapshot:
         typeof executionProfileRecord.profileId === "string" && typeof executionProfileRecord.profileName === "string" && executionProfileStages.length

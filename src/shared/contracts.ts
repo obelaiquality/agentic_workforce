@@ -10,6 +10,193 @@ export type ExecutionMode = "single_agent" | "centralized_parallel" | "research_
 
 export type ProjectSourceKind = "local_attached" | "github_app_bound" | "managed_demo_pack";
 
+// ---------------------------------------------------------------------------
+// Agentic Execution Types (from src/server/tools/types.ts)
+// ---------------------------------------------------------------------------
+
+export type AgenticEvent =
+  | { type: "iteration_start"; iteration: number; messageCount: number }
+  | { type: "assistant_token"; value: string }
+  | { type: "assistant_thinking"; value: string }
+  | { type: "tool_use_started"; id: string; name: string; input: unknown }
+  | { type: "tool_result"; id: string; name: string; result: ToolResultDto; durationMs: number }
+  | { type: "tool_approval_needed"; id: string; name: string; approvalId: string; message: string }
+  | { type: "tool_denied"; id: string; name: string; reasons: string[] }
+  | { type: "context_compacted"; stage: number; tokensBefore: number; tokensAfter: number }
+  | { type: "doom_loop_detected"; reason: string; suggestion: string }
+  | { type: "escalating"; fromRole: ModelRole; toRole: ModelRole; reason: string }
+  | { type: "budget_warning"; consumed: number; limit: number; resource: "tokens" | "cost_usd" | "iterations" }
+  | { type: "loop_continuing"; reason: string }
+  | { type: "execution_complete"; finalMessage: string; totalIterations: number; totalToolCalls: number }
+  | { type: "execution_aborted"; reason: string }
+  | { type: "max_iterations_reached"; iterations: number }
+  | { type: "error"; error: string; recoverable: boolean }
+  | { type: "plan_started" }
+  | { type: "plan_submitted"; planContent: string }
+  | { type: "plan_approved"; reviewedBy: string }
+  | { type: "plan_rejected"; reason: string; reviewedBy: string }
+  | { type: "plan_refine_requested"; feedback: string }
+  | { type: "plan_question_asked"; questionId: string; question: string }
+  | { type: "plan_question_answered"; questionId: string; answer: string }
+  | { type: "skill_invoked"; skillId: string; skillName: string; invocationId: string }
+  | { type: "skill_completed"; invocationId: string; output: string }
+  | { type: "skill_failed"; invocationId: string; error: string }
+  | { type: "subtask_created"; subtaskId: string; title: string }
+  | { type: "subtask_updated"; subtaskId: string; status: string }
+  | { type: "hook_executed"; hookId: string; hookName: string; eventType: string; success: boolean }
+  | { type: "memory_extracted"; memoryId: string; summary: string };
+
+export interface AgenticRunEventRecord {
+  id: string;
+  runId: string;
+  ticketId: string | null;
+  projectId: string | null;
+  type: AgenticEvent["type"];
+  createdAt: string;
+  payload: Record<string, unknown>;
+}
+
+export type AgenticRunPhase = "planning" | "plan_review" | "executing" | "completed" | "failed" | "aborted";
+
+export interface AgenticRunPlan {
+  runId: string;
+  phase: AgenticRunPhase;
+  planContent: string | null;
+  questions: Array<{
+    id: string;
+    question: string;
+    answer: string | null;
+    askedAt: string;
+    answeredAt: string | null;
+  }>;
+  approved: boolean;
+  reviewedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgenticToolCallRecord {
+  id: string;
+  iteration: number;
+  name: string;
+  args: Record<string, unknown>;
+  result: ToolResultDto;
+  policyDecision: "allow" | "approval_required" | "deny";
+  durationMs: number;
+  timestamp: string;
+}
+
+export interface AgenticCompactionRecord {
+  iteration: number;
+  stage: number | string;
+  tokensBefore: number;
+  tokensAfter: number;
+  timestamp: string;
+}
+
+export interface AgenticEscalationRecord {
+  iteration: number;
+  fromRole: ModelRole;
+  toRole: ModelRole;
+  reason: string;
+  timestamp: string;
+}
+
+export interface AgenticDoomLoopRecord {
+  iteration: number;
+  reason: string;
+  suggestion: string;
+  timestamp: string;
+}
+
+export interface AgenticSkillEventRecord {
+  invocationId: string;
+  skillId: string;
+  skillName: string;
+  status: "running" | "completed" | "failed";
+  output: string | null;
+  childRunId: string | null;
+  timestamp: string;
+}
+
+export interface AgenticHookEventRecord {
+  hookId: string;
+  hookName: string;
+  eventType: HookEventType;
+  success: boolean;
+  output: string | null;
+  error: string | null;
+  timestamp: string;
+}
+
+export interface AgenticMemoryExtractionRecord {
+  memoryId: string;
+  summary: string;
+  timestamp: string;
+}
+
+export interface AgenticRunSnapshot {
+  runId: string;
+  status: "idle" | "running" | "completed" | "aborted" | "failed";
+  phase: AgenticRunPhase;
+  plan: AgenticRunPlan | null;
+  iterationCount: number;
+  toolCallCount: number;
+  approvalCount: number;
+  deniedCount: number;
+  compactionCount: number;
+  doomLoopCount: number;
+  escalationCount: number;
+  thinkingTokenCount: number;
+  lastAssistantText: string | null;
+  lastReason: string | null;
+  latestRole: ModelRole | null;
+  budget: {
+    tokensConsumed: number | null;
+    maxTokens: number | null;
+    costUsdConsumed: number | null;
+    maxCostUsd: number | null;
+    iterationsConsumed: number | null;
+    maxIterations: number | null;
+    tokenTimeline: Array<{ iteration: number; tokens: number; timestamp: string }>;
+  };
+  recentEvents: AgenticRunEventRecord[];
+  toolCalls: AgenticToolCallRecord[];
+  compactionEvents: AgenticCompactionRecord[];
+  escalations: AgenticEscalationRecord[];
+  doomLoops: AgenticDoomLoopRecord[];
+  skillEvents: AgenticSkillEventRecord[];
+  hookEvents: AgenticHookEventRecord[];
+  memoryExtractions: AgenticMemoryExtractionRecord[];
+  thinkingLog: string | null;
+}
+
+export type ToolResultDto =
+  | { type: "success"; content: string; metadata?: Record<string, unknown> }
+  | { type: "error"; error: string; metadata?: Record<string, unknown> }
+  | { type: "approval_required"; approvalId: string; message: string };
+
+export interface AgenticExecutionInput {
+  runId: string;
+  repoId: string;
+  ticketId: string;
+  projectId?: string;
+  objective: string;
+  worktreePath: string;
+  actor: string;
+  maxIterations?: number;
+  initialModelRole?: ModelRole;
+  providerId?: ProviderId;
+  budget?: {
+    maxTokens?: number;
+    maxCostUsd?: number;
+    maxDurationMs?: number;
+  };
+  useDeferredTools?: boolean;
+  systemPromptSuffix?: string;
+  planMode?: boolean;
+}
+
 export interface ProviderCapabilities {
   streaming: boolean;
   tools: boolean;
@@ -50,6 +237,7 @@ export interface ProviderSendInput {
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
   modelRole?: ModelRole;
   metadata?: Record<string, unknown>;
+  tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
 }
 
 export interface ProviderSendOutput {
@@ -66,6 +254,9 @@ export interface ProviderSendOutput {
 
 export type ProviderStreamEvent =
   | { type: "token"; value: string }
+  | { type: "thinking"; value: string }
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | { type: "tool_use_delta"; id: string; argumentsDelta: string }
   | { type: "session"; session: Partial<ProviderSession> }
   | { type: "done"; usage?: ProviderSendOutput["usage"] };
 
@@ -831,6 +1022,7 @@ export interface WorkflowTaskDetail {
   verificationFailures: string[];
   verificationCommand: string | null;
   route: MissionUiRouteSummary | null;
+  subtasks: WorkflowSubtask[];
   executionProfileOverrideId?: string | null;
   executionProfileSnapshot?: {
     profileId: string;
@@ -931,6 +1123,7 @@ export interface MissionControlSnapshot {
     channels: ChannelEventRecord[];
     subagents: SubagentActivityRecord[];
   };
+  agenticRun: AgenticRunSnapshot | null;
   approvals: MissionUiApprovalCard[];
   guidelines: RepoGuidelineProfile | null;
   projectState: RepoStateCapsule | null;
@@ -953,8 +1146,29 @@ export interface MissionControlSnapshot {
     failureCount: number;
     partialCount: number;
     newestCreatedAt: string | null;
+    dreamStatus?: {
+      running: boolean;
+      lastDreamAt: string | null;
+      dreamCount: number;
+    } | null;
   } | null;
   lastUpdatedAt: string | null;
+}
+
+export interface WorkflowSubtask {
+  id: string;
+  parentTicketId: string;
+  title: string;
+  description: string;
+  status: "backlog" | "in_progress" | "review" | "blocked" | "done";
+  priority: TicketPriority;
+  risk: TicketRisk;
+  dependencies: string[];
+  notes: string[];
+  blockedBy: string[];
+  blocked: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface RepoStateCapsule {
@@ -1124,6 +1338,48 @@ export interface ProviderBudgetState {
   requestCount: number;
   cooldownUntil: string | null;
   updatedAt: string;
+}
+
+export interface McpIntegrationServer {
+  id: string;
+  name: string;
+  transport: "stdio" | "sse";
+  command?: string;
+  args: string[];
+  url?: string;
+  envKeys: string[];
+  enabled: boolean;
+  connected: boolean;
+  toolCount: number;
+  resourceCount: number;
+  error?: string;
+  lastConnected?: string;
+  healthStatus?: "healthy" | "degraded" | "restarting" | "failed" | null;
+}
+
+export interface McpIntegrationResource {
+  serverId: string;
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface LspIntegrationServer {
+  language: string;
+  command: string[];
+  extensions: string[];
+  capabilities: {
+    diagnostics?: boolean;
+    definition?: boolean;
+    references?: boolean;
+    documentSymbol?: boolean;
+  };
+  binaryAvailable: boolean;
+  running: boolean;
+  initialized: boolean;
+  worktreePath: string | null;
+  processId: number | null;
 }
 
 export interface ModelRoleBinding {
@@ -1462,4 +1718,103 @@ export interface DistillReadinessStatus {
   blockers: number;
   warnings: number;
   checks: DistillReadinessCheck[];
+}
+
+// ---------------------------------------------------------------------------
+// Skills System
+// ---------------------------------------------------------------------------
+
+export type SkillContextMode = "inline" | "fork";
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  contextMode: SkillContextMode;
+  allowedTools: string[];
+  maxIterations: number | null;
+  systemPrompt: string;
+  referenceFiles: Array<{ path: string; purpose: string }>;
+  author: string;
+  tags: string[];
+  builtIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillInvocationRecord {
+  id: string;
+  skillId: string;
+  skillName: string;
+  runId: string;
+  projectId: string;
+  ticketId: string | null;
+  args: string | null;
+  status: "running" | "completed" | "failed";
+  output: string | null;
+  childRunId: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Hook System
+// ---------------------------------------------------------------------------
+
+export type HookEventType =
+  | "PreToolUse"
+  | "PostToolUse"
+  | "PostToolUseFailure"
+  | "PermissionRequest"
+  | "PreCompact"
+  | "PostCompact"
+  | "UserPromptSubmit"
+  | "SessionStart"
+  | "Notification";
+
+export type HookType = "Command" | "Prompt" | "Agent";
+
+export interface HookRecord {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  eventType: HookEventType;
+  hookType: HookType;
+  command: string | null;
+  promptTemplate: string | null;
+  agentObjective: string | null;
+  allowedTools: string[];
+  canOverride: boolean;
+  continueOnError: boolean;
+  timeoutMs: number;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HookExecutionLogRecord {
+  id: string;
+  hookId: string;
+  hookName: string;
+  runId: string;
+  eventType: HookEventType;
+  success: boolean;
+  output: string | null;
+  error: string | null;
+  durationMs: number;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Memory
+// ---------------------------------------------------------------------------
+
+export interface AutoMemoryConfig {
+  enabled: boolean;
+  extractAfterIterations: number;
+  maxTokensPerExtraction: number;
+  timeoutMs: number;
+  dreamIntervalHours: number;
 }

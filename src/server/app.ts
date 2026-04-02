@@ -1,11 +1,16 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import { createLogger } from "./logger";
 import { initDatabase } from "./db";
+
+const log = createLogger("App");
 import { seedIfEmpty, seedModelPluginRegistry, seedV2ReadModels } from "./bootstrap";
-import { ProviderFactory } from "./providers/factory";
+import { ProviderFactory, wrapWithToolEmulation } from "./providers/factory";
 import { QwenCliAdapter } from "./providers/qwenCliAdapter";
 import { OpenAiResponsesAdapter } from "./providers/openaiResponsesAdapter";
 import { OnPremQwenAdapter, OpenAiCompatibleAdapter } from "./providers/stubAdapters";
+import { createToolRegistry } from "./tools/registry";
+import { getAllCoreTools, createToolSearchTool } from "./tools/definitions";
 import { registerLegacyRoutes } from "./routes/legacyRoutes";
 import { registerChannelRoutes } from "./routes/channelRoutes";
 import { registerMissionRoutes } from "./routes/missionRoutes";
@@ -13,6 +18,11 @@ import { registerProjectRoutes } from "./routes/projectRoutes";
 import { registerRuntimeRoutes } from "./routes/runtimeRoutes";
 import { registerMemoryRoutes } from "./routes/memoryRoutes";
 import { registerSettingsRoutes } from "./routes/settingsRoutes";
+import { registerAgenticRoutes } from "./routes/agenticRoutes";
+import { registerTeamRoutes } from "./routes/teamRoutes";
+import { registerTelemetryRoutes } from "./routes/telemetryRoutes";
+import { registerSkillRoutes } from "./routes/skillRoutes";
+import { registerHookRoutes } from "./routes/hookRoutes";
 import {
   isAuthorizedLocalApiRequest,
   isAllowedCorsOrigin,
@@ -45,6 +55,21 @@ import { V2EventService } from "./services/v2EventService";
 import { V2QueryService } from "./services/v2QueryService";
 import { getSidecarClient } from "./sidecar/manager";
 import { sanitizeUnicode } from "./services/sensitiveRedaction";
+import { PermissionPolicyEngine } from "./permissions/policyEngine";
+import { DEFAULT_POLICIES } from "./permissions/defaultPolicies";
+import { SafetyClassifier } from "./permissions/safetyClassifier";
+import { ContextCollapseService } from "./execution/contextCollapse";
+import { createMCPServerRegistry } from "./mcp";
+import { loadPersistedMcpServerConfigs } from "./integrations/integrationSettings";
+import { getSharedLspClient, shutdownSharedLspClient } from "./lsp/sharedClient";
+import { SkillService, createPrismaSkillPersistence } from "./skills/skillService";
+import { HookService, createPrismaHookPersistence } from "./hooks/hookService";
+import { PlanService, createPrismaPlanPersistence } from "./plans/planService";
+import { SubtaskService, createPrismaSubtaskPersistence } from "./services/subtaskService";
+import { setSkillService } from "./tools/definitions/skill";
+import { setPlanService } from "./tools/definitions/planMode";
+import { setSubtaskService } from "./tools/definitions/taskDecomposition";
+import { DreamScheduler } from "./memory/dreamScheduler";
 
 export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   await initDatabase();
@@ -55,14 +80,45 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   await seedModelPluginRegistry();
 
   const providerFactory = new ProviderFactory();
-  providerFactory.register(new QwenCliAdapter());
-  providerFactory.register(new OpenAiCompatibleAdapter());
-  providerFactory.register(new OnPremQwenAdapter());
-  providerFactory.register(new OpenAiResponsesAdapter());
+  // Apply tool emulation wrapper to providers that don't natively support tools
+  providerFactory.register(wrapWithToolEmulation(new QwenCliAdapter()));
+  providerFactory.register(wrapWithToolEmulation(new OpenAiCompatibleAdapter()));
+  providerFactory.register(wrapWithToolEmulation(new OnPremQwenAdapter()));
+  providerFactory.register(wrapWithToolEmulation(new OpenAiResponsesAdapter()));
+
+  // Create and populate tool registry
+  const toolRegistry = createToolRegistry();
+  toolRegistry.registerAll(getAllCoreTools());
+  // Register tool_search (needs registry reference, so created after registry exists)
+  toolRegistry.register(createToolSearchTool(toolRegistry));
+  const mcpRegistry = createMCPServerRegistry();
+  await mcpRegistry.replaceServers(await loadPersistedMcpServerConfigs(), toolRegistry);
+  await mcpRegistry.connectAll(toolRegistry).catch((error) => {
+    log.error("MCP bootstrap failed:", error);
+  });
+  // Start health monitoring for all connected MCP servers
+  for (const server of mcpRegistry.getEnabledServers()) {
+    mcpRegistry.getClient().startHealthMonitor(server.id);
+  }
+  const lspClient = getSharedLspClient();
+
+  // Create permission policy engine with default policies
+  const policyEngine = new PermissionPolicyEngine();
+  for (const policy of DEFAULT_POLICIES) {
+    policyEngine.addPolicy(policy);
+  }
 
   const providerOrchestrator = new ProviderOrchestrator(providerFactory);
   const qwenAccountSetupService = new QwenAccountSetupService(providerOrchestrator);
   const ticketService = new TicketService();
+  const skillService = new SkillService(createPrismaSkillPersistence());
+  await skillService.initialize();
+  setSkillService(skillService);
+  const hookService = new HookService(createPrismaHookPersistence());
+  await hookService.initialize();
+  const planService = new PlanService(createPrismaPlanPersistence());
+  setPlanService(planService);
+  setSubtaskService(new SubtaskService(createPrismaSubtaskPersistence()));
   const chatService = new ChatService(providerOrchestrator);
   const channelService = new ChannelService(chatService);
   const approvalService = new ApprovalService();
@@ -74,6 +130,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   const inferenceTuningService = new InferenceTuningService(v2EventService);
   const distillService = new DistillService(sidecar, v2EventService);
   const contextService = new ContextService(v2EventService);
+  const contextCollapseService = new ContextCollapseService();
   const laneService = new LaneService(sidecar, v2EventService);
   const mergeService = new MergeService(v2EventService);
   const challengeService = new ChallengeService(v2EventService);
@@ -109,8 +166,98 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     };
   });
 
+  const safetyClassifier = new SafetyClassifier({ providerOrchestrator });
+  policyEngine.addHook({
+    phase: "post",
+    execute: async ({ tool, params, ctx, currentDecision }) => {
+      if (!ctx.ticketId) {
+        return { override: false };
+      }
+
+      const policy = await ticketService.getTicketExecutionPolicy(ctx.ticketId).catch(() => null);
+      if (!policy) {
+        return { override: false };
+      }
+
+      const reasons: string[] = [];
+      const requireApprovalFor = new Set(policy.requireApprovalFor);
+      const scope = tool.permission.scope;
+
+      const maybeCommand =
+        typeof params === "object" && params !== null
+          ? typeof (params as Record<string, unknown>).command === "string"
+            ? String((params as Record<string, unknown>).command)
+            : typeof (params as Record<string, unknown>).cmd === "string"
+            ? String((params as Record<string, unknown>).cmd)
+            : null
+          : null;
+
+      if (tool.name === "bash" && maybeCommand) {
+        const safety = await safetyClassifier.classifyCommand(maybeCommand);
+        if (safety === "dangerous") {
+          return {
+            override: true,
+            decision: {
+              decision: "deny",
+              requiresApproval: false,
+              reasons: ["Command classified as dangerous for this ticket."],
+              source: "policy",
+            },
+          };
+        }
+      }
+
+      if (policy.mode === "strict" && tool.permission.readOnly !== true) {
+        reasons.push("Strict ticket policy requires approval for non-read-only tools.");
+      }
+
+      if (scope === "repo.install" && !policy.allowInstallCommands) {
+        reasons.push("Ticket policy requires approval for install actions.");
+      }
+
+      if (scope === "network" && !policy.allowNetworkCommands) {
+        reasons.push("Ticket policy requires approval for network actions.");
+      }
+
+      if (requireApprovalFor.has("*") || requireApprovalFor.has(scope)) {
+        reasons.push(`Ticket policy requires approval for ${scope}.`);
+      }
+
+      if (reasons.length === 0) {
+        return { override: false };
+      }
+
+      if (currentDecision?.decision === "deny") {
+        return { override: false };
+      }
+
+      return {
+        override: true,
+        decision: {
+          decision: "approval_required",
+          requiresApproval: true,
+          reasons,
+          source: "policy",
+        },
+      };
+    },
+  });
+
   const projectBlueprintService = new ProjectBlueprintService();
   const repoService = new RepoService(v2EventService, codeGraphService, projectBlueprintService);
+  const dreamScheduler = new DreamScheduler({
+    intervalHours: 24,
+    getProjectWorktrees: async () => {
+      const repos = await repoService.listRepos();
+      return Promise.all(
+        repos.map(async (repo) => ({
+          projectId: repo.id,
+          worktreePath: await repoService.getActiveWorktreePath(repo.id),
+        })),
+      );
+    },
+  });
+  dreamScheduler.start();
   const commandEngine = new CommandEngine(ticketService);
   const executionService = new ExecutionService(
     v2EventService,
@@ -120,6 +267,12 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     repoService,
     codeGraphService,
     commandEngine,
+    policyEngine,
+    approvalService,
+    contextCollapseService,
+    hookService,
+    planService,
+    lspClient,
   );
   const githubService = new GitHubService(repoService);
   const projectScaffoldService = new ProjectScaffoldService(
@@ -138,6 +291,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
     contextService,
     codeGraphService,
     githubService,
+    () => ({
+      running: dreamScheduler.isRunning,
+      lastDreamAt: dreamScheduler.stats.lastDreamAt,
+      dreamCount: dreamScheduler.stats.dreamCount,
+    }),
   );
   const benchmarkService = new BenchmarkService(v2EventService, repoService, executionService);
   await benchmarkService.syncProjectManifests().catch(() => []);
@@ -254,9 +412,38 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   registerSettingsRoutes({
     app,
     channelService,
+    mcpRegistry,
+    toolRegistry,
+    lspClient,
   });
 
+  registerAgenticRoutes({
+    app,
+    toolRegistry,
+    executionService,
+    repoService,
+    ticketService,
+    planService,
+  });
+
+  registerSkillRoutes(app, skillService);
+  registerHookRoutes(app, hookService);
+  registerTeamRoutes({ app });
+  registerTelemetryRoutes(app);
+
   app.get("/health", async () => ({ ok: true }));
+
+  app.addHook("onClose", async () => {
+    // Stop MCP health monitors before shutting down connections
+    for (const server of mcpRegistry.getEnabledServers()) {
+      mcpRegistry.getClient().stopHealthMonitor(server.id);
+    }
+    await Promise.allSettled([
+      mcpRegistry.shutdown(),
+      shutdownSharedLspClient(),
+    ]);
+    dreamScheduler.stop();
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     app.log.error(error);

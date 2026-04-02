@@ -213,6 +213,18 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
           ? { response_format: { type: "json_object" } }
           : {}),
         ...(backend.id === "llama-cpp-openai" ? { cache_prompt: true } : {}),
+        ...(input.tools && input.tools.length > 0
+          ? {
+              tools: input.tools.map((tool) => ({
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                },
+              })),
+            }
+          : {}),
       },
     };
   }
@@ -311,6 +323,9 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
     // Longer than initial timeout since model may pause during reasoning.
     const chunkTimeoutMs = Math.max(config.timeoutMs, 60000);
 
+    // Track tool call accumulation by index
+    const toolCallBuffers = new Map<number, { id: string; name: string; argumentsBuffer: string }>();
+
     /**
      * Read a chunk with timeout. If the stream stalls (no data for chunkTimeoutMs),
      * throw so the caller can fall back to non-streaming or retry.
@@ -343,6 +358,21 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
 
           const data = trimmed.slice(5).trim();
           if (data === "[DONE]") {
+            // Finalize any incomplete tool calls
+            for (const [index, toolCall] of toolCallBuffers) {
+              try {
+                const parsedArgs = JSON.parse(toolCall.argumentsBuffer);
+                yield {
+                  type: "tool_use",
+                  id: toolCall.id,
+                  name: toolCall.name,
+                  input: parsedArgs,
+                };
+              } catch {
+                // Malformed tool call arguments — skip
+              }
+              toolCallBuffers.delete(index);
+            }
             yield { type: "done", usage };
             return;
           }
@@ -356,6 +386,70 @@ abstract class BaseOpenAiLikeAdapter implements LlmProviderAdapter {
                 const content = (delta as Record<string, unknown>).content;
                 if (typeof content === "string" && content) {
                   yield { type: "token", value: content };
+                }
+
+                // Handle tool calls in delta
+                const toolCalls = (delta as Record<string, unknown>).tool_calls;
+                if (Array.isArray(toolCalls)) {
+                  for (const toolCallChunk of toolCalls) {
+                    if (!toolCallChunk || typeof toolCallChunk !== "object") continue;
+
+                    const index = (toolCallChunk as Record<string, unknown>).index;
+                    if (typeof index !== "number") continue;
+
+                    const id = (toolCallChunk as Record<string, unknown>).id;
+                    const func = (toolCallChunk as Record<string, unknown>).function;
+
+                    if (id && typeof id === "string") {
+                      // New tool call starting
+                      const name = func && typeof func === "object"
+                        ? (func as Record<string, unknown>).name
+                        : "";
+                      if (typeof name === "string") {
+                        toolCallBuffers.set(index, {
+                          id: String(id),
+                          name,
+                          argumentsBuffer: "",
+                        });
+                      }
+                    }
+
+                    if (func && typeof func === "object") {
+                      const args = (func as Record<string, unknown>).arguments;
+                      if (typeof args === "string" && args) {
+                        const existing = toolCallBuffers.get(index);
+                        if (existing) {
+                          existing.argumentsBuffer += args;
+                          // Emit delta event
+                          yield {
+                            type: "tool_use_delta",
+                            id: existing.id,
+                            argumentsDelta: args,
+                          };
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Check for finish_reason to finalize tool calls
+              const finishReason = (choice as Record<string, unknown>).finish_reason;
+              if (finishReason === "tool_calls") {
+                // Finalize all buffered tool calls
+                for (const [index, toolCall] of toolCallBuffers) {
+                  try {
+                    const parsedArgs = JSON.parse(toolCall.argumentsBuffer);
+                    yield {
+                      type: "tool_use",
+                      id: toolCall.id,
+                      name: toolCall.name,
+                      input: parsedArgs,
+                    };
+                  } catch {
+                    // Malformed tool call arguments — skip
+                  }
+                  toolCallBuffers.delete(index);
                 }
               }
             }
@@ -618,6 +712,18 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
           ? { response_format: { type: "json_object" } }
           : {}),
         ...(backend.id === "llama-cpp-openai" ? { cache_prompt: true } : {}),
+        ...(input.tools && input.tools.length > 0
+          ? {
+              tools: input.tools.map((tool) => ({
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                },
+              })),
+            }
+          : {}),
         metadata: {
           plugin_id: plugin.id,
           hf_repo: plugin.hfRepo,

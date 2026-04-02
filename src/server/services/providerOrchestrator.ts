@@ -6,6 +6,7 @@ import type {
   ProviderId,
   ProviderSendInput,
   ProviderSession,
+  ProviderStreamEvent,
 } from "../../shared/contracts";
 import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
@@ -21,6 +22,7 @@ import {
   markCompaction,
   type CacheBreakDetectorState,
 } from "./promptCacheBreakDetector";
+import { getTelemetry } from "../telemetry/tracer";
 
 /** Query source classification for retry behavior. */
 export type QuerySource = "execution" | "verification" | "context_building" | "reporting";
@@ -30,6 +32,29 @@ const FOREGROUND_SOURCES = new Set<QuerySource>(["execution", "verification", "c
 
 const BASE_RETRY_DELAY_MS = 500;
 const MAX_RETRIES = 3;
+
+/** Context overflow floor — never reduce below this many tokens. */
+const CONTEXT_OVERFLOW_FLOOR = 3000;
+
+/** Factor by which to shrink maxContextTokens on a 400 overflow. */
+const CONTEXT_OVERFLOW_SHRINK = 0.8;
+
+/**
+ * Model fallback chain for capacity errors.
+ * After MAX_RETRIES consecutive capacity errors on a given role,
+ * fall back to a simpler (cheaper / smaller) role.
+ */
+const FALLBACK_CHAIN: Partial<Record<ModelRole, ModelRole>> = {
+  review_deep: "coder_default",
+  coder_default: "utility_fast",
+  // utility_fast has no further fallback — we throw
+};
+
+/**
+ * Duration (ms) after which the disableKeepAlive flag is cleared on an adapter
+ * following a stale-connection recovery.
+ */
+const STALE_KEEPALIVE_CLEAR_MS = 60_000;
 
 export function isContextOverflowError(error: unknown): boolean {
   if (error instanceof Error) {
@@ -63,6 +88,40 @@ export function isStaleConnectionError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message;
     return msg.includes("ECONNRESET") || msg.includes("EPIPE") || msg.includes("socket hang up");
+  }
+  return false;
+}
+
+/**
+ * Detects HTTP 400 errors that indicate the request exceeded the provider's
+ * token limit — distinct from the prompt_too_long / context_length_exceeded
+ * family caught by `isContextOverflowError`.
+ */
+export function isContextOverflow400Error(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return (
+      (msg.includes("400") || msg.includes("bad request") || msg.includes("invalid")) &&
+      (msg.includes("max_tokens") || msg.includes("context") || msg.includes("too long"))
+    );
+  }
+  return false;
+}
+
+/**
+ * Returns true for errors that should trigger a streaming → non-streaming
+ * fallback (connection-level failures), but NOT for auth or content errors.
+ */
+export function isStreamingRecoverableError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message;
+    return (
+      isStaleConnectionError(error) ||
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("ETIMEDOUT") ||
+      msg.includes("ERR_STREAM") ||
+      msg.includes("stream") && msg.includes("error")
+    );
   }
   return false;
 }
@@ -103,6 +162,16 @@ export function applyEscalationPolicy(
 
   // "manual" always blocks auto-escalation; "high_risk_only" blocks when risk isn't high
   return "review_deep";
+}
+
+/** Options shared by both streamChatWithRetry and streamChatWithRetryStreaming. */
+export interface StreamOptions {
+  providerId?: ProviderId;
+  modelRole?: ModelRole;
+  metadata?: Record<string, unknown>;
+  querySource?: QuerySource;
+  maxContextTokens?: number;
+  tools?: ProviderSendInput["tools"];
 }
 
 interface StreamResult {
@@ -437,6 +506,7 @@ export class ProviderOrchestrator {
       providerId?: ProviderId;
       modelRole?: ModelRole;
       metadata?: Record<string, unknown>;
+      tools?: ProviderSendInput["tools"];
     }
   ): Promise<StreamResult> {
     const roleBinding = options?.modelRole ? await this.getModelRoleBinding(options.modelRole) : null;
@@ -451,6 +521,7 @@ export class ProviderOrchestrator {
         accountId: "",
         messages,
         modelRole: options?.modelRole,
+        tools: options?.tools,
         metadata: {
           ...(roleBinding
             ? {
@@ -554,6 +625,7 @@ export class ProviderOrchestrator {
           sessionId,
           accountId: account.id,
           messages,
+          tools: options?.tools,
         });
 
         const attemptChunks: string[] = [];
@@ -702,8 +774,13 @@ export class ProviderOrchestrator {
    *   transient capacity errors with exponential backoff + jitter.
    * - Background sources (reporting) bail immediately on capacity errors.
    * - Context overflow errors trigger emergency compaction and a single retry.
-   * - Stale connection errors (ECONNRESET/EPIPE) get one retry.
-   * - After MAX_RETRIES, falls back to overseer_escalation if available.
+   * - Context overflow 400 errors reduce maxContextTokens by 20% and retry once
+   *   (floor at CONTEXT_OVERFLOW_FLOOR).
+   * - Stale connection errors (ECONNRESET/EPIPE) set disableKeepAlive on the
+   *   adapter and retry once.
+   * - After MAX_RETRIES consecutive capacity errors, try falling back through
+   *   FALLBACK_CHAIN (review_deep → coder_default → utility_fast) before
+   *   resorting to overseer_escalation.
    */
   async streamChatWithRetry(
     sessionId: string,
@@ -715,12 +792,14 @@ export class ProviderOrchestrator {
       metadata?: Record<string, unknown>;
       querySource?: QuerySource;
       maxContextTokens?: number;
+      tools?: ProviderSendInput["tools"];
     },
   ): Promise<StreamResult> {
     const source = options?.querySource ?? "execution";
     const isForeground = FOREGROUND_SOURCES.has(source);
     let lastError: unknown;
     let staleRetried = false;
+    let contextOverflow400Retried = false;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -759,9 +838,52 @@ export class ProviderOrchestrator {
           }
         }
 
-        // Stale connection → single retry without delay
+        // 3.1b: Context overflow 400 → shrink maxContextTokens by 20% and retry once
+        if (
+          isContextOverflow400Error(error) &&
+          !contextOverflow400Retried &&
+          options?.maxContextTokens
+        ) {
+          contextOverflow400Retried = true;
+          const reduced = Math.max(
+            CONTEXT_OVERFLOW_FLOOR,
+            Math.floor(options.maxContextTokens * CONTEXT_OVERFLOW_SHRINK),
+          );
+
+          publishEvent("global", "provider.context_overflow_recovery", {
+            sessionId,
+            originalLimit: options.maxContextTokens,
+            reducedLimit: reduced,
+          });
+
+          options = { ...options, maxContextTokens: reduced };
+          continue;
+        }
+
+        // 3.1c: Stale connection → set disableKeepAlive and retry once
         if (isStaleConnectionError(error) && !staleRetried) {
           staleRetried = true;
+
+          // Set disableKeepAlive on the adapter if it supports it and
+          // we can resolve the provider without a DB call
+          if (options?.providerId) {
+            try {
+              const adapter = this.factory.resolve(options.providerId);
+              if ("disableKeepAlive" in adapter) {
+                (adapter as LlmProviderAdapter & { disableKeepAlive?: boolean }).disableKeepAlive = true;
+
+                // Schedule clearing the flag after STALE_KEEPALIVE_CLEAR_MS
+                setTimeout(() => {
+                  if ("disableKeepAlive" in adapter) {
+                    (adapter as LlmProviderAdapter & { disableKeepAlive?: boolean }).disableKeepAlive = false;
+                  }
+                }, STALE_KEEPALIVE_CLEAR_MS);
+              }
+            } catch {
+              // If provider resolution fails, still proceed with retry
+            }
+          }
+
           continue;
         }
 
@@ -776,6 +898,32 @@ export class ProviderOrchestrator {
 
         // Non-retriable error
         break;
+      }
+    }
+
+    // 3.1a: Model fallback chain on capacity errors
+    if (isTransientCapacityError(lastError) && options?.modelRole) {
+      const fallbackRole = FALLBACK_CHAIN[options.modelRole];
+      if (fallbackRole) {
+        try {
+          publishEvent("global", "provider.model_fallback", {
+            sessionId,
+            originalRole: options.modelRole,
+            fallbackRole,
+            reason: lastError instanceof Error ? lastError.message : "capacity_exhausted",
+          });
+          return await this.streamChat(sessionId, messages, onToken, {
+            ...options,
+            modelRole: fallbackRole,
+          });
+        } catch (fallbackError) {
+          lastError = fallbackError;
+          publishEvent("global", "provider.model_fallback.failed", {
+            sessionId,
+            fallbackRole,
+            error: String(fallbackError),
+          });
+        }
       }
     }
 
@@ -803,6 +951,107 @@ export class ProviderOrchestrator {
       providerId,
       options?.modelRole,
     );
+  }
+
+  /**
+   * Streaming variant of streamChatWithRetry that yields ProviderStreamEvents
+   * directly as an AsyncGenerator.
+   *
+   * On streaming errors (connection-level failures, not auth/content errors):
+   * 1. Falls back to a non-streaming adapter.send() call
+   * 2. Converts the result to synthetic stream events
+   * 3. Logs a telemetry metric
+   */
+  async *streamChatWithRetryStreaming(
+    runId: string,
+    messages: Array<{ role: string; content: string }>,
+    onToken: (t: string) => void,
+    opts: StreamOptions & { onHeartbeat?: () => void },
+  ): AsyncGenerator<ProviderStreamEvent> {
+    const roleBinding = opts.modelRole
+      ? await this.getModelRoleBinding(opts.modelRole)
+      : null;
+    const providerId =
+      opts.providerId || roleBinding?.providerId || (await this.getActiveProvider());
+    const adapter = this.factory.resolve(providerId);
+
+    await this.ensureOpenAiBudget(providerId);
+
+    const sendInput: ProviderSendInput = {
+      sessionId: runId,
+      accountId: "",
+      messages: messages.map((m) => ({
+        role: m.role as "system" | "user" | "assistant",
+        content: m.content,
+      })),
+      modelRole: opts.modelRole,
+      tools: opts.tools,
+      metadata: {
+        ...(roleBinding
+          ? {
+              model: roleBinding.model,
+              temperature: roleBinding.temperature,
+              maxTokens: roleBinding.maxTokens,
+              reasoningMode: roleBinding.reasoningMode,
+            }
+          : {}),
+        ...(opts.metadata || {}),
+      },
+    };
+
+    // Attempt streaming
+    try {
+      const stream = adapter.stream(sendInput);
+
+      for await (const event of stream) {
+        if (event.type === "token") {
+          onToken(event.value);
+        }
+        if (opts.onHeartbeat && (event.type === "token" || event.type === "thinking")) {
+          opts.onHeartbeat();
+        }
+        yield event;
+      }
+    } catch (error) {
+      // Task 3.2: Streaming fallback — on connection errors, try non-streaming
+      if (isStreamingRecoverableError(error)) {
+        const telemetry = getTelemetry();
+        telemetry.incrementCounter("provider.streaming_fallback.count");
+
+        publishEvent("global", "provider.streaming_fallback", {
+          runId,
+          providerId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+
+        try {
+          const result = await adapter.send(sendInput);
+
+          if (result.text) {
+            onToken(result.text);
+            yield { type: "token", value: result.text };
+          }
+          if (result.session) {
+            yield { type: "session", session: result.session };
+          }
+          yield { type: "done", usage: result.usage };
+
+          // Record provider usage for budget tracking
+          await this.recordProviderUsage(providerId, result.usage, {
+            sessionId: runId,
+            modelRole: opts.modelRole || null,
+            streamingFallback: true,
+          });
+          return;
+        } catch (sendError) {
+          // Both streaming and non-streaming failed — throw original error
+          throw error;
+        }
+      }
+
+      // Non-streaming-recoverable error — rethrow
+      throw error;
+    }
   }
 
   private async pickNextQwenAccount(exclude: Set<string>) {

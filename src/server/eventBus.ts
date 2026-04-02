@@ -6,8 +6,12 @@ export interface StreamEvent {
   createdAt: string;
 }
 
-class LocalEventBus {
+export class LocalEventBus {
   private emitter = new EventEmitter();
+
+  constructor() {
+    this.emitter.setMaxListeners(100);
+  }
 
   emit(channel: string, event: StreamEvent) {
     this.emitter.emit(channel, event);
@@ -23,6 +27,18 @@ class LocalEventBus {
   subscribe(channel: string, handler: (event: StreamEvent) => void) {
     this.emitter.on(channel, handler);
     return () => this.emitter.off(channel, handler);
+  }
+
+  listenerCount(channel: string): number {
+    return this.emitter.listenerCount(channel);
+  }
+
+  removeAllListeners(channel?: string): void {
+    if (channel) {
+      this.emitter.removeAllListeners(channel);
+    } else {
+      this.emitter.removeAllListeners();
+    }
   }
 }
 

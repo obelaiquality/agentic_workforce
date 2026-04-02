@@ -1,8 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../db";
+import type { ToolRegistry } from "../tools/registry";
 import { DEFAULT_QWEN_CLI_ARGS } from "../providers/qwenCliConfig";
 import { ChannelService } from "../services/channelService";
+import type { MCPServerRegistry } from "../mcp";
+import type { LSPClient } from "../lsp/lspClient";
+import { persistMcpServerConfigs } from "../integrations/integrationSettings";
 import {
   clearStoredSecret,
   getSecretState,
@@ -29,7 +33,84 @@ const setRuntimeModeSchema = z.object({
 type SettingsRouteDeps = {
   app: FastifyInstance;
   channelService: ChannelService;
+  mcpRegistry: MCPServerRegistry;
+  toolRegistry: ToolRegistry;
+  lspClient: LSPClient;
 };
+
+const mcpServerBaseSchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  transport: z.enum(["stdio", "sse"]),
+  command: z.string().trim().optional(),
+  args: z.array(z.string()).optional(),
+  url: z.string().trim().optional(),
+  enabled: z.boolean().default(true),
+});
+
+const mcpServerInputSchema = mcpServerBaseSchema
+  .superRefine((value, ctx) => {
+    if (value.transport === "stdio" && !value.command) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["command"], message: "command is required for stdio servers" });
+    }
+    if (value.transport === "sse" && !value.url) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "url is required for sse servers" });
+    }
+  });
+
+const mcpServerPatchSchema = mcpServerBaseSchema
+  .omit({ id: true })
+  .partial()
+  .superRefine((value, ctx) => {
+    if (value.transport === "stdio" && value.command !== undefined && !value.command) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["command"], message: "command cannot be empty" });
+    }
+    if (value.transport === "sse" && value.url !== undefined && !value.url) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "url cannot be empty" });
+    }
+  });
+
+const mcpResourceReadSchema = z.object({
+  uri: z.string().trim().min(1),
+});
+
+function serializeMcpServer(
+  config: {
+    id: string;
+    name: string;
+    transport: "stdio" | "sse";
+    command?: string;
+    args?: string[];
+    url?: string;
+    env?: Record<string, string>;
+    enabled: boolean;
+  },
+  status?: {
+    connected: boolean;
+    toolCount: number;
+    resourceCount: number;
+    error?: string;
+    lastConnected?: string;
+  },
+  healthStatus?: string | null,
+) {
+  return {
+    id: config.id,
+    name: config.name,
+    transport: config.transport,
+    command: config.command,
+    args: config.args ?? [],
+    url: config.url,
+    envKeys: Object.keys(config.env ?? {}).sort(),
+    enabled: config.enabled,
+    connected: status?.connected ?? false,
+    toolCount: status?.toolCount ?? 0,
+    resourceCount: status?.resourceCount ?? 0,
+    error: status?.error,
+    lastConnected: status?.lastConnected,
+    healthStatus: healthStatus ?? null,
+  };
+}
 
 async function applySecretPatch(input: {
   secretName: string;
@@ -144,7 +225,7 @@ type SettingsPatchBody = {
 };
 
 export function registerSettingsRoutes(deps: SettingsRouteDeps) {
-  const { app, channelService } = deps;
+  const { app, channelService, mcpRegistry, toolRegistry, lspClient } = deps;
 
   app.get("/api/v1/settings", async () => {
     const activeProvider = await prisma.appSetting.findUnique({ where: { key: "active_provider" } });
@@ -903,6 +984,164 @@ export function registerSettingsRoutes(deps: SettingsRouteDeps) {
     });
 
     return { ok: true, mode: "local_qwen" };
+  });
+
+  app.get("/api/v1/settings/integrations/mcp", async () => {
+    const statusMap = new Map(mcpRegistry.getStatuses().map((status) => [status.id, status]));
+    const client = mcpRegistry.getClient();
+    return {
+      items: mcpRegistry.getServers().map((config) => {
+        const health = client.getServerHealth(config.id);
+        return serializeMcpServer(config, statusMap.get(config.id), health?.status);
+      }),
+    };
+  });
+
+  app.post("/api/v1/settings/integrations/mcp", async (request) => {
+    const payload = z.object({ server: mcpServerInputSchema }).parse(request.body);
+    const currentServers = mcpRegistry.getServers();
+    const existing = currentServers.find((server) => server.id === payload.server.id);
+    const validatedServer = mcpServerInputSchema.parse({
+      ...existing,
+      ...payload.server,
+      args: payload.server.args ?? [],
+      env: existing?.env,
+    });
+    const mergedServer = {
+      ...validatedServer,
+      env: existing?.env,
+    };
+    const nextServers = currentServers.some((server) => server.id === mergedServer.id)
+      ? currentServers.map((server) => (server.id === mergedServer.id ? mergedServer : server))
+      : [...currentServers, mergedServer];
+
+    await persistMcpServerConfigs(nextServers);
+    await mcpRegistry.replaceServers(nextServers, toolRegistry);
+    if (mergedServer.enabled) {
+      await mcpRegistry.reconnect(mergedServer.id, toolRegistry).catch(async (error) => {
+        const connected = mcpRegistry.getStatuses().find((status) => status.id === mergedServer.id)?.connected;
+        if (!connected) {
+          throw error;
+        }
+      });
+    }
+
+    const statusMap = new Map(mcpRegistry.getStatuses().map((status) => [status.id, status]));
+    return {
+      item: serializeMcpServer(mergedServer, statusMap.get(mergedServer.id)),
+    };
+  });
+
+  app.patch("/api/v1/settings/integrations/mcp/:id", async (request, reply) => {
+    const params = request.params as { id: string };
+    const patch = mcpServerPatchSchema.parse(request.body);
+    const currentServers = mcpRegistry.getServers();
+    const existing = currentServers.find((server) => server.id === params.id);
+    if (!existing) {
+      return reply.code(404).send({ error: `MCP server not found: ${params.id}` });
+    }
+
+    const validatedServer = mcpServerInputSchema.parse({
+      ...existing,
+      ...patch,
+      args: patch.args ?? existing.args ?? [],
+    });
+    const merged = {
+      ...validatedServer,
+      env: existing.env,
+    };
+
+    const nextServers = currentServers.map((server) => (server.id === params.id ? merged : server));
+    await persistMcpServerConfigs(nextServers);
+    await mcpRegistry.replaceServers(nextServers, toolRegistry);
+    if (merged.enabled) {
+      await mcpRegistry.connect(merged.id, toolRegistry);
+    }
+
+    const statusMap = new Map(mcpRegistry.getStatuses().map((status) => [status.id, status]));
+    return {
+      item: serializeMcpServer(merged, statusMap.get(merged.id)),
+    };
+  });
+
+  app.delete("/api/v1/settings/integrations/mcp/:id", async (request, reply) => {
+    const params = request.params as { id: string };
+    const currentServers = mcpRegistry.getServers();
+    const existing = currentServers.find((server) => server.id === params.id);
+    if (!existing) {
+      return reply.code(404).send({ error: `MCP server not found: ${params.id}` });
+    }
+
+    const nextServers = currentServers.filter((server) => server.id !== params.id);
+    await persistMcpServerConfigs(nextServers);
+    await mcpRegistry.replaceServers(nextServers, toolRegistry);
+    return { ok: true };
+  });
+
+  app.post("/api/v1/settings/integrations/mcp/:id/connect", async (request, reply) => {
+    const params = request.params as { id: string };
+    const config = mcpRegistry.getServer(params.id);
+    if (!config) {
+      return reply.code(404).send({ error: `MCP server not found: ${params.id}` });
+    }
+
+    await mcpRegistry.reconnect(params.id, toolRegistry);
+    const statusMap = new Map(mcpRegistry.getStatuses().map((status) => [status.id, status]));
+    return {
+      item: serializeMcpServer(config, statusMap.get(config.id)),
+    };
+  });
+
+  app.post("/api/v1/settings/integrations/mcp/:id/disconnect", async (request, reply) => {
+    const params = request.params as { id: string };
+    const config = mcpRegistry.getServer(params.id);
+    if (!config) {
+      return reply.code(404).send({ error: `MCP server not found: ${params.id}` });
+    }
+
+    await mcpRegistry.disconnect(params.id);
+    const statusMap = new Map(mcpRegistry.getStatuses().map((status) => [status.id, status]));
+    return {
+      item: serializeMcpServer(config, statusMap.get(config.id)),
+    };
+  });
+
+  app.get("/api/v1/settings/integrations/mcp/:id/resources", async (request, reply) => {
+    const params = request.params as { id: string };
+    const config = mcpRegistry.getServer(params.id);
+    if (!config) {
+      return reply.code(404).send({ error: `MCP server not found: ${params.id}` });
+    }
+
+    const items = await mcpRegistry.listResources(params.id);
+    return { items };
+  });
+
+  app.post("/api/v1/settings/integrations/mcp/:id/resources/read", async (request, reply) => {
+    const params = request.params as { id: string };
+    const config = mcpRegistry.getServer(params.id);
+    if (!config) {
+      return reply.code(404).send({ error: `MCP server not found: ${params.id}` });
+    }
+
+    const payload = mcpResourceReadSchema.parse(request.body);
+    const item = await mcpRegistry.readResource(params.id, payload.uri);
+    return { item };
+  });
+
+  app.get("/api/v1/settings/integrations/mcp/:id/health", async (request, reply) => {
+    const params = request.params as { id: string };
+    const health = mcpRegistry.getClient().getServerHealth(params.id);
+    if (!health) {
+      return reply.code(404).send({ error: `No health data for server: ${params.id}` });
+    }
+    return health;
+  });
+
+  app.get("/api/v1/settings/integrations/lsp", async () => {
+    return {
+      items: await lspClient.getServerStatuses(),
+    };
   });
 
   app.get("/api/v1/openai/models", async () => {

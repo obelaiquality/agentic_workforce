@@ -26,6 +26,16 @@ import { truncateFileContent as truncateFileContentBase } from "./codebaseHelper
 import { DoomLoopDetector } from "./doomLoopDetector";
 import { recordFileAccess } from "./contextCompactionService";
 import { shortErrorStack } from "../errors";
+import { AgenticOrchestrator } from "../execution/agenticOrchestrator";
+import type { ToolRegistry } from "../tools/registry";
+import type { AgenticExecutionInput, AgenticEvent } from "../tools/types";
+import type { PermissionPolicyEngine } from "../permissions/policyEngine";
+import { ContextCollapseService } from "../execution/contextCollapse";
+import type { ApprovalService } from "./approvalService";
+import type { HookService } from "../hooks/hookService";
+import type { PlanService } from "../plans/planService";
+import { AutoMemoryExtractor } from "../memory/autoExtractor";
+import type { LSPClient } from "../lsp/lspClient";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -2053,7 +2063,13 @@ export class ExecutionService {
     private readonly providerOrchestrator: ProviderOrchestrator,
     private readonly repoService: RepoService,
     private readonly codeGraphService: CodeGraphService,
-    private readonly commandEngine?: CommandEngine
+    private readonly commandEngine?: CommandEngine,
+    private readonly policyEngine?: PermissionPolicyEngine,
+    private readonly approvalService?: ApprovalService,
+    private readonly contextCollapseService?: ContextCollapseService,
+    private readonly hookService?: HookService,
+    private readonly planService?: PlanService,
+    private readonly lspClient?: LSPClient,
   ) {}
 
   /**
@@ -3980,5 +3996,96 @@ export class ExecutionService {
     });
 
     return mapBundle(bundle);
+  }
+
+  /**
+   * Execute an agentic workflow — the agent loops autonomously using tools
+   * until it completes the objective or hits a budget/iteration limit.
+   *
+   * Returns an AsyncGenerator of AgenticEvent for streaming to the client.
+   *
+   * @param registry - Tool registry with available tools
+   * @param input - Execution configuration (objective, budget, worktree, etc.)
+   */
+  async *executeAgentic(
+    registry: ToolRegistry,
+    input: AgenticExecutionInput,
+  ): AsyncGenerator<AgenticEvent> {
+    const memoryService = this.getMemory(input.worktreePath);
+    const doomLoopDetector = new DoomLoopDetector(20, 3, 5);
+    const autoMemoryExtractor = new AutoMemoryExtractor(memoryService);
+
+    const orchestrator = new AgenticOrchestrator({
+      registry,
+      providerOrchestrator: this.providerOrchestrator,
+      contextService: this.contextService,
+      memoryService,
+      doomLoopDetector,
+      events: this.events,
+      policyEngine: this.policyEngine,
+      approvalService: this.approvalService,
+      contextCollapseService: this.contextCollapseService,
+      hookService: this.hookService,
+      planService: this.planService,
+      autoMemoryExtractor,
+      lspClient: this.lspClient,
+    });
+
+    try {
+      for await (const event of orchestrator.execute(input)) {
+        yield event;
+
+        // Record significant events
+        if (event.type === "execution_complete") {
+          await this.events.appendEvent({
+            type: "agentic.execution.completed",
+            aggregateId: input.runId,
+            actor: input.actor,
+            payload: {
+              objective: input.objective,
+              iterations: event.totalIterations,
+              toolCalls: event.totalToolCalls,
+            },
+          });
+        } else if (event.type === "execution_aborted") {
+          await this.events.appendEvent({
+            type: "agentic.execution.aborted",
+            aggregateId: input.runId,
+            actor: input.actor,
+            payload: {
+              reason: event.reason,
+            },
+          });
+        } else if (event.type === "escalating") {
+          await this.events.appendEvent({
+            type: "agentic.escalated",
+            aggregateId: input.runId,
+            actor: input.actor,
+            payload: {
+              fromRole: event.fromRole,
+              toRole: event.toRole,
+              reason: event.reason,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      yield {
+        type: "error",
+        error: `Agentic execution failed: ${errorMsg}`,
+        recoverable: false,
+      };
+
+      await this.events.appendEvent({
+        type: "agentic.execution.failed",
+        aggregateId: input.runId,
+        actor: input.actor,
+        payload: {
+          error: errorMsg,
+          stack: error instanceof Error ? shortErrorStack(error) : undefined,
+        },
+      });
+    }
   }
 }

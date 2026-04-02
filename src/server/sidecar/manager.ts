@@ -1,7 +1,10 @@
 import path from "node:path";
 import fs from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createLogger } from "../logger";
 import { SidecarClient } from "./client";
+
+const log = createLogger("Sidecar");
 
 const sidecarAddress = process.env.RUST_SIDECAR_ADDR || "127.0.0.1:50051";
 
@@ -79,7 +82,7 @@ function startSidecarProcess() {
     });
   } else {
     if (!fs.existsSync(binary)) {
-      console.warn(`[sidecar] Binary not found at ${binary}. Sidecar features will be unavailable.`);
+      log.warn(`Binary not found at ${binary}. Sidecar features will be unavailable.`);
       return;
     }
     sidecarProcess = spawn(binary, [], {

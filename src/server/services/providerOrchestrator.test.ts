@@ -3,8 +3,10 @@ import type { ModelRole, ModelRoleBinding } from "../../shared/contracts";
 import {
   applyEscalationPolicy,
   isContextOverflowError,
+  isContextOverflow400Error,
   isTransientCapacityError,
   isStaleConnectionError,
+  isStreamingRecoverableError,
   retryDelayMs,
   ProviderOrchestrator,
 } from "./providerOrchestrator";
@@ -12,9 +14,13 @@ import { ProviderFactory } from "../providers/factory";
 import { ModelInferenceError } from "../errors";
 
 // Mock dependencies using vi.hoisted
-const { mockEmergencyCompact, mockPublishEvent } = vi.hoisted(() => ({
+const { mockEmergencyCompact, mockPublishEvent, mockGetTelemetry } = vi.hoisted(() => ({
   mockEmergencyCompact: vi.fn(),
   mockPublishEvent: vi.fn(),
+  mockGetTelemetry: vi.fn(() => ({
+    incrementCounter: vi.fn(),
+    recordMetric: vi.fn(),
+  })),
 }));
 
 vi.mock("./contextCompactionService", () => ({
@@ -23,6 +29,10 @@ vi.mock("./contextCompactionService", () => ({
 
 vi.mock("../eventBus", () => ({
   publishEvent: mockPublishEvent,
+}));
+
+vi.mock("../telemetry/tracer", () => ({
+  getTelemetry: mockGetTelemetry,
 }));
 
 // Test the default model role binding structure without database
@@ -686,14 +696,47 @@ describe("streamChatWithRetry", () => {
   });
 
   describe("overseer_escalation fallback", () => {
-    it("falls back to overseer_escalation after MAX_RETRIES", async () => {
+    it("falls back through model chain then overseer_escalation after MAX_RETRIES", async () => {
       vi.spyOn(orchestrator, "streamChat")
         .mockRejectedValueOnce(new Error("rate_limit"))
         .mockRejectedValueOnce(new Error("rate_limit"))
         .mockRejectedValueOnce(new Error("rate_limit"))
         .mockRejectedValueOnce(new Error("rate_limit"))
+        // model fallback to utility_fast succeeds
         .mockResolvedValueOnce({
-          text: "Escalated success",
+          text: "Fallback success",
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        });
+
+      const result = await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { querySource: "execution", modelRole: "coder_default" },
+      );
+
+      expect(result.text).toBe("Fallback success");
+      // Model fallback chain fires before overseer_escalation
+      expect(mockPublishEvent).toHaveBeenCalledWith("global", "provider.model_fallback", {
+        sessionId: "session1",
+        originalRole: "coder_default",
+        fallbackRole: "utility_fast",
+        reason: expect.stringContaining("rate_limit"),
+      });
+    });
+
+    it("falls back to overseer_escalation when model chain also fails", async () => {
+      vi.spyOn(orchestrator, "streamChat")
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        // model fallback (utility_fast) also fails
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        // overseer_escalation succeeds
+        .mockResolvedValueOnce({
+          text: "Overseer success",
           accountId: "acc1",
           providerId: "openai-responses" as const,
         });
@@ -705,7 +748,7 @@ describe("streamChatWithRetry", () => {
         { querySource: "execution", modelRole: "coder_default" },
       );
 
-      expect(result.text).toBe("Escalated success");
+      expect(result.text).toBe("Overseer success");
       expect(mockPublishEvent).toHaveBeenCalledWith("global", "provider.fallback", {
         sessionId: "session1",
         originalRole: "coder_default",
@@ -729,7 +772,7 @@ describe("streamChatWithRetry", () => {
       expect(mockPublishEvent).not.toHaveBeenCalledWith("global", "provider.fallback", expect.anything());
     });
 
-    it("throws ModelInferenceError if fallback also fails", async () => {
+    it("throws ModelInferenceError if all fallbacks fail", async () => {
       vi.spyOn(orchestrator, "streamChat").mockRejectedValue(new Error("rate_limit"));
 
       await expect(
@@ -741,7 +784,8 @@ describe("streamChatWithRetry", () => {
         ),
       ).rejects.toThrow(ModelInferenceError);
 
-      expect(orchestrator.streamChat).toHaveBeenCalledTimes(5);
+      // 4 retries + 1 model fallback (utility_fast) + 1 overseer_escalation = 6
+      expect(orchestrator.streamChat).toHaveBeenCalledTimes(6);
     });
 
     it("includes providerId and modelRole in ModelInferenceError", async () => {
@@ -836,5 +880,424 @@ describe("streamChatWithRetry", () => {
       expect(result.text).toBe("Success");
       expect(orchestrator.streamChat).toHaveBeenCalledTimes(2);
     });
+  });
+
+  describe("stale keepalive flag lifecycle", () => {
+    it("clears disableKeepAlive flag after STALE_KEEPALIVE_CLEAR_MS timeout", async () => {
+      vi.useFakeTimers();
+      const mockAdapter = {
+        disableKeepAlive: false,
+        stream: vi.fn(),
+        send: vi.fn(),
+        classifyError: vi.fn(),
+        estimateAvailability: vi.fn(),
+      };
+      mockFactory.resolve = vi.fn().mockReturnValue(mockAdapter);
+
+      vi.spyOn(orchestrator, "streamChat")
+        .mockRejectedValueOnce(new Error("ECONNRESET"))
+        .mockResolvedValueOnce({
+          text: "Recovered",
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        });
+
+      await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { providerId: "onprem-qwen" },
+      );
+
+      // Flag should be set after ECONNRESET
+      expect(mockAdapter.disableKeepAlive).toBe(true);
+
+      // Advance past the clear timeout (60 seconds)
+      vi.advanceTimersByTime(60_001);
+
+      expect(mockAdapter.disableKeepAlive).toBe(false);
+      vi.useRealTimers();
+    });
+  });
+
+  describe("context overflow 400 handling", () => {
+    it("shrinks maxContextTokens by 20% and retries on overflow 400 error", async () => {
+      const streamChatSpy = vi
+        .spyOn(orchestrator, "streamChat")
+        .mockRejectedValueOnce(new Error("400 bad request: max_tokens exceeded"))
+        .mockResolvedValueOnce({
+          text: "Success after shrink",
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        });
+
+      const result = await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { maxContextTokens: 10000 },
+      );
+
+      expect(result.text).toBe("Success after shrink");
+      // Second call should have reduced maxContextTokens (10000 * 0.8 = 8000)
+      expect(streamChatSpy).toHaveBeenCalledTimes(2);
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "provider.context_overflow_recovery",
+        expect.objectContaining({
+          originalLimit: 10000,
+          reducedLimit: 8000,
+        }),
+      );
+    });
+
+    it("does not shrink below CONTEXT_OVERFLOW_FLOOR (3000)", async () => {
+      vi.spyOn(orchestrator, "streamChat")
+        .mockRejectedValueOnce(new Error("400 context too long"))
+        .mockResolvedValueOnce({
+          text: "Floored",
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        });
+
+      await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { maxContextTokens: 3500 },
+      );
+
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "provider.context_overflow_recovery",
+        expect.objectContaining({
+          reducedLimit: 3000,
+        }),
+      );
+    });
+
+    it("only retries overflow 400 once", async () => {
+      vi.spyOn(orchestrator, "streamChat")
+        .mockRejectedValueOnce(new Error("400 bad request: max_tokens exceeded"))
+        .mockRejectedValueOnce(new Error("400 bad request: context too long"))
+        .mockRejectedValueOnce(new Error("fallback"));
+
+      await expect(
+        orchestrator.streamChatWithRetry(
+          "session1",
+          [{ role: "user", content: "test" }],
+          vi.fn(),
+          { maxContextTokens: 10000 },
+        ),
+      ).rejects.toThrow(ModelInferenceError);
+    });
+  });
+
+  describe("streaming fallback via streamChatWithRetryStreaming", () => {
+    it("falls back to non-streaming send on stream error in streamChatWithRetryStreaming", async () => {
+      const mockTelemetry = { incrementCounter: vi.fn(), recordMetric: vi.fn() };
+      mockGetTelemetry.mockReturnValue(mockTelemetry);
+
+      const mockAdapter = {
+        id: "onprem-qwen" as const,
+        label: "On-Prem Qwen",
+        supportsStreaming: true,
+        supportsTools: true,
+        capabilities: {},
+        stream: vi.fn().mockImplementation(async function* () {
+          throw new Error("ECONNRESET");
+        }),
+        send: vi.fn().mockResolvedValue({
+          text: "Non-streaming fallback result",
+          session: { provider: "onprem-qwen" },
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+        }),
+        classifyError: vi.fn().mockReturnValue("unknown"),
+        estimateAvailability: vi.fn(),
+      };
+      mockFactory.resolve = vi.fn().mockReturnValue(mockAdapter);
+
+      // Mock getActiveProvider via the internal method
+      vi.spyOn(orchestrator, "getModelRoleBinding" as any).mockResolvedValue(null);
+      vi.spyOn(orchestrator, "getActiveProvider" as any).mockResolvedValue("onprem-qwen");
+
+      const onToken = vi.fn();
+      const events: any[] = [];
+
+      for await (const event of orchestrator.streamChatWithRetryStreaming(
+        "run1",
+        [{ role: "user", content: "test" }],
+        onToken,
+        {},
+      )) {
+        events.push(event);
+      }
+
+      expect(mockAdapter.send).toHaveBeenCalled();
+      expect(onToken).toHaveBeenCalledWith("Non-streaming fallback result");
+      expect(events.some((e) => e.type === "token" && e.value === "Non-streaming fallback result")).toBe(true);
+      expect(events.some((e) => e.type === "done")).toBe(true);
+      expect(mockTelemetry.incrementCounter).toHaveBeenCalledWith("provider.streaming_fallback.count");
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "provider.streaming_fallback",
+        expect.objectContaining({ runId: "run1" }),
+      );
+    });
+
+    it("triggers emergency compaction on context overflow during streaming", async () => {
+      const compactedMessages = [{ role: "user" as const, content: "compacted" }];
+      mockEmergencyCompact.mockReturnValue({
+        messages: compactedMessages,
+        tokensBefore: 8000,
+        tokensAfter: 3000,
+        stage: "stage4",
+      });
+
+      // Use the non-streaming path since streamChatWithRetryStreaming delegates
+      // overflow handling to streamChatWithRetry when called through orchestrator
+      vi.spyOn(orchestrator, "streamChat")
+        .mockRejectedValueOnce(new Error("context_length_exceeded"))
+        .mockResolvedValueOnce({
+          text: "Compacted success",
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        });
+
+      const result = await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "long context" }],
+        vi.fn(),
+        { maxContextTokens: 8000, modelRole: "coder_default" },
+      );
+
+      expect(mockEmergencyCompact).toHaveBeenCalled();
+      expect(result.text).toBe("Compacted success");
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "compaction.reactive",
+        expect.objectContaining({ stage: "stage4" }),
+      );
+    });
+  });
+
+  describe("concurrent retry isolation", () => {
+    it("handles concurrent retry attempts without interference", async () => {
+      let callCount = 0;
+      vi.spyOn(orchestrator, "streamChat").mockImplementation(async () => {
+        callCount++;
+        if (callCount <= 2) {
+          throw new Error("rate_limit");
+        }
+        return {
+          text: `Result-${callCount}`,
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        };
+      });
+
+      const [result1, result2] = await Promise.all([
+        orchestrator.streamChatWithRetry(
+          "session-a",
+          [{ role: "user", content: "test A" }],
+          vi.fn(),
+          { querySource: "execution" },
+        ),
+        orchestrator.streamChatWithRetry(
+          "session-b",
+          [{ role: "user", content: "test B" }],
+          vi.fn(),
+          { querySource: "execution" },
+        ),
+      ]);
+
+      // Both should eventually succeed (exact text depends on scheduling)
+      expect(result1.text).toBeDefined();
+      expect(result2.text).toBeDefined();
+    });
+  });
+
+  describe("full model fallback chain", () => {
+    it("falls back through full model chain: review_deep -> coder_default -> utility_fast", async () => {
+      const streamChatSpy = vi
+        .spyOn(orchestrator, "streamChat")
+        // Initial attempt + MAX_RETRIES for review_deep
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        // Fallback to coder_default (via FALLBACK_CHAIN from review_deep) succeeds
+        .mockResolvedValueOnce({
+          text: "Coder fallback success",
+          accountId: "acc1",
+          providerId: "onprem-qwen" as const,
+        });
+
+      const result = await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { querySource: "execution", modelRole: "review_deep" },
+      );
+
+      expect(result.text).toBe("Coder fallback success");
+      expect(mockPublishEvent).toHaveBeenCalledWith("global", "provider.model_fallback", {
+        sessionId: "session1",
+        originalRole: "review_deep",
+        fallbackRole: "coder_default",
+        reason: expect.stringContaining("rate_limit"),
+      });
+    });
+
+    it("escalates to overseer after exhausting fallback chain", async () => {
+      vi.spyOn(orchestrator, "streamChat")
+        // review_deep: 4 attempts (initial + 3 retries)
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        // coder_default fallback fails
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        // overseer_escalation succeeds
+        .mockResolvedValueOnce({
+          text: "Overseer handled it",
+          accountId: "acc1",
+          providerId: "openai-responses" as const,
+        });
+
+      const result = await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { querySource: "execution", modelRole: "review_deep" },
+      );
+
+      expect(result.text).toBe("Overseer handled it");
+      // Should have attempted model_fallback and then provider.fallback
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "provider.model_fallback",
+        expect.objectContaining({
+          originalRole: "review_deep",
+          fallbackRole: "coder_default",
+        }),
+      );
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "provider.fallback",
+        expect.objectContaining({
+          originalRole: "review_deep",
+        }),
+      );
+    });
+
+    it("utility_fast has no further fallback in the chain — goes straight to overseer", async () => {
+      vi.spyOn(orchestrator, "streamChat")
+        // utility_fast exhausts retries
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        .mockRejectedValueOnce(new Error("rate_limit"))
+        // No FALLBACK_CHAIN entry for utility_fast, so goes to overseer
+        .mockResolvedValueOnce({
+          text: "Overseer from utility",
+          accountId: "acc1",
+          providerId: "openai-responses" as const,
+        });
+
+      const result = await orchestrator.streamChatWithRetry(
+        "session1",
+        [{ role: "user", content: "test" }],
+        vi.fn(),
+        { querySource: "execution", modelRole: "utility_fast" },
+      );
+
+      expect(result.text).toBe("Overseer from utility");
+      // Should NOT have a model_fallback event since utility_fast has no chain entry
+      expect(mockPublishEvent).not.toHaveBeenCalledWith(
+        "global",
+        "provider.model_fallback",
+        expect.anything(),
+      );
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        "global",
+        "provider.fallback",
+        expect.objectContaining({
+          originalRole: "utility_fast",
+        }),
+      );
+    });
+  });
+});
+
+describe("isContextOverflow400Error", () => {
+  it("returns true for 400 with max_tokens", () => {
+    expect(isContextOverflow400Error(new Error("400 bad request: max_tokens exceeded"))).toBe(true);
+  });
+
+  it("returns true for bad request with context", () => {
+    expect(isContextOverflow400Error(new Error("Bad Request: context too long"))).toBe(true);
+  });
+
+  it("returns true for invalid with too long", () => {
+    expect(isContextOverflow400Error(new Error("Invalid request: input too long"))).toBe(true);
+  });
+
+  it("returns false for plain 400 without context keywords", () => {
+    expect(isContextOverflow400Error(new Error("400 missing parameter"))).toBe(false);
+  });
+
+  it("returns false for non-Error types", () => {
+    expect(isContextOverflow400Error("400 max_tokens")).toBe(false);
+    expect(isContextOverflow400Error(null)).toBe(false);
+  });
+});
+
+describe("isStreamingRecoverableError", () => {
+  it("returns true for ECONNRESET", () => {
+    expect(isStreamingRecoverableError(new Error("ECONNRESET"))).toBe(true);
+  });
+
+  it("returns true for ECONNREFUSED", () => {
+    expect(isStreamingRecoverableError(new Error("ECONNREFUSED"))).toBe(true);
+  });
+
+  it("returns true for ETIMEDOUT", () => {
+    expect(isStreamingRecoverableError(new Error("ETIMEDOUT"))).toBe(true);
+  });
+
+  it("returns true for ERR_STREAM_PREMATURE_CLOSE", () => {
+    expect(isStreamingRecoverableError(new Error("ERR_STREAM_PREMATURE_CLOSE"))).toBe(true);
+  });
+
+  it("returns true for generic stream error", () => {
+    expect(isStreamingRecoverableError(new Error("stream error during read"))).toBe(true);
+  });
+
+  it("returns false for auth errors", () => {
+    expect(isStreamingRecoverableError(new Error("401 Unauthorized"))).toBe(false);
+  });
+
+  it("returns false for non-Error types", () => {
+    expect(isStreamingRecoverableError("ECONNRESET")).toBe(false);
+    expect(isStreamingRecoverableError(null)).toBe(false);
+  });
+});
+
+describe("applyEscalationPolicy edge cases", () => {
+  it("applies escalation policy with low risk under high_risk_only — blocks", () => {
+    expect(applyEscalationPolicy("overseer_escalation", "high_risk_only", "low")).toBe("review_deep");
+  });
+
+  it("applies escalation policy with medium risk under high_risk_only — blocks", () => {
+    expect(applyEscalationPolicy("overseer_escalation", "high_risk_only", "medium")).toBe("review_deep");
+  });
+
+  it("applies escalation policy with high risk under auto — allows", () => {
+    expect(applyEscalationPolicy("overseer_escalation", "auto", "high")).toBe("overseer_escalation");
+  });
+
+  it("applies escalation policy with low risk under auto — allows (auto permits all)", () => {
+    expect(applyEscalationPolicy("overseer_escalation", "auto", "low")).toBe("overseer_escalation");
   });
 });

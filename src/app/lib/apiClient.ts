@@ -39,8 +39,11 @@ import type {
   KnowledgeHit,
   MemoryRecord,
   MergeReport,
+  McpIntegrationResource,
+  McpIntegrationServer,
   MissionActionCapabilities,
   MissionControlSnapshot,
+  LspIntegrationServer,
   PolicyDecision,
   ProjectBlueprint,
   ProjectBinding,
@@ -208,6 +211,20 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     });
   }
   return browserApiRequest<T>(path, init);
+}
+
+export async function apiRequestText(path: string): Promise<string> {
+  const desktopBridge = getDesktopBridge();
+  if (desktopBridge?.apiRequest) {
+    const result = await desktopApiRequest<string>({ method: "GET", path, headers: { accept: "text/plain" } });
+    return typeof result === "string" ? result : JSON.stringify(result);
+  }
+  const config = await resolveApiConfig();
+  const token = import.meta.env.VITE_API_TOKEN || "";
+  const response = await fetch(`${config.baseUrl}${path}`, {
+    headers: { "x-local-api-token": token, accept: "text/plain" },
+  });
+  return response.text();
 }
 
 function createStreamEvent(data: string) {
@@ -994,6 +1011,75 @@ export async function getSettings() {
   }>("/api/v1/settings");
 }
 
+export async function getMcpIntegrations() {
+  return apiRequest<{ items: McpIntegrationServer[] }>("/api/v1/settings/integrations/mcp");
+}
+
+export async function createOrUpdateMcpIntegration(input: {
+  id: string;
+  name: string;
+  transport: "stdio" | "sse";
+  command?: string;
+  args?: string[];
+  url?: string;
+  enabled?: boolean;
+}) {
+  return apiRequest<{ item: McpIntegrationServer }>("/api/v1/settings/integrations/mcp", {
+    method: "POST",
+    body: JSON.stringify({ server: input }),
+  });
+}
+
+export async function patchMcpIntegration(
+  id: string,
+  input: {
+    name?: string;
+    transport?: "stdio" | "sse";
+    command?: string;
+    args?: string[];
+    url?: string;
+    enabled?: boolean;
+  }
+) {
+  return apiRequest<{ item: McpIntegrationServer }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteMcpIntegration(id: string) {
+  return apiRequest<{ ok: true }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function connectMcpIntegration(id: string) {
+  return apiRequest<{ item: McpIntegrationServer }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(id)}/connect`, {
+    method: "POST",
+  });
+}
+
+export async function disconnectMcpIntegration(id: string) {
+  return apiRequest<{ item: McpIntegrationServer }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(id)}/disconnect`, {
+    method: "POST",
+  });
+}
+
+export async function listMcpIntegrationResources(id: string) {
+  return apiRequest<{ items: McpIntegrationResource[] }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(id)}/resources`);
+}
+
+export async function readMcpIntegrationResource(id: string, uri: string) {
+  return apiRequest<{ item: { content: string; mimeType?: string } }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(id)}/resources/read`, {
+    method: "POST",
+    body: JSON.stringify({ uri }),
+  });
+}
+
+export async function getLspIntegrations() {
+  return apiRequest<{ items: LspIntegrationServer[] }>("/api/v1/settings/integrations/lsp");
+}
+
 export async function updateSettings(input: {
   safety?: Record<string, unknown>;
   qwenCli?: {
@@ -1698,6 +1784,68 @@ export async function getMissionSnapshotV8(query?: {
   return apiRequest<{ item: MissionControlSnapshot }>(`/api/v8/mission/snapshot${suffix}`);
 }
 
+export async function startAgenticRun(input: {
+  actor: string;
+  project_id: string;
+  ticket_id?: string;
+  objective: string;
+  max_iterations?: number;
+  initial_model_role?: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation";
+  provider_id?: "qwen-cli" | "openai-compatible" | "onprem-qwen" | "openai-responses";
+  use_deferred_tools?: boolean;
+  plan_mode?: boolean;
+  budget?: {
+    max_tokens?: number;
+    max_cost_usd?: number;
+    max_duration_ms?: number;
+  };
+}) {
+  return apiRequest<{
+    runId: string;
+    ticket: Ticket;
+    projectId: string;
+    worktreePath: string;
+  }>("/api/agentic/start", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function openAgenticRunStream(runId: string) {
+  return openApiEventStream(`/api/agentic/runs/${encodeURIComponent(runId)}/stream`);
+}
+
+export async function getAgenticRunPlan(runId: string) {
+  return apiRequest<{ item: import("../../shared/contracts").AgenticRunPlan | null }>(`/api/agentic/runs/${encodeURIComponent(runId)}/plan`);
+}
+
+export async function approveAgenticRunPlan(runId: string) {
+  return apiRequest<{ item: import("../../shared/contracts").AgenticRunPlan }>(`/api/agentic/runs/${encodeURIComponent(runId)}/plan/approve`, {
+    method: "POST",
+  });
+}
+
+export async function rejectAgenticRunPlan(runId: string, reason: string) {
+  return apiRequest<{ item: import("../../shared/contracts").AgenticRunPlan }>(`/api/agentic/runs/${encodeURIComponent(runId)}/plan/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function refineAgenticRunPlan(runId: string, feedback: string) {
+  return apiRequest<{ item: import("../../shared/contracts").AgenticRunPlan }>(`/api/agentic/runs/${encodeURIComponent(runId)}/plan/refine`, {
+    method: "POST",
+    body: JSON.stringify({ feedback }),
+  });
+}
+
+export async function answerAgenticRunPlanQuestion(runId: string, questionId: string, answer: string) {
+  return apiRequest<{ item: import("../../shared/contracts").AgenticRunPlan }>(`/api/agentic/runs/${encodeURIComponent(runId)}/plan/answer`, {
+    method: "POST",
+    body: JSON.stringify({ questionId, answer }),
+  });
+}
+
 export async function getMissionBacklogV8(query?: {
   projectId?: string | null;
   ticketId?: string | null;
@@ -2048,4 +2196,109 @@ export async function decideMissionApprovalV8(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Skills API
+// ---------------------------------------------------------------------------
+
+export async function listSkills(filter?: { tags?: string; builtIn?: boolean }) {
+  const params = new URLSearchParams();
+  if (filter?.tags) params.set("tags", filter.tags);
+  if (filter?.builtIn !== undefined) params.set("builtIn", String(filter.builtIn));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: import("../../shared/contracts").SkillRecord[] }>(`/api/skills${suffix}`);
+}
+
+export async function getSkill(id: string) {
+  return apiRequest<{ item: import("../../shared/contracts").SkillRecord }>(`/api/skills/${encodeURIComponent(id)}`);
+}
+
+export async function createSkill(input: Omit<import("../../shared/contracts").SkillRecord, "id" | "builtIn" | "createdAt" | "updatedAt">) {
+  return apiRequest<{ item: import("../../shared/contracts").SkillRecord }>("/api/skills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+}
+
+export async function updateSkill(id: string, updates: Partial<import("../../shared/contracts").SkillRecord>) {
+  return apiRequest<{ item: import("../../shared/contracts").SkillRecord }>(`/api/skills/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+}
+
+export async function deleteSkill(id: string) {
+  return apiRequest<{ ok: boolean }>(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function listSkillInvocations(filter?: { runId?: string; limit?: number }) {
+  const params = new URLSearchParams();
+  if (filter?.runId) params.set("runId", filter.runId);
+  if (typeof filter?.limit === "number") params.set("limit", String(filter.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: import("../../shared/contracts").SkillInvocationRecord[] }>(`/api/skills/invocations${suffix}`);
+}
+
+// ---------------------------------------------------------------------------
+// Hooks API
+// ---------------------------------------------------------------------------
+
+export async function listHooks(filter?: { projectId?: string; eventType?: string; enabled?: boolean }) {
+  const params = new URLSearchParams();
+  if (filter?.projectId) params.set("projectId", filter.projectId);
+  if (filter?.eventType) params.set("eventType", filter.eventType);
+  if (filter?.enabled !== undefined) params.set("enabled", String(filter.enabled));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: import("../../shared/contracts").HookRecord[] }>(`/api/hooks${suffix}`);
+}
+
+export async function getHook(id: string) {
+  return apiRequest<{ item: import("../../shared/contracts").HookRecord }>(`/api/hooks/${encodeURIComponent(id)}`);
+}
+
+export async function createHook(input: Omit<import("../../shared/contracts").HookRecord, "id" | "createdAt" | "updatedAt">) {
+  return apiRequest<{ item: import("../../shared/contracts").HookRecord }>("/api/hooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+}
+
+export async function updateHook(id: string, updates: Partial<import("../../shared/contracts").HookRecord>) {
+  return apiRequest<{ item: import("../../shared/contracts").HookRecord }>(`/api/hooks/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+}
+
+export async function deleteHook(id: string) {
+  return apiRequest<{ ok: boolean }>(`/api/hooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function testHook(id: string, testPayload: Record<string, unknown>) {
+  return apiRequest<{ output: { success: boolean; systemMessage?: string; error?: string } }>(`/api/hooks/${encodeURIComponent(id)}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ testPayload }) });
+}
+
+export async function listHookExecutions(filter?: { hookId?: string; runId?: string; limit?: number }) {
+  const params = new URLSearchParams();
+  if (filter?.hookId) params.set("hookId", filter.hookId);
+  if (filter?.runId) params.set("runId", filter.runId);
+  if (typeof filter?.limit === "number") params.set("limit", String(filter.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: import("../../shared/contracts").HookExecutionLogRecord[] }>(`/api/hooks/executions${suffix}`);
+}
+
+// ── Telemetry ──────────────────────────────────────────────────────
+
+export interface TelemetrySpanSummary {
+  name: string;
+  count: number;
+  avgDurationMs: number;
+  errorCount: number;
+}
+
+export async function getTelemetrySpans(filter?: { name?: string; status?: string }) {
+  const params = new URLSearchParams();
+  if (filter?.name) params.set("name", filter.name);
+  if (filter?.status) params.set("status", filter.status);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ spans: TelemetrySpanSummary[] }>(`/api/telemetry/spans${suffix}`);
+}
+
+export async function getTelemetryMetrics() {
+  return apiRequestText("/api/telemetry/metrics");
+}
+
+// ── MCP Health ─────────────────────────────────────────────────────
+
+export async function getMcpServerHealth(serverId: string) {
+  return apiRequest<{ status: string; consecutiveFailures: number; restartAttempts: number; lastCheckTime?: number }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(serverId)}/health`);
 }

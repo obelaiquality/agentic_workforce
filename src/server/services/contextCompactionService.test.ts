@@ -12,6 +12,10 @@ import {
   compactWithMemory,
   snipCompact,
   computeCacheTopologyMap,
+  microcompact,
+  trackCacheBreakpoint,
+  getCacheBreakpoints,
+  clearCacheBreakpoints,
   type CompactionMessage,
 } from "./contextCompactionService";
 import { MemoryService } from "./memoryService";
@@ -770,5 +774,175 @@ describe("computeCacheTopologyMap", () => {
     expect(map.get(2)!.inCachedRegion).toBe(false);
     expect(map.get(3)!.inCachedRegion).toBe(false);
     expect(map.get(4)!.inCachedRegion).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// microcompact (Stage -1 — cache-aware pruning)
+// ---------------------------------------------------------------------------
+
+describe("microcompact", () => {
+  it("replaces long assistant messages in cached region with stubs", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system" },
+      { role: "user", content: "task" },
+      { role: "assistant", content: "x".repeat(1000) }, // index 2 - cached, old enough
+      { role: "user", content: "next task" },
+      { role: "assistant", content: "y".repeat(1000) }, // index 4 - cached, old enough
+      { role: "user", content: "final task" },
+      { role: "assistant", content: "recent1" }, // recent - should not be touched
+      { role: "assistant", content: "recent2" },
+      { role: "assistant", content: "recent3" },
+    ];
+
+    const result = microcompact(msgs, {
+      cacheBreakpoints: [5], // breakpoint at index 5
+      minAgeForRemoval: 3,
+      cacheWindowSize: 10,
+    });
+
+    // Messages at indices 2 and 4 should be stubbed
+    expect(result.messages[2].content).toContain("[Cached by provider");
+    expect(result.messages[4].content).toContain("[Cached by provider");
+
+    // Recent messages should be unchanged
+    expect(result.messages[6].content).toBe("recent1");
+    expect(result.messages[7].content).toBe("recent2");
+    expect(result.messages[8].content).toBe("recent3");
+
+    // Should have freed tokens
+    expect(result.tokensFreed).toBeGreaterThan(0);
+  });
+
+  it("preserves pinned messages", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "x".repeat(1000), pinned: true },
+      { role: "user", content: "task" },
+      { role: "assistant", content: "y".repeat(1000) },
+      { role: "user", content: "recent" },
+    ];
+
+    const result = microcompact(msgs, {
+      cacheBreakpoints: [2],
+      minAgeForRemoval: 1,
+      cacheWindowSize: 10,
+    });
+
+    // Pinned message should not be touched
+    expect(result.messages[0].content).toBe("x".repeat(1000));
+  });
+
+  it("skips messages outside cached region", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system" },
+      { role: "user", content: "task" },
+      { role: "assistant", content: "x".repeat(1000) }, // index 2 - will be in cache window [2-4]
+      { role: "user", content: "task2" },
+      { role: "assistant", content: "y".repeat(1000) }, // index 4 - recent (within minAge=1)
+      { role: "user", content: "task3" },
+      { role: "assistant", content: "z".repeat(1000) }, // index 6 - outside cache window
+    ];
+
+    const result = microcompact(msgs, {
+      cacheBreakpoints: [4], // breakpoint at index 4
+      minAgeForRemoval: 2, // protect last 2 messages (indices 5, 6)
+      cacheWindowSize: 2, // covers indices 2-4 (breakpoint-2 to breakpoint)
+    });
+
+    // Index 2 is inside cache window and old enough - should be stubbed
+    expect(result.messages[2].content).toContain("[Cached by provider");
+
+    // Index 4 is inside cache window but might be borderline - let's check index 6
+    // Index 6 is outside cache window - should NOT be stubbed
+    expect(result.messages[6].content).toBe("z".repeat(1000));
+  });
+
+  it("does not touch short messages", () => {
+    const msgs: CompactionMessage[] = [
+      { role: "system", content: "system" },
+      { role: "user", content: "task" },
+      { role: "assistant", content: "short" }, // too short
+      { role: "user", content: "recent" },
+    ];
+
+    const result = microcompact(msgs, {
+      cacheBreakpoints: [2],
+      minAgeForRemoval: 1,
+      cacheWindowSize: 10,
+    });
+
+    // Short message should not be stubbed
+    expect(result.messages[2].content).toBe("short");
+    expect(result.tokensFreed).toBe(0);
+  });
+
+  it("protects recent messages based on minAgeForRemoval", () => {
+    const msgs: CompactionMessage[] = [];
+    for (let i = 0; i < 10; i++) {
+      msgs.push({ role: "assistant", content: "x".repeat(1000) });
+    }
+
+    const result = microcompact(msgs, {
+      cacheBreakpoints: [5],
+      minAgeForRemoval: 3,
+      cacheWindowSize: 20,
+    });
+
+    // Last 3 messages should be untouched
+    expect(result.messages[7].content).toBe("x".repeat(1000));
+    expect(result.messages[8].content).toBe("x".repeat(1000));
+    expect(result.messages[9].content).toBe("x".repeat(1000));
+
+    // Earlier messages should be stubbed
+    expect(result.messages[0].content).toContain("[Cached by provider");
+  });
+});
+
+describe("cache breakpoint tracking", () => {
+  it("records cache breakpoints for a conversation", () => {
+    const convId = "test-conv-1";
+    trackCacheBreakpoint(convId, 5);
+    trackCacheBreakpoint(convId, 10);
+
+    const breakpoints = getCacheBreakpoints(convId);
+    expect(breakpoints).toEqual([5, 10]);
+  });
+
+  it("does not duplicate breakpoints", () => {
+    const convId = "test-conv-2";
+    trackCacheBreakpoint(convId, 5);
+    trackCacheBreakpoint(convId, 5);
+    trackCacheBreakpoint(convId, 5);
+
+    const breakpoints = getCacheBreakpoints(convId);
+    expect(breakpoints).toEqual([5]);
+  });
+
+  it("keeps only last 10 breakpoints", () => {
+    const convId = "test-conv-3";
+    for (let i = 0; i < 15; i++) {
+      trackCacheBreakpoint(convId, i);
+    }
+
+    const breakpoints = getCacheBreakpoints(convId);
+    expect(breakpoints.length).toBe(10);
+    expect(breakpoints[0]).toBe(5); // First 5 should be dropped
+    expect(breakpoints[9]).toBe(14);
+  });
+
+  it("clears breakpoints for a conversation", () => {
+    const convId = "test-conv-4";
+    trackCacheBreakpoint(convId, 5);
+    trackCacheBreakpoint(convId, 10);
+
+    clearCacheBreakpoints(convId);
+
+    const breakpoints = getCacheBreakpoints(convId);
+    expect(breakpoints).toEqual([]);
+  });
+
+  it("returns empty array for unknown conversation", () => {
+    const breakpoints = getCacheBreakpoints("nonexistent-conv");
+    expect(breakpoints).toEqual([]);
   });
 });

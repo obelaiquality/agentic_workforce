@@ -9,6 +9,7 @@ import { ProjectsWorkspaceView } from "./components/views/ProjectsWorkspaceView"
 import { useMissionControlLiveData } from "./hooks/useMissionControlLiveData";
 import { useUiStore } from "./store/uiStore";
 import { CommandCenterView } from "./components/views/CommandCenterView";
+import { TelemetryView } from "./components/views/TelemetryView";
 import { ProcessingIndicator } from "./components/ui/processing-indicator";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
@@ -333,7 +334,11 @@ export default function App() {
                     <CommandCenterView mission={mission} />
                   )}
 
-                  {liveTab !== "Execution" && (
+                  {liveTab === "Telemetry" && (
+                    <TelemetryView />
+                  )}
+
+                  {liveTab !== "Execution" && liveTab !== "Telemetry" && (
                     <EmptyState
                       icon={<Activity className="h-6 w-6 text-zinc-500" />}
                       heading={`${liveTab} is coming soon`}

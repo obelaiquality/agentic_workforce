@@ -5,9 +5,13 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     appSetting: {
       findUnique: vi.fn(),
+      upsert: vi.fn(),
     },
     secretRecord: {
       findUnique: vi.fn(),
+    },
+    auditEvent: {
+      create: vi.fn(),
     },
   },
 }));
@@ -45,18 +49,44 @@ function createHarness() {
       },
     }),
   };
+  const mcpClient = {
+    getServerHealth: vi.fn().mockReturnValue(null),
+  };
+  const mcpRegistry = {
+    getStatuses: vi.fn().mockReturnValue([]),
+    getServers: vi.fn().mockReturnValue([]),
+    replaceServers: vi.fn().mockResolvedValue(undefined),
+    getServer: vi.fn(),
+    getClient: vi.fn().mockReturnValue(mcpClient),
+    connect: vi.fn().mockResolvedValue(undefined),
+    reconnect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockResolvedValue(undefined),
+    listResources: vi.fn().mockResolvedValue([]),
+    readResource: vi.fn().mockResolvedValue({ content: "example" }),
+  };
+  const toolRegistry = {
+    unregisterAll: vi.fn(),
+  };
+  const lspClient = {
+    getServerStatuses: vi.fn().mockResolvedValue([]),
+  };
 
   registerSettingsRoutes({
     app,
     channelService: channelService as never,
+    mcpRegistry: mcpRegistry as never,
+    toolRegistry: toolRegistry as never,
+    lspClient: lspClient as never,
   });
 
-  return { app, channelService };
+  return { app, channelService, mcpRegistry, toolRegistry, lspClient };
 }
 
 describe("settingsRoutes secret redaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.prisma.appSetting.upsert.mockResolvedValue(undefined);
+    mocks.prisma.auditEvent.create.mockResolvedValue(undefined);
 
     mocks.prisma.appSetting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) => {
       switch (where.key) {
@@ -169,6 +199,126 @@ describe("settingsRoutes secret redaction", () => {
     expect(payload.items.onPremQwenRoleRuntimes.utility_fast).toMatchObject({
       hasApiKey: true,
       apiKeySource: "stored",
+    });
+
+    await app.close();
+  });
+
+  it("returns MCP integration status from the shared registry", async () => {
+    const { app, mcpRegistry } = createHarness();
+    mcpRegistry.getServers.mockReturnValue([
+      {
+        id: "github",
+        name: "GitHub",
+        transport: "stdio",
+        command: "npx",
+        args: ["@modelcontextprotocol/server-github"],
+        enabled: true,
+        env: { GITHUB_TOKEN: "secret" },
+      },
+    ]);
+    mcpRegistry.getStatuses.mockReturnValue([
+      {
+        id: "github",
+        name: "GitHub",
+        connected: true,
+        toolCount: 8,
+        resourceCount: 2,
+        lastConnected: "2026-04-01T08:00:00.000Z",
+      },
+    ]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/settings/integrations/mcp",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      items: [
+        expect.objectContaining({
+          id: "github",
+          connected: true,
+          toolCount: 8,
+          resourceCount: 2,
+          envKeys: ["GITHUB_TOKEN"],
+        }),
+      ],
+    });
+
+    await app.close();
+  });
+
+  it("persists MCP integration changes and refreshes the registry", async () => {
+    const { app, mcpRegistry } = createHarness();
+    mcpRegistry.getServers.mockReturnValue([]);
+    mcpRegistry.getStatuses.mockReturnValue([
+      {
+        id: "linear",
+        name: "Linear",
+        connected: true,
+        toolCount: 3,
+        resourceCount: 1,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/settings/integrations/mcp",
+      payload: {
+        server: {
+          id: "linear",
+          name: "Linear",
+          transport: "stdio",
+          command: "npx",
+          args: ["@modelcontextprotocol/server-linear"],
+          enabled: true,
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mocks.prisma.appSetting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "mcp_server_configs" },
+      })
+    );
+    expect(mcpRegistry.replaceServers).toHaveBeenCalled();
+    expect(mcpRegistry.reconnect).toHaveBeenCalledWith("linear", expect.anything());
+
+    await app.close();
+  });
+
+  it("returns LSP integration status from the shared client", async () => {
+    const { app, lspClient } = createHarness();
+    lspClient.getServerStatuses.mockResolvedValue([
+      {
+        language: "typescript",
+        command: ["npx", "typescript-language-server", "--stdio"],
+        extensions: [".ts", ".tsx"],
+        capabilities: { diagnostics: true, definition: true },
+        binaryAvailable: true,
+        running: true,
+        initialized: true,
+        worktreePath: "/tmp/project",
+        processId: 1234,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/settings/integrations/lsp",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      items: [
+        expect.objectContaining({
+          language: "typescript",
+          running: true,
+          initialized: true,
+        }),
+      ],
     });
 
     await app.close();

@@ -22,13 +22,17 @@ import {
   syncProjectV5,
   updateProjectBlueprintV8,
   updateSettings,
-  executeOverseerRouteV8,
   getProjectBlueprintV8,
   moveMissionWorkflowV8,
+  openAgenticRunStream,
+  startAgenticRun,
+  approveAgenticRunPlan,
+  rejectAgenticRunPlan,
+  refineAgenticRunPlan,
+  answerAgenticRunPlanQuestion,
 } from "../lib/apiClient";
 import {
   buildApprovalFollowup,
-  buildExecutionActionMessage,
   buildExecutionFailureActionMessage,
   normalizeApiErrorMessage,
   type TicketLifecycleNotice,
@@ -249,6 +253,153 @@ function resolveAppModeNotice(input: { appMode: AppMode; error: unknown }) {
   return null;
 }
 
+function mergeAgenticRunWithLiveEvents(
+  base: MissionControlSnapshot["agenticRun"],
+  liveEvents: Array<{
+    createdAt: string;
+    event: import("../../shared/contracts").AgenticEvent;
+    runId: string;
+    ticketId: string | null;
+    projectId: string | null;
+  }>,
+  liveAssistantText: string,
+) {
+  if (!base) {
+    return null;
+  }
+
+  const merged = {
+    ...base,
+    lastAssistantText: liveAssistantText || base.lastAssistantText,
+    recentEvents: [
+      ...base.recentEvents,
+      ...liveEvents.map((item, index) => ({
+        id: `live-${item.runId}-${index}-${item.createdAt}`,
+        runId: item.runId,
+        ticketId: item.ticketId,
+        projectId: item.projectId,
+        type: item.event.type,
+        createdAt: item.createdAt,
+        payload: item.event as unknown as Record<string, unknown>,
+      })),
+    ].slice(-24),
+    toolCalls: [...base.toolCalls],
+    compactionEvents: [...base.compactionEvents],
+    escalations: [...base.escalations],
+    doomLoops: [...base.doomLoops],
+    skillEvents: [...base.skillEvents],
+    hookEvents: [...base.hookEvents],
+    memoryExtractions: [...base.memoryExtractions],
+    thinkingLog: base.thinkingLog,
+    budget: {
+      ...base.budget,
+      tokenTimeline: [...base.budget.tokenTimeline],
+    },
+  };
+
+  for (const item of liveEvents) {
+    const event = item.event;
+    if (event.type === "tool_result") {
+      const existing = merged.toolCalls.findIndex((call) => call.id === event.id);
+      const next = {
+        id: event.id,
+        iteration: merged.iterationCount || 1,
+        name: event.name,
+        args: {},
+        result: event.result,
+        policyDecision: event.result.type === "approval_required" ? ("approval_required" as const) : "allow",
+        durationMs: event.durationMs,
+        timestamp: item.createdAt,
+      };
+      if (existing >= 0) merged.toolCalls[existing] = next;
+      else merged.toolCalls.push(next);
+    }
+    if (event.type === "tool_approval_needed") {
+      merged.approvalCount += 1;
+    }
+    if (event.type === "context_compacted") {
+      merged.compactionEvents.push({
+        iteration: merged.iterationCount || 1,
+        stage: event.stage,
+        tokensBefore: event.tokensBefore,
+        tokensAfter: event.tokensAfter,
+        timestamp: item.createdAt,
+      });
+    }
+    if (event.type === "escalating") {
+      merged.escalations.push({
+        iteration: merged.iterationCount || 1,
+        fromRole: event.fromRole,
+        toRole: event.toRole,
+        reason: event.reason,
+        timestamp: item.createdAt,
+      });
+      merged.latestRole = event.toRole;
+    }
+    if (event.type === "doom_loop_detected") {
+      merged.doomLoops.push({
+        iteration: merged.iterationCount || 1,
+        reason: event.reason,
+        suggestion: event.suggestion,
+        timestamp: item.createdAt,
+      });
+    }
+    if (event.type === "hook_executed") {
+      merged.hookEvents.push({
+        hookId: event.hookId,
+        hookName: event.hookName,
+        eventType: event.eventType as import("../../shared/contracts").HookEventType,
+        success: event.success,
+        output: null,
+        error: null,
+        timestamp: item.createdAt,
+      });
+    }
+    if (event.type === "memory_extracted") {
+      merged.memoryExtractions.push({
+        memoryId: event.memoryId,
+        summary: event.summary,
+        timestamp: item.createdAt,
+      });
+    }
+    if (event.type === "skill_invoked") {
+      merged.skillEvents.push({
+        invocationId: event.invocationId,
+        skillId: event.skillId,
+        skillName: event.skillName,
+        status: "running",
+        output: null,
+        childRunId: null,
+        timestamp: item.createdAt,
+      });
+    }
+    if (event.type === "skill_completed" || event.type === "skill_failed") {
+      const existing = merged.skillEvents.findIndex((skill) => skill.invocationId === event.invocationId);
+      if (existing >= 0) {
+        merged.skillEvents[existing] = {
+          ...merged.skillEvents[existing],
+          status: event.type === "skill_completed" ? "completed" : "failed",
+          output: event.type === "skill_completed" ? event.output : event.error,
+        };
+      }
+    }
+    if (event.type === "assistant_thinking") {
+      merged.thinkingTokenCount += Math.ceil(event.value.length / 4);
+      merged.thinkingLog = merged.thinkingLog ? `${merged.thinkingLog}\n${event.value}` : event.value;
+    }
+    if (event.type === "iteration_start") {
+      merged.iterationCount = Math.max(merged.iterationCount, event.iteration);
+    }
+    if (event.type === "plan_started") merged.phase = "planning";
+    if (event.type === "plan_submitted") merged.phase = "plan_review";
+    if (event.type === "plan_approved") merged.phase = "executing";
+    if (event.type === "plan_rejected") merged.phase = "failed";
+    if (event.type === "plan_question_answered" || event.type === "plan_refine_requested") merged.phase = "planning";
+  }
+
+  return merged;
+}
+
 export function useMissionControlLiveData() {
   const queryClient = useQueryClient();
   const selectedSessionId = useUiStore((state) => state.selectedSessionId);
@@ -276,6 +427,15 @@ export function useMissionControlLiveData() {
   const [githubOwner, setGithubOwner] = useState("");
   const [githubRepo, setGithubRepo] = useState("");
   const [projectSetupState, setProjectSetupState] = useState<ProjectSetupState | null>(null);
+  const [agenticAssistantText, setAgenticAssistantText] = useState("");
+  const [planModeEnabled, setPlanModeEnabled] = useState(false);
+  const [agenticLiveEvents, setAgenticLiveEvents] = useState<Array<{
+    createdAt: string;
+    event: import("../../shared/contracts").AgenticEvent;
+    runId: string;
+    ticketId: string | null;
+    projectId: string | null;
+  }>>([]);
 
   const recentPathsQuery = useQuery({
     queryKey: ["desktop-recent-repos"],
@@ -447,6 +607,75 @@ export function useMissionControlLiveData() {
       if (source) source.close();
     };
   }, [queryClient, snapshot?.overseer.selectedSessionId]);
+
+  useEffect(() => {
+    const runId = snapshot?.agenticRun?.runId || selectedRunId;
+    if (!runId) {
+      setAgenticAssistantText("");
+      setAgenticLiveEvents([]);
+      return;
+    }
+
+    let source: ApiEventStream | null = null;
+    let cancelled = false;
+    setAgenticAssistantText("");
+    setAgenticLiveEvents([]);
+
+    void openAgenticRunStream(runId).then((eventSource) => {
+      if (cancelled) {
+        eventSource.close();
+        return;
+      }
+
+      source = eventSource;
+
+      const handleEvent = (evt: MessageEvent) => {
+        const parsed = JSON.parse(evt.data) as {
+          runId?: string;
+          run_id?: string;
+          ticketId?: string | null;
+          ticket_id?: string | null;
+          projectId?: string | null;
+          project_id?: string | null;
+          event?: import("../../shared/contracts").AgenticEvent;
+        };
+        if (!parsed.event) {
+          return;
+        }
+
+        if (parsed.event.type === "assistant_token") {
+          setAgenticAssistantText((current) => current + parsed.event.value);
+          return;
+        }
+
+        if (parsed.event.type === "execution_complete" || parsed.event.type === "execution_aborted" || parsed.event.type === "error") {
+          setAgenticAssistantText("");
+          void queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+        }
+
+        setAgenticLiveEvents((current) => [
+          ...current.slice(-23),
+          {
+            createdAt: new Date().toISOString(),
+            event: parsed.event!,
+            runId: parsed.runId || parsed.run_id || runId,
+            ticketId: parsed.ticketId || parsed.ticket_id || null,
+            projectId: parsed.projectId || parsed.project_id || null,
+          },
+        ]);
+      };
+
+      source.addEventListener("agentic", handleEvent as EventListener);
+      source.addEventListener("error", (() => {
+        void queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      }) as EventListener);
+    });
+
+    return () => {
+      cancelled = true;
+      if (source) source.close();
+    };
+  }, [queryClient, selectedRunId, snapshot?.agenticRun?.runId]);
 
   const activateRepoMutation = useMutation({
     mutationFn: (repoId: string) =>
@@ -745,31 +974,25 @@ export function useMissionControlLiveData() {
         selectedTicket: snapshot?.selectedTicket,
         objective,
       });
-      return executeOverseerRouteV8({
+      return startAgenticRun({
         actor: "user",
         project_id: selectedRepo.id,
         ticket_id: ticketId,
-        prompt: objective,
-        model_role: selectedExecutionProfileStages.build,
-        execution_profile_id: selectedExecutionProfile?.id,
+        objective,
+        initial_model_role: selectedExecutionProfileStages.build,
+        use_deferred_tools: true,
+        plan_mode: planModeEnabled,
       });
     },
     onMutate: () => {
-      setActionMessage("Starting work: moving ticket to In Progress...");
+      setActionMessage("Starting tracked agentic run...");
     },
     onSuccess: (result) => {
       setSelectedTicketId(result.ticket.id);
       setSelectedRunId(result.runId);
-      setRoutePreview(result.route);
-      if (result.blueprint) {
-        setBlueprintPreview(result.blueprint);
-      }
-      setActionMessage(
-        buildExecutionActionMessage({
-          lifecycle: result.lifecycle,
-          verification: result.verification,
-        })
-      );
+      setAgenticAssistantText("");
+      setAgenticLiveEvents([]);
+      setActionMessage("Agentic run started. Mission Control is now following the live execution stream.");
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
     },
     onError: (error) => {
@@ -778,6 +1001,39 @@ export function useMissionControlLiveData() {
         return;
       }
       setActionMessage("Execution failed.");
+    },
+  });
+
+  const approvePlanMutation = useMutation({
+    mutationFn: (runId: string) => approveAgenticRunPlan(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      setActionMessage("Plan approved. Execution resumed.");
+    },
+  });
+
+  const rejectPlanMutation = useMutation({
+    mutationFn: ({ runId, reason }: { runId: string; reason: string }) => rejectAgenticRunPlan(runId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      setActionMessage("Plan rejected.");
+    },
+  });
+
+  const refinePlanMutation = useMutation({
+    mutationFn: ({ runId, feedback }: { runId: string; feedback: string }) => refineAgenticRunPlan(runId, feedback),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      setActionMessage("Requested plan refinement.");
+    },
+  });
+
+  const answerPlanQuestionMutation = useMutation({
+    mutationFn: ({ runId, questionId, answer }: { runId: string; questionId: string; answer: string }) =>
+      answerAgenticRunPlanQuestion(runId, questionId, answer),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
+      setActionMessage("Plan question answered. Planning resumed.");
     },
   });
 
@@ -1062,6 +1318,7 @@ export function useMissionControlLiveData() {
 
   const effectiveRoute = routePreview || snapshot?.route || null;
   const effectiveContextPack = contextPackPreview || snapshot?.contextPack || null;
+  const effectiveAgenticRun = mergeAgenticRunWithLiveEvents(snapshot?.agenticRun ?? null, agenticLiveEvents, agenticAssistantText);
   const pendingApprovals = (snapshot?.approvals ?? []).map(toPendingApproval);
   const runSummary = snapshot?.runSummary || null;
   const verification = snapshot?.verification || null;
@@ -1105,6 +1362,8 @@ export function useMissionControlLiveData() {
     messages,
     input,
     setInput,
+    planModeEnabled,
+    setPlanModeEnabled,
     streaming,
     roleLabels: ROLE_LABELS,
     executionProfiles,
@@ -1127,6 +1386,7 @@ export function useMissionControlLiveData() {
     consoleLogs: (snapshot?.consoleLogs ?? []) as ConsoleLog[],
     consoleEvents: (snapshot?.consoleEvents ?? []) as import("../../shared/contracts").ConsoleEvent[],
     experimentalAutonomy: snapshot?.experimentalAutonomy ?? { channels: [], subagents: [] },
+    agenticRun: effectiveAgenticRun,
     pendingApprovals,
     liveState: !selectedRepo ? "disconnected" : snapshotQuery.isLoading ? "loading" : snapshotQuery.isError ? "degraded" : "live",
     lastUpdatedAt: snapshot?.lastUpdatedAt || selectedRepo?.updatedAt || null,
@@ -1197,7 +1457,11 @@ export function useMissionControlLiveData() {
       moveWorkflowMutation.isPending ||
       addTaskCommentMutation.isPending ||
       setTicketExecutionProfileMutation.isPending ||
-      setTicketPermissionMutation.isPending,
+      setTicketPermissionMutation.isPending ||
+      approvePlanMutation.isPending ||
+      rejectPlanMutation.isPending ||
+      refinePlanMutation.isPending ||
+      answerPlanQuestionMutation.isPending,
     chooseLocalRepo,
     openNewProjectDialog,
     openStarterDialogForActiveProject,
@@ -1252,6 +1516,11 @@ export function useMissionControlLiveData() {
     setSelectedSessionId,
     reviewRoute: () => reviewRouteMutation.mutate(),
     executeRoute: () => executeMutation.mutate(),
+    approvePlan: (runId: string) => approvePlanMutation.mutate(runId),
+    rejectPlan: (runId: string, reason: string) => rejectPlanMutation.mutate({ runId, reason }),
+    refinePlan: (runId: string, feedback: string) => refinePlanMutation.mutate({ runId, feedback }),
+    answerPlanQuestion: (runId: string, questionId: string, answer: string) =>
+      answerPlanQuestionMutation.mutate({ runId, questionId, answer }),
     sendMessage: () => {
       if (!input.trim()) return;
       sendMutation.mutate(input.trim());
@@ -1269,7 +1538,10 @@ export function useMissionControlLiveData() {
     isUpdatingTicketPermissionMode: setTicketPermissionMutation.isPending,
     isUpdatingExecutionProfile: Boolean(pendingExecutionProfileId) || updateBlueprintMutation.isPending,
     isReviewing: reviewRouteMutation.isPending,
-    isExecuting: executeMutation.isPending,
+    isExecuting:
+      executeMutation.isPending ||
+      effectiveAgenticRun?.status === "running" ||
+      runSummary?.status === "running",
     updateBlueprint: (patch: Partial<ProjectBlueprint>) => updateBlueprintMutation.mutate(patch),
     regenerateBlueprint: () => regenerateBlueprintMutation.mutate(),
     openProjects: () => setActiveSection("projects"),

@@ -1,4 +1,5 @@
 import type { LlmProviderAdapter, ProviderId } from "../../shared/contracts";
+import { wrapWithToolEmulation } from "./toolEmulationAdapter";
 
 export class ProviderFactory {
   private readonly adapters = new Map<ProviderId, LlmProviderAdapter>();
@@ -19,3 +20,5 @@ export class ProviderFactory {
     return Array.from(this.adapters.values());
   }
 }
+
+export { wrapWithToolEmulation };

@@ -1,0 +1,11 @@
+{
+  "name": "commit",
+  "description": "Review staged changes and create a commit with a descriptive message following repository conventions.",
+  "version": "1.0.0",
+  "contextMode": "inline",
+  "allowedTools": ["bash", "read_file", "git_diff", "git_status"],
+  "systemPrompt": "You are a commit message specialist. Your task:\n\n1. Run git status to see staged changes\n2. Run git diff --cached to review the actual diff\n3. Create a commit with:\n   - Concise summary line (50 chars max, imperative mood)\n   - Blank line\n   - Detailed body explaining WHY the change was made\n   - Reference any ticket IDs if available\n\nRun `git commit -m \"...\"` when ready. Do not amend existing commits unless explicitly asked.",
+  "referenceFiles": [],
+  "tags": ["git", "commit"],
+  "author": "system"
+}

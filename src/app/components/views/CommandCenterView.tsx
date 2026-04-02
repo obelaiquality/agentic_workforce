@@ -37,6 +37,7 @@ import { OutcomeDebriefDrawer } from "../mission/OutcomeDebriefDrawer";
 import { ProjectMemoryPanel } from "../mission/ProjectMemoryPanel";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
+import { AgenticRunDeepPanel } from "../agentic";
 
 type MissionData = ReturnType<typeof useMissionControlLiveData>;
 type WorkflowStatusFilter = "all" | "backlog" | "in_progress" | "needs_review" | "completed";
@@ -157,6 +158,10 @@ function metricTone(status: WorkflowLaneKey) {
     default:
       return "bg-cyan-500/10 text-cyan-300 border-cyan-500/20";
   }
+}
+
+function formatAgenticEventLabel(type: string) {
+  return type.replace(/_/g, " ");
 }
 
 function lifecycleNoticeToneClass(tone: "info" | "success" | "warn") {
@@ -631,6 +636,17 @@ function OverseerCommandCard({
                   </option>
                 ))}
               </select>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#111113] px-2.5 py-1.5 text-[11px] text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={Boolean((mission as { planModeEnabled?: boolean }).planModeEnabled)}
+                  onChange={(event) =>
+                    (mission as { setPlanModeEnabled?: (value: boolean) => void }).setPlanModeEnabled?.(event.target.checked)
+                  }
+                  className="h-3.5 w-3.5 rounded border-white/10 bg-transparent"
+                />
+                Plan mode
+              </label>
             </div>
 
             <div className="flex items-center gap-2">
@@ -714,6 +730,95 @@ function OverseerCommandCard({
                 ) : null}
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {mission.agenticRun ? (
+          <div className="rounded-[20px] border border-cyan-500/10 bg-[linear-gradient(180deg,rgba(7,20,28,0.9),rgba(10,12,16,0.98))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-cyan-300/80">Agentic Run</div>
+                <div className="mt-1 text-sm text-zinc-400">Tracked execution, planning, tool use, and memory activity.</div>
+              </div>
+              <Chip variant={mission.agenticRun.status === "running" ? "warn" : mission.agenticRun.status === "completed" ? "ok" : "subtle"} className="text-[10px]">
+                {mission.agenticRun.status}
+              </Chip>
+            </div>
+
+            {mission.agenticRun.phase === "plan_review" ? (
+              <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/8 p-3">
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-amber-200">Plan Review</div>
+                <div className="mt-2 text-sm text-amber-50">
+                  Review the proposed plan below, then approve to resume execution or request refinement.
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => (mission as { approvePlan?: (runId: string) => void }).approvePlan?.(mission.agenticRun!.runId)}
+                    className="rounded-lg border border-emerald-500/20 bg-emerald-500/12 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-500/20"
+                  >
+                    Approve plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const feedback = window.prompt("What should change in the plan?");
+                      if (feedback) {
+                        (mission as { refinePlan?: (runId: string, feedback: string) => void }).refinePlan?.(mission.agenticRun!.runId, feedback);
+                      }
+                    }}
+                    className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-200 transition hover:bg-white/[0.08]"
+                  >
+                    Request changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const reason = window.prompt("Why are you rejecting this plan?");
+                      if (reason) {
+                        (mission as { rejectPlan?: (runId: string, reason: string) => void }).rejectPlan?.(mission.agenticRun!.runId, reason);
+                      }
+                    }}
+                    className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-500/16"
+                  >
+                    Reject plan
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {mission.agenticRun.phase === "planning" && mission.agenticRun.plan?.questions.some((question) => !question.answer) ? (
+              <div className="mb-3 rounded-xl border border-cyan-500/20 bg-cyan-500/8 p-3">
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-cyan-200">Planning Questions</div>
+                <div className="mt-3 space-y-2">
+                  {mission.agenticRun.plan.questions
+                    .filter((question) => !question.answer)
+                    .map((question) => (
+                      <div key={question.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                        <div className="text-sm text-zinc-100">{question.question}</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const answer = window.prompt("Answer plan question", "");
+                            if (answer) {
+                              (mission as { answerPlanQuestion?: (runId: string, questionId: string, answer: string) => void }).answerPlanQuestion?.(
+                                mission.agenticRun!.runId,
+                                question.id,
+                                answer,
+                              );
+                            }
+                          }}
+                          className="mt-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/16"
+                        >
+                          Answer
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ) : null}
+
+            <AgenticRunDeepPanel run={mission.agenticRun} />
           </div>
         ) : null}
       </div>
@@ -1814,6 +1919,36 @@ function CommandContextDrawer({
                 </div>
               ) : null}
             </div>
+
+            {taskDetail?.subtasks.length ? (
+              <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Subtasks</div>
+                  <div className="text-[10px] text-zinc-500">
+                    {taskDetail.subtasks.filter((subtask) => subtask.status === "done").length}/{taskDetail.subtasks.length} done
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {taskDetail.subtasks.map((subtask) => (
+                    <div key={subtask.id} className="rounded-[14px] border border-white/6 bg-white/[0.02] px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm text-white">{subtask.title}</div>
+                        <Chip variant="subtle" className="text-[10px]">
+                          {STATUS_LABELS[subtask.status] || subtask.status}
+                        </Chip>
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500">{subtask.description}</div>
+                      {subtask.blockedBy.length ? (
+                        <div className="mt-2 text-[11px] text-amber-200">Blocked by: {subtask.blockedBy.join(", ")}</div>
+                      ) : null}
+                      {subtask.notes.length ? (
+                        <div className="mt-2 text-[11px] text-zinc-400">{subtask.notes[subtask.notes.length - 1]}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {taskDetail ? (
               <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">

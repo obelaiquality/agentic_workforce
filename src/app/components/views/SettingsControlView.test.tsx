@@ -8,8 +8,44 @@ const apiClientMock = vi.hoisted(() => ({
   activateModelPluginV2: vi.fn().mockResolvedValue({}),
   activateProviderV2: vi.fn().mockResolvedValue({}),
   bootstrapQwenAccount: vi.fn().mockResolvedValue({}),
+  connectMcpIntegration: vi.fn().mockResolvedValue({}),
+  createOrUpdateMcpIntegration: vi.fn().mockResolvedValue({}),
   createQwenAccount: vi.fn().mockResolvedValue({}),
+  deleteMcpIntegration: vi.fn().mockResolvedValue({}),
+  disconnectMcpIntegration: vi.fn().mockResolvedValue({}),
   getLatestInferenceBenchmarksV2: vi.fn().mockResolvedValue({ items: [] }),
+  getLspIntegrations: vi.fn().mockResolvedValue({
+    items: [
+      {
+        language: "typescript",
+        command: ["npx", "typescript-language-server", "--stdio"],
+        extensions: [".ts", ".tsx"],
+        capabilities: { diagnostics: true, definition: true },
+        binaryAvailable: true,
+        running: true,
+        initialized: true,
+        worktreePath: "/tmp/project",
+        processId: 1234,
+      },
+    ],
+  }),
+  getMcpIntegrations: vi.fn().mockResolvedValue({
+    items: [
+      {
+        id: "github",
+        name: "GitHub",
+        transport: "stdio",
+        command: "npx",
+        args: ["@modelcontextprotocol/server-github"],
+        url: undefined,
+        envKeys: ["GITHUB_TOKEN"],
+        enabled: true,
+        connected: true,
+        toolCount: 8,
+        resourceCount: 2,
+      },
+    ],
+  }),
   listExperimentalChannelActivity: vi.fn().mockResolvedValue({ items: { channels: [], subagents: [] } }),
   listOnPremRoleRuntimes: vi.fn().mockResolvedValue({ items: [] }),
   getOpenAiBudgetV3: vi.fn().mockResolvedValue({ item: { remainingUsd: 12 } }),
@@ -34,6 +70,7 @@ const apiClientMock = vi.hoisted(() => ({
   stopInferenceBackendV2: vi.fn().mockResolvedValue({}),
   stopOnPremRoleRuntime: vi.fn().mockResolvedValue({}),
   switchInferenceBackendV2: vi.fn().mockResolvedValue({}),
+  patchMcpIntegration: vi.fn().mockResolvedValue({}),
   testOnPremRoleRuntime: vi.fn().mockResolvedValue({}),
   updateQwenAccount: vi.fn().mockResolvedValue({}),
   updateSettings: vi.fn().mockResolvedValue({}),
@@ -82,5 +119,18 @@ describe("SettingsControlView", () => {
 
     expect(await screen.findByText("Execution Profiles & Routing")).toBeInTheDocument();
     expect(screen.getByText("Execution Profiles")).toBeInTheDocument();
+  });
+
+  it("shows integrations and code intelligence status in Advanced view", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("button", { name: /Integrations & Code Intelligence/i }));
+
+    expect(await screen.findByText("Model Context Protocol")).toBeInTheDocument();
+    expect(await screen.findByText("GitHub")).toBeInTheDocument();
+    expect(screen.getByText("Language Server Protocol")).toBeInTheDocument();
+    expect(await screen.findByText("typescript")).toBeInTheDocument();
+    expect(await screen.findByText("installed")).toBeInTheDocument();
   });
 });

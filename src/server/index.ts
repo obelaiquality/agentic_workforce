@@ -1,8 +1,11 @@
 import "dotenv/config";
 import { pathToFileURL } from "node:url";
+import { createLogger } from "./logger";
 import { createServer } from "./app";
 import { prisma } from "./db";
 import { stopSidecarProcess } from "./sidecar/manager";
+
+const log = createLogger("Server");
 
 const port = Number(process.env.API_PORT || 8787);
 const host = "127.0.0.1";
@@ -56,7 +59,7 @@ const entrypointHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : "
 if (import.meta.url === entrypointHref) {
   bootstrap().catch((error) => {
     // Keep startup failures readable in desktop logs.
-    console.error("Failed to start local API:", error);
+    log.error("Failed to start local API:", error);
     process.exit(1);
   });
 }

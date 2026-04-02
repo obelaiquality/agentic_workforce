@@ -152,6 +152,103 @@ function applyEmergency(messages: CompactionMessage[]): CompactionMessage[] {
 }
 
 // ---------------------------------------------------------------------------
+// Stage -1: Microcompact (cache-aware pruning)
+// ---------------------------------------------------------------------------
+
+export interface MicrocompactOptions {
+  /** Message indices where cache breakpoints occurred */
+  cacheBreakpoints: number[];
+  /** Only remove results older than N turns (default 3) */
+  minAgeForRemoval?: number;
+  /** Estimate of provider cache window size in messages */
+  cacheWindowSize?: number;
+}
+
+/**
+ * Cache-aware compaction. Removes tool_result contents that are likely
+ * already cached by the provider's prompt cache, replacing them with stubs.
+ * This runs BEFORE other compaction stages and preserves cache topology.
+ */
+export function microcompact(
+  messages: CompactionMessage[],
+  options: MicrocompactOptions,
+): { messages: CompactionMessage[]; tokensFreed: number } {
+  const minAgeForRemoval = options.minAgeForRemoval ?? 3;
+  const cacheWindowSize = options.cacheWindowSize ?? 50;
+  const { cacheBreakpoints } = options;
+
+  // Identify the cached region: messages within cacheWindowSize of any breakpoint
+  const cachedIndices = new Set<number>();
+  for (const breakpoint of cacheBreakpoints) {
+    for (let i = Math.max(0, breakpoint - cacheWindowSize); i <= breakpoint; i++) {
+      cachedIndices.add(i);
+    }
+  }
+
+  // Don't touch the last minAgeForRemoval messages
+  const protectedStartIndex = Math.max(0, messages.length - minAgeForRemoval);
+
+  let tokensFreed = 0;
+  const result = messages.map((msg, index) => {
+    // Skip if: pinned, not in cached region, too recent, or not a tool_result-like message
+    if (msg.pinned) return msg;
+    if (index >= protectedStartIndex) return msg;
+    if (!cachedIndices.has(index)) return msg;
+
+    // Only compact assistant messages with long content (likely tool results)
+    if (msg.role !== "assistant" || msg.content.length < 500) return msg;
+
+    // Replace with stub
+    const originalTokens = estimateTokens(msg.content);
+    tokensFreed += originalTokens;
+    const stubTokens = estimateTokens(`[Cached by provider - ~${originalTokens} tokens]`);
+    tokensFreed -= stubTokens;
+
+    return {
+      ...msg,
+      content: `[Cached by provider - ~${originalTokens} tokens]`,
+    };
+  });
+
+  return { messages: result, tokensFreed };
+}
+
+// Cache breakpoint tracking
+const cacheBreakpoints = new Map<string, number[]>();
+
+/**
+ * Record a cache breakpoint for a conversation.
+ * Called by the orchestrator when the provider reports a cache miss.
+ */
+export function trackCacheBreakpoint(conversationId: string, messageIndex: number): void {
+  if (!cacheBreakpoints.has(conversationId)) {
+    cacheBreakpoints.set(conversationId, []);
+  }
+  const breakpoints = cacheBreakpoints.get(conversationId)!;
+  if (!breakpoints.includes(messageIndex)) {
+    breakpoints.push(messageIndex);
+    // Keep only last 10 breakpoints
+    if (breakpoints.length > 10) {
+      breakpoints.shift();
+    }
+  }
+}
+
+/**
+ * Get recorded cache breakpoints for a conversation.
+ */
+export function getCacheBreakpoints(conversationId: string): number[] {
+  return cacheBreakpoints.get(conversationId) ?? [];
+}
+
+/**
+ * Clear cache breakpoint tracking for a conversation.
+ */
+export function clearCacheBreakpoints(conversationId: string): void {
+  cacheBreakpoints.delete(conversationId);
+}
+
+// ---------------------------------------------------------------------------
 // Stage 0: Snip compact (zero-cost time-based pruning)
 // ---------------------------------------------------------------------------
 

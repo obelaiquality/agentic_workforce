@@ -663,4 +663,333 @@ describe("MemoryService", () => {
       expect(memoryAgeLabel(fiveDaysAgo)).toBe("5 days ago");
     });
   });
+
+  // ── Prefetch ───────────────────────────────────────────────────────────
+
+  describe("Prefetch", () => {
+    beforeEach(() => {
+      const svc = new MemoryService(tmpDir);
+
+      // Add test memories
+      svc.addEpisodicMemory({
+        taskDescription: "Implement user authentication",
+        summary: "Added JWT-based auth with login/logout endpoints",
+        outcome: "success",
+        keyFiles: ["src/auth.ts", "src/middleware/auth.ts"],
+        lessons: ["Remember to hash passwords", "Use secure random tokens"],
+      });
+
+      svc.addEpisodicMemory({
+        taskDescription: "Fix database migration bug",
+        summary: "Resolved foreign key constraint issue in migration",
+        outcome: "success",
+        keyFiles: ["migrations/001_users.sql"],
+        lessons: ["Always test migrations on staging first"],
+      });
+
+      svc.addEpisodicMemory({
+        taskDescription: "Add payment integration",
+        summary: "Integrated Stripe payment processing",
+        outcome: "partial",
+        keyFiles: ["src/payments.ts", "src/webhooks.ts"],
+        lessons: ["Webhook signatures are critical", "Test with test API keys first"],
+      });
+    });
+
+    it("startPrefetch is non-blocking", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      const start = Date.now();
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Add user authentication",
+      });
+      const elapsed = Date.now() - start;
+
+      // Should be nearly instant (not waiting for load)
+      expect(elapsed).toBeLessThan(100);
+    });
+
+    it("startPrefetch prevents duplicate prefetch for same runId", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Add authentication",
+      });
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Different objective",
+      });
+
+      const stats = svc.getPrefetchStats();
+      expect(stats.inFlightCount).toBe(1);
+      expect(stats.runIds).toEqual(["run-1"]);
+    });
+
+    it("startPrefetch allows multiple prefetches for different runIds", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Add authentication",
+      });
+
+      svc.startPrefetch({
+        runId: "run-2",
+        objective: "Fix bug",
+      });
+
+      const stats = svc.getPrefetchStats();
+      expect(stats.inFlightCount).toBe(2);
+      expect(stats.runIds).toContain("run-1");
+      expect(stats.runIds).toContain("run-2");
+    });
+
+    it("awaitPrefetch returns prefetched memories", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Implement user authentication",
+      });
+
+      const memories = await svc.awaitPrefetch("run-1");
+
+      expect(Array.isArray(memories)).toBe(true);
+      expect(memories.length).toBeGreaterThan(0);
+
+      // Should find the authentication memory
+      const authMemory = memories.find((m) =>
+        m.taskDescription.includes("authentication")
+      );
+      expect(authMemory).toBeDefined();
+    });
+
+    it("awaitPrefetch cleans up cache after await", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Add authentication",
+      });
+
+      await svc.awaitPrefetch("run-1");
+
+      const stats = svc.getPrefetchStats();
+      expect(stats.inFlightCount).toBe(0);
+      expect(stats.runIds).not.toContain("run-1");
+    });
+
+    it("awaitPrefetch falls back to sync load if prefetch not started", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      // Don't call startPrefetch
+      const memories = await svc.awaitPrefetch("run-1");
+
+      expect(Array.isArray(memories)).toBe(true);
+      // Should still return memories (from fallback sync load)
+    });
+
+    it("awaitPrefetch scores memories by relevance", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Implement user authentication with JWT tokens",
+        activeFiles: ["src/auth.ts"],
+      });
+
+      const memories = await svc.awaitPrefetch("run-1");
+
+      expect(memories.length).toBeGreaterThan(0);
+
+      // First memory should be most relevant (authentication)
+      expect(memories[0].taskDescription).toContain("authentication");
+    });
+
+    it("awaitPrefetch boosts score for matching files", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Fix payment bug",
+        activeFiles: ["src/payments.ts"],
+      });
+
+      const memories = await svc.awaitPrefetch("run-1");
+
+      // Payment memory should be highly ranked due to file match
+      const paymentMemory = memories.find((m) =>
+        m.keyFiles.includes("src/payments.ts")
+      );
+      expect(paymentMemory).toBeDefined();
+    });
+
+    it("cancelPrefetch removes prefetch from cache", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Add authentication",
+      });
+
+      svc.cancelPrefetch("run-1");
+
+      const stats = svc.getPrefetchStats();
+      expect(stats.inFlightCount).toBe(0);
+      expect(stats.runIds).not.toContain("run-1");
+    });
+
+    it("cancelPrefetch is safe to call on non-existent runId", () => {
+      const svc = new MemoryService(tmpDir);
+
+      expect(() => {
+        svc.cancelPrefetch("nonexistent-run");
+      }).not.toThrow();
+    });
+
+    it("formatMemoriesForPrompt returns empty string for empty array", () => {
+      const svc = new MemoryService(tmpDir);
+      const formatted = svc.formatMemoriesForPrompt([]);
+
+      expect(formatted).toBe("");
+    });
+
+    it("formatMemoriesForPrompt formats memories with age and outcome", () => {
+      const svc = new MemoryService(tmpDir);
+      const memories = [
+        svc.addEpisodicMemory({
+          taskDescription: "Test task",
+          summary: "Test summary",
+          outcome: "success",
+          lessons: ["Test lesson"],
+        }),
+      ];
+
+      const formatted = svc.formatMemoriesForPrompt(memories);
+
+      expect(formatted).toContain("Relevant Past Experiences");
+      expect(formatted).toContain("Test summary");
+      expect(formatted).toContain("Lessons: Test lesson");
+      expect(formatted).toContain("today"); // Age label
+    });
+
+    it("formatMemoriesForPrompt includes failure tags", () => {
+      const svc = new MemoryService(tmpDir);
+      const memories = [
+        svc.addEpisodicMemory({
+          taskDescription: "Failed task",
+          summary: "Task failed",
+          outcome: "failure",
+        }),
+      ];
+
+      const formatted = svc.formatMemoriesForPrompt(memories);
+
+      expect(formatted).toContain("[FAILED]");
+    });
+
+    it("formatMemoriesForPrompt includes partial tags", () => {
+      const svc = new MemoryService(tmpDir);
+      const memories = [
+        svc.addEpisodicMemory({
+          taskDescription: "Partial task",
+          summary: "Partially completed",
+          outcome: "partial",
+        }),
+      ];
+
+      const formatted = svc.formatMemoriesForPrompt(memories);
+
+      expect(formatted).toContain("[PARTIAL]");
+    });
+
+    it("getPrefetchStats returns empty stats initially", () => {
+      const svc = new MemoryService(tmpDir);
+      const stats = svc.getPrefetchStats();
+
+      expect(stats.inFlightCount).toBe(0);
+      expect(stats.runIds).toEqual([]);
+    });
+
+    it("getPrefetchStats tracks in-flight prefetches", () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({ runId: "run-1", objective: "Task 1" });
+      svc.startPrefetch({ runId: "run-2", objective: "Task 2" });
+
+      const stats = svc.getPrefetchStats();
+
+      expect(stats.inFlightCount).toBe(2);
+      expect(stats.runIds).toContain("run-1");
+      expect(stats.runIds).toContain("run-2");
+    });
+
+    it("complete prefetch workflow", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      // 1. Start prefetch early
+      svc.startPrefetch({
+        runId: "integration-run",
+        objective: "Implement user authentication",
+        activeFiles: ["src/auth.ts"],
+      });
+
+      // 2. Do other work (simulate)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // 3. Await prefetch when needed
+      const memories = await svc.awaitPrefetch("integration-run");
+
+      // 4. Format for prompt
+      const formatted = svc.formatMemoriesForPrompt(memories);
+
+      expect(memories.length).toBeGreaterThan(0);
+      expect(formatted).toContain("Relevant Past Experiences");
+      expect(formatted.length).toBeGreaterThan(0);
+    });
+
+    it("handles concurrent prefetches", async () => {
+      const svc = new MemoryService(tmpDir);
+      svc.loadEpisodicMemory();
+
+      svc.startPrefetch({
+        runId: "run-1",
+        objective: "Add authentication",
+      });
+
+      svc.startPrefetch({
+        runId: "run-2",
+        objective: "Fix database bug",
+      });
+
+      const [memories1, memories2] = await Promise.all([
+        svc.awaitPrefetch("run-1"),
+        svc.awaitPrefetch("run-2"),
+      ]);
+
+      expect(Array.isArray(memories1)).toBe(true);
+      expect(Array.isArray(memories2)).toBe(true);
+
+      // Should return different results based on different objectives
+      const auth1 = memories1.find((m) => m.taskDescription.includes("authentication"));
+      const db2 = memories2.find((m) => m.taskDescription.includes("database"));
+
+      expect(auth1).toBeDefined();
+      expect(db2).toBeDefined();
+    });
+  });
 });
