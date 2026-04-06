@@ -167,14 +167,15 @@ describe("QwenAccountSetupService", () => {
     });
 
     it("does not update state when auth credentials exist", async () => {
-      const profilePath = path.join(tmpDir, "profile-with-auth");
-      await fs.mkdir(path.join(profilePath, ".qwen"), { recursive: true });
-      await fs.writeFile(path.join(profilePath, ".qwen", "oauth_creds.json"), "{}");
+      // Set up global qwen dir with auth so copySeedFiles can copy it
+      const globalQwenDir = path.join(os.homedir(), ".qwen");
+      await fs.mkdir(globalQwenDir, { recursive: true });
+      await fs.writeFile(path.join(globalQwenDir, "oauth_creds.json"), "{}");
 
       const mockAccount = {
         id: "account-4",
         providerId: "qwen-cli",
-        profilePath,
+        profilePath: path.join(tmpDir, "profile-with-auth"),
         state: "ready",
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -189,6 +190,9 @@ describe("QwenAccountSetupService", () => {
       });
 
       expect(mockProviderOrchestrator.updateQwenAccount).not.toHaveBeenCalled();
+
+      // Clean up the global auth file
+      await fs.rm(path.join(globalQwenDir, "oauth_creds.json"), { force: true });
     });
 
     it("handles importCurrentAuth flag correctly", async () => {
