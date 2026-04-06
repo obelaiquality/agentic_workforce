@@ -140,6 +140,37 @@ More detail: [Install](docs/install.md) · [Support matrix](docs/support-matrix.
 
 ---
 
+## Architecture Overview
+
+```mermaid
+graph TB
+  subgraph Desktop["Electron Desktop App"]
+    UI["React Command Center<br/><i>13 views · ⌘K palette · Zustand</i>"]
+    API["Fastify API Server<br/><i>14 route groups · 58+ services</i>"]
+    Sidecar["Rust gRPC Sidecar<br/><i>Event sourcing · projections</i>"]
+  end
+
+  DB[("PostgreSQL")]
+  LLM["LLM Providers<br/><i>Local (MLX · Ollama · vLLM)<br/>Cloud (OpenAI)</i>"]
+  Repos["Local Git Repos"]
+
+  UI -- "REST / SSE" --> API
+  API -- "gRPC" --> Sidecar
+  API -- "Prisma" --> DB
+  Sidecar --> DB
+  API -- "inference" --> LLM
+  API -- "managed worktrees" --> Repos
+```
+
+**Key data flows:**
+- **Execution pipeline** — objective → route → context → agentic loop → verification → report
+- **Self-learning** — execution insights → learnings → 24h dream cycle → consolidated principles → suggested skills
+- **Approval gating** — tool calls → permission policy → safety classifier → user approval → audit log
+
+Full architecture with C4 diagrams: [docs/architecture.md](docs/architecture.md)
+
+---
+
 ## What Works Today
 
 - **Desktop app** with tab-based Projects, kanban Work surface, Codebase browser, Console event stream, and Settings with accordion-based Advanced configuration
