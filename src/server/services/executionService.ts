@@ -37,6 +37,7 @@ import type { ApprovalService } from "./approvalService";
 import type { HookService } from "../hooks/hookService";
 import type { PlanService } from "../plans/planService";
 import { AutoMemoryExtractor } from "../memory/autoExtractor";
+import { LearningsService } from "./learningsService";
 import type { LSPClient } from "../lsp/lspClient";
 
 function asStringArray(value: unknown) {
@@ -4027,6 +4028,7 @@ export class ExecutionService {
     const memoryService = this.getMemory(input.worktreePath);
     const doomLoopDetector = new DoomLoopDetector(20, 3, 5);
     const autoMemoryExtractor = new AutoMemoryExtractor(memoryService);
+    const learningsService = new LearningsService(input.worktreePath);
 
     const orchestrator = new AgenticOrchestrator({
       registry,
@@ -4042,6 +4044,7 @@ export class ExecutionService {
       planService: this.planService,
       autoMemoryExtractor,
       lspClient: this.lspClient,
+      learningsService,
     });
 
     try {
@@ -4116,6 +4119,7 @@ export class ExecutionService {
     const createOrchestrator = (spec: AgentSpec, baseInput: AgenticExecutionInput) => {
       const doomLoopDetector = new DoomLoopDetector(20, 3, 5);
       const autoMemoryExtractor = new AutoMemoryExtractor(memoryService);
+      const agentLearningsService = new LearningsService(baseInput.worktreePath);
 
       const orchestrator = new AgenticOrchestrator({
         registry,
@@ -4131,6 +4135,7 @@ export class ExecutionService {
         planService: this.planService,
         autoMemoryExtractor,
         lspClient: this.lspClient,
+        learningsService: agentLearningsService,
       });
 
       // Create a modified input for this agent

@@ -70,6 +70,7 @@ import { setSkillService } from "./tools/definitions/skill";
 import { setPlanService } from "./tools/definitions/planMode";
 import { setSubtaskService } from "./tools/definitions/taskDecomposition";
 import { DreamScheduler } from "./memory/dreamScheduler";
+import { registerLearningsRoutes } from "./routes/learningsRoutes";
 
 export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   await initDatabase();
@@ -295,6 +296,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
       running: dreamScheduler.isRunning,
       lastDreamAt: dreamScheduler.stats.lastDreamAt,
       dreamCount: dreamScheduler.stats.dreamCount,
+      learningsCount: dreamScheduler.stats.learningsCount,
+      principlesCount: dreamScheduler.stats.principlesCount,
+      suggestedSkillsCount: dreamScheduler.stats.suggestedSkillsCount,
     }),
   );
   const benchmarkService = new BenchmarkService(v2EventService, repoService, executionService);
@@ -430,6 +434,7 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   registerHookRoutes(app, hookService);
   registerTeamRoutes({ app });
   registerTelemetryRoutes(app);
+  registerLearningsRoutes({ app, repoService });
 
   app.get("/health", async () => ({ ok: true }));
 

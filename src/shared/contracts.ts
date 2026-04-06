@@ -1833,3 +1833,57 @@ export interface AutoMemoryConfig {
   timeoutMs: number;
   dreamIntervalHours: number;
 }
+
+// ---------------------------------------------------------------------------
+// Learnings & Self-Learning Loop
+// ---------------------------------------------------------------------------
+
+export type LearningCategory = "pattern" | "antipattern" | "preference";
+export type LearningSource = "auto_extraction" | "doom_loop" | "user_feedback" | "benchmark" | "tool_failure";
+
+export interface LearningEntry {
+  id: string;
+  projectId: string;
+  category: LearningCategory;
+  summary: string;
+  detail: string;
+  source: LearningSource;
+  confidence: number;
+  occurrences: number;
+  relatedFiles: string[];
+  relatedTools: string[];
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export interface ConsolidatedPrinciple {
+  id: string;
+  projectId: string;
+  principle: string;
+  reasoning: string;
+  derivedFrom: string[];
+  confidence: number;
+  createdAt: string;
+}
+
+export interface SuggestedSkill {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  allowedTools: string[];
+  tags: string[];
+  derivedFromLearnings: string[];
+  confidence: number;
+  status: "pending" | "approved" | "dismissed";
+  createdAt: string;
+}
+
+export interface DreamCycleStats {
+  lastDreamAt: string | null;
+  dreamCount: number;
+  learningsCount: number;
+  principlesCount: number;
+  suggestedSkillsCount: number;
+}

@@ -211,4 +211,145 @@ describe("TaskBudgetTracker", () => {
       expect(tracker.getConsumed("run-2")).toBeNull();
     });
   });
+
+  describe("Cost Budget Exhaustion", () => {
+    it("should detect when cost limit is exceeded", () => {
+      tracker.createBudget("run-1", { maxCostUsd: 1.0 });
+
+      tracker.recordUsage("run-1", {
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 1.5,
+      });
+
+      const status = tracker.checkBudget("run-1");
+      expect(status.exceeded).toBe(true);
+      expect(status.warnings.some((w) => w.resource === "cost_usd")).toBe(true);
+    });
+
+    it("should accumulate explicit cost across multiple calls", () => {
+      tracker.createBudget("run-1", { maxCostUsd: 5.0 });
+
+      tracker.recordUsage("run-1", {
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 1.25,
+      });
+      tracker.recordUsage("run-1", {
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0.75,
+      });
+
+      const consumed = tracker.getConsumed("run-1");
+      expect(consumed!.costUsd).toBeCloseTo(2.0);
+    });
+  });
+
+  describe("Iteration Budget Exhaustion", () => {
+    it("should detect when iteration limit is exactly reached", () => {
+      tracker.createBudget("run-1", { maxIterations: 3 });
+
+      tracker.recordIteration("run-1");
+      tracker.recordIteration("run-1");
+      tracker.recordIteration("run-1");
+
+      const status = tracker.checkBudget("run-1");
+      expect(status.exceeded).toBe(true);
+      expect(
+        status.warnings.some(
+          (w) => w.resource === "iterations" && w.pct === 100
+        )
+      ).toBe(true);
+    });
+  });
+
+  describe("No Limits Configured", () => {
+    it("should never report exceeded when no limits are set", () => {
+      tracker.createBudget("run-1", {});
+
+      tracker.recordUsage("run-1", {
+        inputTokens: 999_999,
+        outputTokens: 999_999,
+        costUsd: 999,
+      });
+      tracker.recordIteration("run-1");
+
+      const status = tracker.checkBudget("run-1");
+      expect(status.exceeded).toBe(false);
+      expect(status.warnings).toHaveLength(0);
+    });
+  });
+
+  describe("Warning Boundary Precision", () => {
+    it("should not warn below 80% usage", () => {
+      tracker.createBudget("run-1", { maxTokens: 1000 });
+
+      // 790 tokens = 79%
+      tracker.recordUsage("run-1", {
+        inputTokens: 400,
+        outputTokens: 390,
+      });
+
+      const status = tracker.checkBudget("run-1");
+      expect(status.exceeded).toBe(false);
+      expect(status.warnings).toHaveLength(0);
+    });
+
+    it("should warn at exactly 80% usage", () => {
+      tracker.createBudget("run-1", { maxTokens: 1000 });
+
+      tracker.recordUsage("run-1", {
+        inputTokens: 400,
+        outputTokens: 400,
+      });
+
+      const status = tracker.checkBudget("run-1");
+      expect(status.exceeded).toBe(false);
+      expect(status.warnings).toHaveLength(1);
+      expect(status.warnings[0].pct).toBe(80);
+    });
+  });
+
+  describe("Cost Estimation - Additional Models", () => {
+    it("should use GPT-4o pricing", () => {
+      const cost = TaskBudgetTracker.estimateCost(2000, 1000, "gpt-4o-mini");
+      // GPT-4o: $0.0005/1K input, $0.0015/1K output
+      // (2000/1000)*0.0005 + (1000/1000)*0.0015 = 0.001 + 0.0015 = 0.0025
+      expect(cost).toBeCloseTo(0.0025, 4);
+    });
+
+    it("should use Claude Sonnet pricing", () => {
+      const cost = TaskBudgetTracker.estimateCost(
+        1000,
+        1000,
+        "claude-3-sonnet"
+      );
+      // Sonnet: $0.003/1K input, $0.015/1K output
+      expect(cost).toBeCloseTo(0.018, 4);
+    });
+
+    it("should use Claude Opus pricing", () => {
+      const cost = TaskBudgetTracker.estimateCost(
+        1000,
+        1000,
+        "claude-3-opus"
+      );
+      // Opus: $0.015/1K input, $0.075/1K output
+      expect(cost).toBeCloseTo(0.09, 4);
+    });
+
+    it("should fall back to GPT-4 default for unknown models", () => {
+      const cost = TaskBudgetTracker.estimateCost(
+        1000,
+        1000,
+        "some-unknown-model"
+      );
+      expect(cost).toBeCloseTo(0.018, 4);
+    });
+
+    it("should return zero for models with 'local' in the name", () => {
+      expect(TaskBudgetTracker.estimateCost(5000, 2000, "local-llama")).toBe(0);
+    });
+  });
 });

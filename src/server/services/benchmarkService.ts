@@ -19,6 +19,7 @@ import { ExecutionService } from "./executionService";
 import { buildVerificationCommandPlans } from "./verificationPolicy";
 import { applyEscalationPolicy } from "./providerOrchestrator";
 import { detectShell } from "./shellDetect";
+import { LearningsService } from "./learningsService";
 
 interface StartBenchmarkRunInput {
   actor: string;
@@ -946,6 +947,31 @@ export class BenchmarkService {
       hardFailures,
       reportId: report.id,
     });
+
+    // Feed benchmark outcome into learnings loop
+    try {
+      const worktreePath = await this.repoService.getActiveWorktreePath(repoId);
+      const learningsService = new LearningsService(worktreePath);
+      if (pass) {
+        learningsService.recordPattern({
+          projectId: repoId,
+          summary: `Benchmark passed: ${task.title} (score ${totalScore.toFixed(2)})`,
+          detail: `Task ${task.taskKey} completed successfully with model role ${run.providerRole || "default"}.`,
+          source: "benchmark",
+          relatedTools: ["bash", "read_file", "write_file"],
+        });
+      } else {
+        learningsService.recordAntipattern({
+          projectId: repoId,
+          summary: `Benchmark failed: ${task.title} (failures: ${hardFailures.join(", ") || "score below threshold"})`,
+          detail: `Task ${task.taskKey} failed with model role ${run.providerRole || "default"}. Score: ${totalScore.toFixed(2)}.`,
+          source: "benchmark",
+          relatedTools: ["bash", "read_file", "write_file"],
+        });
+      }
+    } catch {
+      // Non-critical: don't fail benchmark on learnings error
+    }
 
     return {
       run: mapRun(

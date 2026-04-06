@@ -65,6 +65,12 @@ const SCENARIOS = {
     preExistingFilePattern: /status-?badge\.tsx$/i,
     preExistingGonePattern: /StatusBadge/,
   },
+  "multi-file-feature": {
+    objective: "Add a REST API layer: create src/routes/users.ts with GET and POST /users endpoints, src/routes/auth.ts with POST /login and /logout, src/middleware/validate.ts with request validation, and tests for each module under src/routes/ and src/middleware/.",
+    expectedFilePattern: /routes\/(users|auth)\.(ts|tsx)$/i,
+    expectedContentPattern: /router|express|endpoint|handler|validate/i,
+    label: "MultiFileFeature",
+  },
 };
 
 const scenario = SCENARIOS[scenarioArg];
@@ -459,7 +465,32 @@ async function main() {
 
   // --- Follow-up feature edit ---
   await page.getByRole("button", { name: "Work", exact: true }).click();
+
+  // Wait for any active execution to finish (check runSummary.status — matches UI state)
+  log("waiting for execution to finish");
+  await waitFor(async () => {
+    try {
+      const snapshotPayload = await apiGet(`/api/v8/mission/snapshot?projectId=${activeRepo.id}`);
+      const snapshot = snapshotPayload.item;
+      const runStatus = snapshot?.runSummary?.status;
+      const agenticStatus = snapshot?.agenticRun?.status;
+      return runStatus !== "running" && agenticStatus !== "running";
+    } catch {
+      return true;
+    }
+  }, 300000, "idle execution state via API");
+  await delay(3000); // Let UI polling catch up
+
+  // Wait for UI to reflect idle state — "Review plan" or "Run task" button must appear
+  log("waiting for UI idle (Review plan / Run task button)");
+  await waitFor(async () => {
+    const reviewBtn = page.getByRole("button", { name: "Review plan", exact: true });
+    const runBtn = page.getByRole("button", { name: "Run task", exact: true });
+    return (await reviewBtn.isVisible().catch(() => false)) || (await runBtn.isVisible().catch(() => false));
+  }, 30000, "UI idle — action button visible");
+
   await page.locator("textarea").first().fill(scenario.objective);
+  await delay(500);
   {
     const reviewBtn = page.getByRole("button", { name: "Review plan", exact: true });
     const runBtn = page.getByRole("button", { name: "Run task", exact: true });

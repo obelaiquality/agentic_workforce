@@ -2389,3 +2389,65 @@ export async function getEnvironmentDiagnostics(): Promise<{
 }> {
   return apiRequest("/api/diagnostics/environment");
 }
+
+// ---------------------------------------------------------------------------
+// Learnings & Self-Learning
+// ---------------------------------------------------------------------------
+
+export async function listLearnings(filter?: { projectId?: string; category?: string; minConfidence?: number }) {
+  return apiRequest<{ items: import("../../shared/contracts").LearningEntry[] }>(
+    withQuery("/api/learnings", filter as Record<string, string>),
+  );
+}
+
+export async function listPrinciples(projectId?: string) {
+  return apiRequest<{ items: import("../../shared/contracts").ConsolidatedPrinciple[] }>(
+    withQuery("/api/learnings/principles", { projectId }),
+  );
+}
+
+export async function deleteLearning(id: string) {
+  return apiRequest<{ ok: boolean }>(`/api/learnings/${id}`, { method: "DELETE" });
+}
+
+export async function triggerDreamCycle(projectId?: string) {
+  return apiRequest<{ ok: boolean; principlesCreated: number }>("/api/learnings/dream/trigger", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+}
+
+export async function getDreamStats(projectId?: string) {
+  return apiRequest<import("../../shared/contracts").DreamCycleStats>(
+    withQuery("/api/learnings/dream/stats", { projectId }),
+  );
+}
+
+export async function listSuggestedSkills(projectId?: string) {
+  return apiRequest<{ items: import("../../shared/contracts").SuggestedSkill[] }>(
+    withQuery("/api/learnings/skills/suggested", { projectId }),
+  );
+}
+
+export async function approveSuggestedSkill(id: string, projectId?: string) {
+  return apiRequest<{ item: import("../../shared/contracts").SuggestedSkill | null }>(
+    `/api/learnings/skills/suggested/${id}/approve`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId }),
+    },
+  );
+}
+
+export async function dismissSuggestedSkill(id: string, projectId?: string) {
+  return apiRequest<{ item: import("../../shared/contracts").SuggestedSkill | null }>(
+    `/api/learnings/skills/suggested/${id}/dismiss`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId }),
+    },
+  );
+}

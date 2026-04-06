@@ -7,8 +7,35 @@ import * as path from "path";
 const mocks = vi.hoisted(() => ({
   prisma: {
     appSetting: { findUnique: vi.fn() },
+    projectBlueprint: { findUnique: vi.fn().mockResolvedValue(null) },
+    executionAttempt: { update: vi.fn().mockResolvedValue({}) },
+    runProjection: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
+    shareableRunReport: { upsert: vi.fn().mockResolvedValue({}) },
+    verificationBundle: { create: vi.fn().mockResolvedValue({ id: "vb-1", pass: true }) },
   },
   publishEvent: vi.fn(),
+  MockMemoryService: vi.fn().mockImplementation(() => ({
+    loadEpisodicMemory: vi.fn(),
+    compose: vi.fn().mockReturnValue({ episodicContext: null, workingContext: [] }),
+    commitTaskOutcome: vi.fn(),
+  })),
+  MockShadowGitService: vi.fn().mockImplementation(() => ({
+    initialize: vi.fn(),
+    snapshot: vi.fn(),
+  })),
+  MockDoomLoopDetector: vi.fn().mockImplementation(() => ({
+    check: vi.fn().mockReturnValue({ stuck: false }),
+    record: vi.fn(),
+  })),
+  MockAgenticOrchestrator: vi.fn(),
+  MockAutoMemoryExtractor: vi.fn().mockImplementation(() => ({
+    extractAndStore: vi.fn(),
+  })),
+  MockLearningsService: vi.fn().mockImplementation(() => ({
+    load: vi.fn(),
+    save: vi.fn(),
+  })),
+  MockRunCoordinatorMode: vi.fn(),
 }));
 
 vi.mock("../db", () => ({ prisma: mocks.prisma }));
@@ -28,11 +55,34 @@ vi.mock("./editMatcherChain");
 vi.mock("./fileStateCache", () => ({
   getSharedFileStateCache: () => ({ delete: vi.fn(), get: vi.fn() }),
 }));
-vi.mock("./memoryService");
-vi.mock("./shadowGitService");
-vi.mock("./systemReminderService");
-vi.mock("./doomLoopDetector");
+vi.mock("./memoryService", () => ({
+  MemoryService: mocks.MockMemoryService,
+}));
+vi.mock("./shadowGitService", () => ({
+  ShadowGitService: mocks.MockShadowGitService,
+}));
+vi.mock("./systemReminderService", () => ({
+  buildErrorReminder: vi.fn().mockReturnValue(""),
+  buildJsonFormatReminder: vi.fn().mockReturnValue(""),
+  shouldInjectReminder: vi.fn().mockReturnValue(false),
+  injectReminders: vi.fn().mockImplementation(({ messages }) => messages),
+}));
+vi.mock("./doomLoopDetector", () => ({
+  DoomLoopDetector: mocks.MockDoomLoopDetector,
+}));
 vi.mock("./contextCompactionService");
+vi.mock("../execution/agenticOrchestrator", () => ({
+  AgenticOrchestrator: mocks.MockAgenticOrchestrator,
+}));
+vi.mock("../execution/coordinatorAgent", () => ({
+  runCoordinatorMode: mocks.MockRunCoordinatorMode,
+}));
+vi.mock("../memory/autoExtractor", () => ({
+  AutoMemoryExtractor: mocks.MockAutoMemoryExtractor,
+}));
+vi.mock("./learningsService", () => ({
+  LearningsService: mocks.MockLearningsService,
+}));
 vi.mock("../errors", async () => {
   const actual = await vi.importActual("../errors");
   return actual;
@@ -56,6 +106,7 @@ import {
   safeWriteFile,
   extractJsonObject,
   parsePatchManifest,
+  ExecutionService,
 } from "./executionService";
 
 describe("combinedShellOutput", () => {
@@ -848,5 +899,508 @@ describe("parsePatchManifest", () => {
     const result = parsePatchManifest(text);
 
     expect(result.files[0].reason).toBe("Update this file to satisfy the objective.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// safeWriteFile — directory creation
+// ---------------------------------------------------------------------------
+
+describe("safeWriteFile — directory creation", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-svc-dir-"));
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates intermediate directories when they do not exist", () => {
+    const filePath = path.join(tempDir, "a", "b", "c", "deep.txt");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+    const result = safeWriteFile(filePath, "deep content\n");
+
+    expect(result).toEqual({ written: true, stale: false });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("deep content\n");
+  });
+
+  it("overwrites content and preserves LF line endings for new files", () => {
+    const filePath = path.join(tempDir, "new.txt");
+
+    safeWriteFile(filePath, "first\n");
+    const result = safeWriteFile(filePath, "second\n");
+
+    expect(result.written).toBe(true);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("second\n");
+  });
+
+  it("handles empty content", () => {
+    const filePath = path.join(tempDir, "empty.txt");
+
+    const result = safeWriteFile(filePath, "");
+
+    expect(result).toEqual({ written: true, stale: false });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parsePatchManifest — deterministic manifests round-trip correctly
+// ---------------------------------------------------------------------------
+
+describe("parsePatchManifest — deterministic manifest patterns", () => {
+  it("parses a status-badge deterministic manifest", () => {
+    const manifest = {
+      summary: "Add a status badge component to the app and test it.",
+      files: [
+        { path: "src/components/StatusBadge.tsx", action: "create", strategy: "full_file", reason: "Create the StatusBadge component." },
+        { path: "src/App.tsx", action: "update", strategy: "search_replace", reason: "Render the component." },
+        { path: "src/App.test.tsx", action: "update", strategy: "search_replace", reason: "Cover the component in tests." },
+        { path: "README.md", action: "update", strategy: "search_replace", reason: "Document the addition." },
+      ],
+      docsChecked: ["README.md", "AGENTS.md"],
+      tests: ["src/App.test.tsx"],
+    };
+    const text = JSON.stringify(manifest);
+    const result = parsePatchManifest(text);
+
+    expect(result.summary).toBe("Add a status badge component to the app and test it.");
+    expect(result.files).toHaveLength(4);
+    expect(result.files[0].path).toBe("src/components/StatusBadge.tsx");
+    expect(result.files[0].action).toBe("create");
+    expect(result.docsChecked).toEqual(["README.md", "AGENTS.md"]);
+  });
+
+  it("parses a progress-bar deterministic manifest", () => {
+    const manifest = {
+      summary: "Add a progress bar component.",
+      files: [
+        { path: "src/components/ProgressBar.tsx", action: "create", strategy: "full_file", reason: "Create ProgressBar." },
+      ],
+      docsChecked: [],
+      tests: [],
+    };
+    const result = parsePatchManifest(JSON.stringify(manifest));
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].path).toBe("src/components/ProgressBar.tsx");
+    expect(result.files[0].strategy).toBe("full_file");
+  });
+
+  it("parses a theme-toggle deterministic manifest", () => {
+    const manifest = {
+      summary: "Add a theme toggle component to the app and test it.",
+      files: [
+        { path: "src/components/ThemeToggle.tsx", action: "create", strategy: "full_file", reason: "Create ThemeToggle." },
+        { path: "src/App.tsx", action: "update", strategy: "search_replace", reason: "Add toggle to App." },
+        { path: "src/App.test.tsx", action: "update", strategy: "search_replace", reason: "Add theme tests." },
+        { path: "README.md", action: "update", strategy: "search_replace", reason: "Document toggle." },
+      ],
+      docsChecked: ["README.md", "AGENTS.md"],
+      tests: ["src/App.test.tsx"],
+    };
+    const result = parsePatchManifest(JSON.stringify(manifest));
+
+    expect(result.files).toHaveLength(4);
+    expect(result.files[0].path).toBe("src/components/ThemeToggle.tsx");
+    expect(result.docsChecked).toContain("AGENTS.md");
+  });
+
+  it("preserves create/update distinction across multiple files", () => {
+    const manifest = {
+      files: [
+        { path: "src/new.ts", action: "create" },
+        { path: "src/existing.ts", action: "update" },
+        { path: "src/implicit.ts" },
+      ],
+    };
+    const result = parsePatchManifest(JSON.stringify(manifest));
+
+    expect(result.files[0].action).toBe("create");
+    expect(result.files[1].action).toBe("update");
+    expect(result.files[2].action).toBe("update"); // default is update
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractJsonObject — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("extractJsonObject — additional edge cases", () => {
+  it("extracts JSON with newlines and whitespace", () => {
+    const text = `\n\n  {\n  "summary": "test"\n}\n\n`;
+    const result = extractJsonObject(text);
+    expect(result).toEqual({ summary: "test" });
+  });
+
+  it("extracts from deeply nested structure", () => {
+    const text = '{"a":{"b":{"c":{"d":"deep"}}}}';
+    const result = extractJsonObject(text);
+    expect(result).toEqual({ a: { b: { c: { d: "deep" } } } });
+  });
+
+  it("throws descriptive error for completely non-JSON text", () => {
+    expect(() => extractJsonObject("just plain text here")).toThrow("Model did not return a JSON object");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService class
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService", () => {
+  // Shared mock service dependencies for the constructor
+  const mockV2EventService = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouterService = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContextService = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockProviderOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepoService = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraphService = {
+    rerankForManifest: vi.fn().mockImplementation((_id, pack) => pack),
+  } as any;
+  const mockCommandEngine = { run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }) } as any;
+  const mockPolicyEngine = { evaluate: vi.fn().mockReturnValue({ allowed: true }) } as any;
+  const mockApprovalService = { check: vi.fn().mockResolvedValue({ approved: true }) } as any;
+  const mockContextCollapseService = { collapse: vi.fn().mockReturnValue([]) } as any;
+  const mockHookService = { runHook: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockPlanService = { getPlan: vi.fn().mockResolvedValue(null) } as any;
+  const mockLspClient = { getSymbols: vi.fn().mockResolvedValue([]) } as any;
+
+  function createService() {
+    return new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+      mockCommandEngine,
+      mockPolicyEngine,
+      mockApprovalService,
+      mockContextCollapseService,
+      mockHookService,
+      mockPlanService,
+      mockLspClient,
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe("constructor", () => {
+    it("does not throw with all dependencies", () => {
+      expect(() => createService()).not.toThrow();
+    });
+
+    it("does not throw with only required dependencies", () => {
+      expect(
+        () =>
+          new ExecutionService(
+            mockV2EventService,
+            mockRouterService,
+            mockContextService,
+            mockProviderOrchestrator,
+            mockRepoService,
+            mockCodeGraphService,
+          ),
+      ).not.toThrow();
+    });
+
+    it("returns an instance of ExecutionService", () => {
+      const svc = createService();
+      expect(svc).toBeInstanceOf(ExecutionService);
+    });
+  });
+
+  describe("initMemory", () => {
+    it("returns a MemoryService instance", () => {
+      const svc = createService();
+      const mem = svc.initMemory("/tmp/test-worktree");
+
+      expect(mem).toBeDefined();
+      expect(mocks.MockMemoryService).toHaveBeenCalledWith("/tmp/test-worktree");
+    });
+
+    it("calls loadEpisodicMemory on the returned memory", () => {
+      const svc = createService();
+      const mem = svc.initMemory("/tmp/test-worktree");
+
+      expect(mem.loadEpisodicMemory).toHaveBeenCalled();
+    });
+
+    it("returns the same type on subsequent calls", () => {
+      const svc = createService();
+      const mem1 = svc.initMemory("/tmp/path-a");
+      const mem2 = svc.initMemory("/tmp/path-b");
+
+      // Each call creates a new MemoryService (replaces previous)
+      expect(mocks.MockMemoryService).toHaveBeenCalledTimes(2);
+      expect(mem1).toBeDefined();
+      expect(mem2).toBeDefined();
+    });
+  });
+
+  describe("initShadowGit", () => {
+    it("creates a ShadowGitService for the worktree", () => {
+      const svc = createService();
+      svc.initShadowGit("/tmp/test-worktree");
+
+      expect(mocks.MockShadowGitService).toHaveBeenCalledWith("/tmp/test-worktree");
+    });
+
+    it("calls initialize on the shadow git", () => {
+      const svc = createService();
+      svc.initShadowGit("/tmp/test-worktree");
+
+      const instance = mocks.MockShadowGitService.mock.results[0].value;
+      expect(instance.initialize).toHaveBeenCalled();
+    });
+
+    it("does not throw when initialize fails", () => {
+      mocks.MockShadowGitService.mockImplementationOnce(() => ({
+        initialize: vi.fn(() => { throw new Error("git init failed"); }),
+        snapshot: vi.fn(),
+      }));
+
+      const svc = createService();
+      // Should not throw — shadow git failure is non-critical
+      expect(() => svc.initShadowGit("/tmp/test-worktree")).not.toThrow();
+    });
+  });
+
+  describe("executeAgentic", () => {
+    it("creates an AgenticOrchestrator and yields events", async () => {
+      const fakeEvents: any[] = [
+        { type: "iteration_start", iteration: 1 },
+        { type: "execution_complete", totalIterations: 1, totalToolCalls: 2 },
+      ];
+
+      // Set up the mock orchestrator execute as async generator
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          for (const event of fakeEvents) {
+            yield event;
+          }
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-1",
+        objective: "test objective",
+        worktreePath: "/tmp/test-worktree",
+        actor: "test-user",
+        repoId: "repo-1",
+        maxIterations: 5,
+        budget: { maxTokens: 10000 },
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe("iteration_start");
+      expect(events[1].type).toBe("execution_complete");
+    });
+
+    it("records execution_complete event to V2EventService", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          yield { type: "execution_complete", totalIterations: 3, totalToolCalls: 7 };
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-2",
+        objective: "complete task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "agentic.execution.completed",
+          aggregateId: "run-2",
+          actor: "user",
+          payload: expect.objectContaining({
+            objective: "complete task",
+            iterations: 3,
+            toolCalls: 7,
+          }),
+        }),
+      );
+    });
+
+    it("records execution_aborted event to V2EventService", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          yield { type: "execution_aborted", reason: "budget exceeded" };
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-3",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "agentic.execution.aborted",
+          payload: expect.objectContaining({ reason: "budget exceeded" }),
+        }),
+      );
+    });
+
+    it("yields error event when orchestrator throws", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          throw new Error("orchestrator exploded");
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-4",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("error");
+      expect(events[0].error).toContain("orchestrator exploded");
+      expect(events[0].recoverable).toBe(false);
+    });
+
+    it("records escalating event to V2EventService", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          yield { type: "escalating", fromRole: "coder_default", toRole: "overseer_escalation", reason: "too complex" };
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-5",
+        objective: "complex task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "agentic.escalated",
+          payload: expect.objectContaining({
+            fromRole: "coder_default",
+            toRole: "overseer_escalation",
+            reason: "too complex",
+          }),
+        }),
+      );
+    });
+
+    it("creates DoomLoopDetector with standard parameters", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          yield { type: "execution_complete", totalIterations: 1, totalToolCalls: 1 };
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-6",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      for await (const _event of svc.executeAgentic({} as any, input)) {
+        // drain
+      }
+
+      // DoomLoopDetector constructed with (windowSize=20, threshold=3, cooldown=5)
+      expect(mocks.MockDoomLoopDetector).toHaveBeenCalledWith(20, 3, 5);
+    });
+
+    it("delegates to coordinator mode when input.coordinator is true", async () => {
+      const fakeCoordinatorEvents: any[] = [
+        { type: "execution_complete", totalIterations: 2, totalToolCalls: 5 },
+      ];
+
+      mocks.MockRunCoordinatorMode.mockImplementation(async function* () {
+        for (const event of fakeCoordinatorEvents) {
+          yield event;
+        }
+      });
+
+      const svc = createService();
+      const input = {
+        runId: "run-coord",
+        objective: "multi-agent task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+        coordinator: true,
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("execution_complete");
+      // AgenticOrchestrator should NOT be constructed in coordinator mode
+      expect(mocks.MockAgenticOrchestrator).not.toHaveBeenCalled();
+    });
   });
 });

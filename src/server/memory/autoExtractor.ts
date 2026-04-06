@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AutoMemoryConfig } from "../../shared/contracts";
 import type { MemoryService } from "../services/memoryService";
+import { tokenize, cosineSimilarity } from "../services/memoryService";
+import type { LearningsService } from "../services/learningsService";
+import type { SkillSynthesizer } from "../services/skillSynthesizer";
 
 interface ConversationMessage {
   role: "system" | "user" | "assistant";
@@ -194,31 +197,81 @@ export class AutoMemoryExtractor {
 
   /**
    * Run memory consolidation ("dream") for a project.
-   * Finds duplicate/similar memories and merges them.
+   * Merges duplicates, extracts learnings, and optionally synthesizes skills.
    */
-  async runDream(projectId: string): Promise<{ consolidated: number; removed: number }> {
-    // Search for all recent memories
+  async runDream(
+    projectId: string,
+    opts?: { learningsService?: LearningsService; skillSynthesizer?: SkillSynthesizer },
+  ): Promise<{ consolidated: number; removed: number; learningsExtracted: number; skillsSuggested: number }> {
     const memories = this.memoryService.getRelevantEpisodicMemories("");
 
-    if (memories.length < 5) {
-      return { consolidated: 0, removed: 0 };
+    if (memories.length < 3) {
+      return { consolidated: 0, removed: 0, learningsExtracted: 0, skillsSuggested: 0 };
     }
 
-    // Find duplicates by comparing summaries
+    // 1. Dedup similar memories
     let removed = 0;
-    const seen = new Set<string>();
-
+    const unique: typeof memories = [];
     for (const memory of memories) {
-      // Simple dedup by normalized summary
-      const key = memory.summary.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 100);
-      if (seen.has(key)) {
+      const memTokens = tokenize(memory.summary);
+      const isDup = unique.some((u) => cosineSimilarity(memTokens, tokenize(u.summary)) >= 0.7);
+      if (isDup) {
         removed++;
-        // In a full implementation, we'd remove the duplicate via MemoryService
+      } else {
+        unique.push(memory);
       }
-      seen.add(key);
     }
 
-    return { consolidated: seen.size, removed };
+    // 2. Extract learnings from episodic memories
+    let learningsExtracted = 0;
+    if (opts?.learningsService) {
+      // Group memories by outcome
+      const successes = unique.filter((m) => m.outcome === "success");
+      const failures = unique.filter((m) => m.outcome === "failure");
+
+      // Record successful patterns
+      for (const mem of successes) {
+        if (mem.lessons.length > 0) {
+          opts.learningsService.recordPattern({
+            projectId,
+            summary: mem.lessons[0].slice(0, 200),
+            detail: mem.summary,
+            source: "auto_extraction",
+            relatedFiles: mem.keyFiles,
+          });
+          learningsExtracted++;
+        }
+      }
+
+      // Record failure antipatterns
+      for (const mem of failures) {
+        if (mem.lessons.length > 0) {
+          opts.learningsService.recordAntipattern({
+            projectId,
+            summary: mem.lessons[0].slice(0, 200),
+            detail: mem.summary,
+            source: "auto_extraction",
+            relatedFiles: mem.keyFiles,
+          });
+          learningsExtracted++;
+        }
+      }
+
+      // 3. Consolidate learnings into principles
+      opts.learningsService.consolidate(projectId);
+
+      // 4. Prune stale learnings
+      opts.learningsService.pruneStale(projectId);
+    }
+
+    // 5. Synthesize skills if enough learnings exist
+    let skillsSuggested = 0;
+    if (opts?.skillSynthesizer) {
+      const suggested = opts.skillSynthesizer.synthesizeFromPatterns(projectId);
+      skillsSuggested = suggested.length;
+    }
+
+    return { consolidated: unique.length, removed, learningsExtracted, skillsSuggested };
   }
 
   /**

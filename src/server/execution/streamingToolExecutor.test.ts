@@ -845,6 +845,169 @@ describe("StreamingToolExecutor", () => {
     });
   });
 
+  describe("durationMs tracking", () => {
+    it("records a positive durationMs on successful tool results", async () => {
+      const delayTool: ToolDefinition = {
+        name: "delay_tool",
+        description: "A tool that takes some time",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return { type: "success", content: "delayed" };
+        },
+        permission: { scope: "repo.read" },
+        concurrencySafe: true,
+      };
+      registry.register(delayTool);
+
+      const executor = new StreamingToolExecutor(registry, ctx);
+
+      const stream = createMockStream([
+        { type: "tool_use", id: "dur-1", name: "delay_tool", input: {} },
+        { type: "done" },
+      ]);
+
+      const events = await collectEvents(executor, stream);
+
+      const resultEvent = events.find((e) => e.type === "tool_result");
+      expect(resultEvent).toBeDefined();
+      if (resultEvent && resultEvent.type === "tool_result") {
+        expect(resultEvent.durationMs).toBeGreaterThanOrEqual(25);
+      }
+
+      const toolResults = executor.getToolResults();
+      expect(toolResults[0].durationMs).toBeGreaterThanOrEqual(25);
+    });
+
+    it("records durationMs on error results", async () => {
+      const errorTool: ToolDefinition = {
+        name: "timed_error_tool",
+        description: "Errors after a delay",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          throw new Error("boom");
+        },
+        permission: { scope: "repo.read" },
+        concurrencySafe: true,
+      };
+      registry.register(errorTool);
+
+      const executor = new StreamingToolExecutor(registry, ctx);
+
+      const stream = createMockStream([
+        { type: "tool_use", id: "dur-err-1", name: "timed_error_tool", input: {} },
+        { type: "done" },
+      ]);
+
+      const events = await collectEvents(executor, stream);
+
+      const resultEvent = events.find((e) => e.type === "tool_result");
+      expect(resultEvent).toBeDefined();
+      if (resultEvent && resultEvent.type === "tool_result") {
+        expect(resultEvent.durationMs).toBeGreaterThanOrEqual(15);
+      }
+    });
+  });
+
+  describe("ToolResultBlock shape", () => {
+    it("produces ToolResultBlock with all required fields", async () => {
+      const shapeTool: ToolDefinition = {
+        name: "shape_tool",
+        description: "For shape validation",
+        inputSchema: z.object({ msg: z.string() }),
+        execute: async (input) => ({
+          type: "success",
+          content: `echo: ${input.msg}`,
+        }),
+        permission: { scope: "repo.read" },
+        concurrencySafe: true,
+      };
+      registry.register(shapeTool);
+
+      const executor = new StreamingToolExecutor(registry, ctx);
+
+      const stream = createMockStream([
+        { type: "tool_use", id: "shape-1", name: "shape_tool", input: { msg: "hi" } },
+        { type: "done" },
+      ]);
+
+      await collectEvents(executor, stream);
+
+      const block = executor.getToolResults()[0];
+      expect(block).toEqual(
+        expect.objectContaining({
+          toolUseId: "shape-1",
+          toolName: "shape_tool",
+          result: expect.objectContaining({ type: "success", content: "echo: hi" }),
+          durationMs: expect.any(Number),
+        }),
+      );
+      // Verify the four keys exist
+      expect(block).toHaveProperty("toolUseId");
+      expect(block).toHaveProperty("toolName");
+      expect(block).toHaveProperty("result");
+      expect(block).toHaveProperty("durationMs");
+    });
+  });
+
+  describe("mixed concurrent and sequential tools", () => {
+    it("runs concurrencySafe and non-concurrencySafe tools in the same stream", async () => {
+      const executionLog: string[] = [];
+
+      const concurrentTool: ToolDefinition = {
+        name: "concurrent_read",
+        description: "A concurrent tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          executionLog.push("concurrent_read:start");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          executionLog.push("concurrent_read:end");
+          return { type: "success", content: "read done" };
+        },
+        permission: { scope: "repo.read", readOnly: true },
+        concurrencySafe: true,
+      };
+
+      const mutatingTool: ToolDefinition = {
+        name: "mutating_write",
+        description: "A sequential tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          executionLog.push("mutating_write:start");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          executionLog.push("mutating_write:end");
+          return { type: "success", content: "write done" };
+        },
+        permission: { scope: "repo.edit" },
+        concurrencySafe: false,
+      };
+
+      registry.register(concurrentTool);
+      registry.register(mutatingTool);
+
+      const executor = new StreamingToolExecutor(registry, ctx);
+
+      const stream = createMockStream([
+        { type: "tool_use", id: "mix-1", name: "concurrent_read", input: {} },
+        { type: "tool_use", id: "mix-2", name: "mutating_write", input: {} },
+        { type: "done" },
+      ]);
+
+      const events = await collectEvents(executor, stream);
+
+      // Both tools should produce results
+      const results = events.filter((e) => e.type === "tool_result");
+      expect(results).toHaveLength(2);
+
+      // All four log entries should be present
+      expect(executionLog).toContain("concurrent_read:start");
+      expect(executionLog).toContain("concurrent_read:end");
+      expect(executionLog).toContain("mutating_write:start");
+      expect(executionLog).toContain("mutating_write:end");
+    });
+  });
+
   describe("unknown tool in concurrent scenario", () => {
     it("handles unknown tool gracefully when not found in registry during concurrent execution", async () => {
       // Register one valid tool alongside unknown ones

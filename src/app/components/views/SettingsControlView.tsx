@@ -2515,6 +2515,17 @@ export function SettingsControlView() {
                   <button onClick={() => setActiveSection("distillation")} className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white">Open Distillation Lab</button>
                 </div>
               </Panel>
+
+              <Panel>
+                <PanelHeader title="Learnings & Memory">
+                  <Chip variant="warn">self-learning</Chip>
+                </PanelHeader>
+                <div className="p-4 space-y-3">
+                  <div className="text-sm text-white font-medium">Self-Learning Loop</div>
+                  <div className="text-xs text-zinc-500">Browse patterns and antipatterns extracted from agentic runs. Consolidated principles improve future execution. Approve or dismiss auto-suggested skills.</div>
+                  <button onClick={() => setActiveSection("learnings")} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white">Open Learnings Lab</button>
+                </div>
+              </Panel>
             </div>
           ) : (
             <div className="p-4 text-sm text-zinc-500">Enable Developer Labs at the top of this page to access benchmarks, distillation, and internal tuning tools.</div>

@@ -14,6 +14,7 @@ import { AgentLanesView } from "./components/views/AgentLanesView";
 import { PatternsView } from "./components/views/PatternsView";
 import { DistillationView } from "./components/views/DistillationView";
 import { BenchmarkView } from "./components/views/BenchmarkView";
+import { LearningsView } from "./components/views/LearningsView";
 import { ProcessingIndicator } from "./components/ui/processing-indicator";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
@@ -28,7 +29,7 @@ const SIDEBAR_ITEMS: Array<{ key: SidebarSection; icon: React.ReactNode; label: 
 
 function normalizeSection(value: string | null | undefined): SidebarSection {
   if (value === "overseer" || value === "runs") return "live";
-  if (value === "benchmarks" || value === "distillation") return "settings";
+  if (value === "benchmarks" || value === "distillation" || value === "learnings") return "settings";
   if (value === "codebase" || value === "console" || value === "projects" || value === "settings") return value;
   return "live";
 }
@@ -49,7 +50,10 @@ export default function App() {
   const liveTabs: LiveTab[] = labsMode ? ["Execution", "Agents", "Patterns", "Telemetry"] : ["Execution"];
 
   useEffect(() => {
-    if (sidebarSection !== activeSection) {
+    // Only reset activeSection when navigating to a genuinely different sidebar area.
+    // Sub-sections like "learnings", "distillation", "benchmarks" normalize to "settings"
+    // but should NOT be overwritten, so the sub-view keeps rendering.
+    if (sidebarSection !== activeSection && normalizeSection(activeSection) !== sidebarSection) {
       setActiveSection(sidebarSection);
     }
   }, [activeSection, setActiveSection, sidebarSection]);
@@ -425,6 +429,8 @@ export default function App() {
                     <DistillationView />
                   ) : activeSection === "benchmarks" ? (
                     <BenchmarkView />
+                  ) : activeSection === "learnings" ? (
+                    <LearningsView projectId={mission.selectedRepo?.id} />
                   ) : (
                     <SettingsControlView />
                   )}

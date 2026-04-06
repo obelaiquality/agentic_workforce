@@ -27,6 +27,7 @@ import type { AutoMemoryExtractor } from "../memory/autoExtractor";
 import type { LSPClient } from "../lsp/lspClient";
 import { createRootAbortController, type HierarchicalAbortController } from "../services/abortHierarchy";
 import { createLogger } from "../logger";
+import type { LearningsService } from "../services/learningsService";
 
 const log = createLogger("Orchestrator");
 import { prisma } from "../db";
@@ -119,6 +120,7 @@ interface OrchestratorDependencies {
   planService?: PlanService;
   autoMemoryExtractor?: AutoMemoryExtractor;
   lspClient?: LSPClient;
+  learningsService?: LearningsService;
 }
 
 interface BudgetState {
@@ -245,6 +247,7 @@ export class AgenticOrchestrator {
   private readonly hookService?: HookService;
   private readonly planService?: PlanService;
   private readonly autoMemoryExtractor?: AutoMemoryExtractor;
+  private readonly learningsService?: LearningsService;
 
   constructor(deps: OrchestratorDependencies) {
     this.registry = deps.registry;
@@ -260,6 +263,7 @@ export class AgenticOrchestrator {
     this.hookService = deps.hookService;
     this.planService = deps.planService;
     this.autoMemoryExtractor = deps.autoMemoryExtractor;
+    this.learningsService = deps.learningsService;
   }
 
   async *execute(input: AgenticExecutionInput, resumeFrom?: RunCheckpoint): AsyncGenerator<AgenticEvent> {
@@ -333,6 +337,7 @@ export class AgenticOrchestrator {
     const toolSummaries = toolSchemas.map((t) => ({ name: t.name, description: t.description }));
     const extraPromptSections = [
       this.memoryService.formatMemoriesForPrompt(prefetchedMemories),
+      this.learningsService?.formatForSystemPrompt(input.projectId || input.repoId) || "",
       deferredLoader?.getDeferredToolsList() || "",
       this.formatPlanContext(plan),
       input.systemPromptSuffix || "",
@@ -988,6 +993,18 @@ export class AgenticOrchestrator {
         if (this.doomLoopDetector.isLooping()) {
           const loopingAction = this.doomLoopDetector.getLoopingAction();
           telemetry.incrementCounter(METRICS.DOOM_LOOP_DETECTED, { [METRIC_LABELS.RUN_ID]: input.runId });
+
+          // Record doom loop as antipattern for future avoidance
+          if (this.learningsService) {
+            const loopTools = toolCalls.map((tc) => tc.name);
+            this.learningsService.recordAntipattern({
+              projectId: input.projectId || input.repoId,
+              summary: `Doom loop detected: repeated ${loopingAction || loopTools.join(",")} pattern`,
+              detail: `Agent got stuck repeating tool pattern at iteration ${state.iteration}. Escalation was ${state.currentRole === "overseer_escalation" ? "unavailable (already on highest role)" : "triggered"}.`,
+              source: "doom_loop",
+              relatedTools: loopTools,
+            });
+          }
           yield {
             type: "doom_loop_detected",
             reason: `Repeated pattern detected: ${loopingAction}`,

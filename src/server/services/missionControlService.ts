@@ -974,7 +974,7 @@ export class MissionControlService {
     private readonly contextService: ContextService,
     private readonly codeGraphService: CodeGraphService,
     private readonly githubService: GitHubService,
-    private readonly dreamStatusProvider?: () => { running: boolean; lastDreamAt: string | null; dreamCount: number }
+    private readonly dreamStatusProvider?: () => { running: boolean; lastDreamAt: string | null; dreamCount: number; learningsCount: number; principlesCount: number; suggestedSkillsCount: number }
   ) {}
 
   private async autoHealStaleReviewTickets(repoId: string) {
@@ -1357,6 +1357,9 @@ export class MissionControlService {
                   running: this.dreamStatusProvider().running,
                   lastDreamAt: this.dreamStatusProvider().lastDreamAt,
                   dreamCount: this.dreamStatusProvider().dreamCount,
+                  learningsCount: this.dreamStatusProvider().learningsCount,
+                  principlesCount: this.dreamStatusProvider().principlesCount,
+                  suggestedSkillsCount: this.dreamStatusProvider().suggestedSkillsCount,
                 }
               : null,
           };

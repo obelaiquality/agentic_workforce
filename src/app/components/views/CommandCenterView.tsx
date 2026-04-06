@@ -36,6 +36,9 @@ import { executionModeLabel, modelRoleLabel, providerLabel } from "../../lib/mis
 import { Chip, Panel, PanelHeader } from "../UI";
 import { OutcomeDebriefDrawer } from "../mission/OutcomeDebriefDrawer";
 import { ProjectMemoryPanel } from "../mission/ProjectMemoryPanel";
+import { SynthesizerPanel } from "../mission/SynthesizerPanel";
+import { OverseerDrawer } from "../mission/OverseerDrawer";
+import { MissionHeaderStrip } from "../mission/MissionHeaderStrip";
 import { MemoryBrowserPanel } from "./MemoryBrowserPanel";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
@@ -395,6 +398,18 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
     >
       <div className="min-w-0 space-y-4">
         {mission.selectedRepo ? (
+          <>
+          <MissionHeaderStrip
+            repo={mission.selectedRepo}
+            liveState={mission.liveState}
+            route={mission.route}
+            runSummary={mission.runSummary}
+            actionCapabilities={mission.actionCapabilities ?? { canRefresh: false, canStop: false, canReview: false, canExecute: false }}
+            lastUpdatedAt={mission.lastUpdatedAt ?? null}
+            isActing={mission.isActing}
+            onRefresh={mission.refreshSnapshot}
+            onStop={mission.stopExecution}
+          />
           <div className="flex items-center justify-end">
             {contextPanelOpen ? (
               <button
@@ -406,6 +421,7 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
               </button>
             ) : null}
           </div>
+          </>
         ) : null}
 
 	                {mission.selectedRepo ? (
@@ -2426,8 +2442,9 @@ function CommandContextDrawer({
             })()}
           </div>
         ) : activeMode === "memory" ? (
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
             <MemoryBrowserPanel projectId={mission.selectedRepo?.id} />
+            <ProjectMemoryPanel worktreePath={mission.selectedRepo?.repoRoot ?? null} />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -2484,6 +2501,13 @@ function CommandContextDrawer({
                 ))
               )}
             </div>
+
+            <SynthesizerPanel
+              route={mission.route}
+              contextPack={mission.contextPack}
+              blockedByApprovals={mission.pendingApprovals.length > 0}
+              onApplyRecommendation={() => mission.reviewRoute()}
+            />
 
             <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
               <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Quick Actions</div>

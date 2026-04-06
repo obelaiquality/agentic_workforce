@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "node:url";
 import { prisma } from "../db";
 import type { SkillRecord, SkillInvocationRecord } from "../../shared/contracts";
 import type { SkillDefinitionFile, SkillInvocationInput } from "./types";
 
-const BUILTINS_DIR = path.join(__dirname, "builtins");
+const BUILTINS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "builtins");
 const CUSTOM_SKILLS_KEY = "agentic.skills.custom.v1";
 const INVOCATION_KEY_PREFIX = "agentic.skill.invocation.";
 
