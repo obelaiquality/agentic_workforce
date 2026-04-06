@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AgenticRunDeepPanel } from "./AgenticRunDeepPanel";
 import type { AgenticRunSnapshot } from "../../../shared/contracts";
 
@@ -82,7 +83,19 @@ function createRun(): AgenticRunSnapshot {
 
 describe("AgenticRunDeepPanel", () => {
   it("renders the expanded agentic run sections", () => {
-    render(<AgenticRunDeepPanel run={createRun()} />);
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AgenticRunDeepPanel run={createRun()} />
+      </QueryClientProvider>
+    );
 
     expect(screen.getByText("Awaiting final verification")).toBeInTheDocument();
     expect(screen.getByText("Latest assistant output")).toBeInTheDocument();

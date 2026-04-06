@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
 import { prisma } from "../db";
+import { createLogger } from "../logger";
 import type { HookRecord, HookExecutionLogRecord, HookEventType } from "../../shared/contracts";
 import type { HookExecutionInput, HookExecutionOutput } from "./types";
+
+const log = createLogger("Hooks");
 
 const HOOKS_KEY = "agentic.hooks.registry.v1";
 const HOOK_LOG_KEY_PREFIX = "agentic.hook.log.";
@@ -401,6 +404,44 @@ export class HookService {
       .replace(/\{\{tool_name\}\}/g, String(input.eventPayload.tool_name || ""))
       .replace(/\{\{params\}\}/g, JSON.stringify(input.eventPayload.params || {}));
 
+    // If hook has a command, execute it with the prompt as stdin
+    if (hook.command) {
+      try {
+        const stdout = execSync(hook.command, {
+          input: rendered,
+          encoding: "utf-8",
+          timeout: hook.timeoutMs,
+          maxBuffer: 1024 * 1024,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+
+        return {
+          success: true,
+          continue: true,
+          systemMessage: `[Hook Prompt: ${hook.name}] ${stdout.trim()}`,
+          durationMs: 0,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (hook.continueOnError) {
+          log.warn(`Prompt hook command failed, falling back to template: ${message}`);
+          return {
+            success: true,
+            continue: true,
+            systemMessage: `[Hook Prompt: ${hook.name}] ${rendered}`,
+            durationMs: 0,
+          };
+        }
+        return {
+          success: false,
+          continue: hook.continueOnError,
+          error: `Prompt hook command failed: ${message}`,
+          durationMs: 0,
+        };
+      }
+    }
+
+    // Fall back to template rendering if no command
     return {
       success: true,
       continue: true,
@@ -409,16 +450,179 @@ export class HookService {
     };
   }
 
-  private async executeAgentHook(hook: HookRecord): Promise<HookExecutionOutput> {
-    if (!hook.agentObjective) {
+  private async executeAgentHook(hook: HookRecord, input: HookExecutionInput): Promise<HookExecutionOutput> {
+    if (!hook.agentObjective && !hook.command) {
       return {
         success: false,
         continue: false,
-        error: "Agent hook has no agent objective defined",
+        error: "Agent hook has no agent objective or command defined",
         durationMs: 0,
       };
     }
 
+    // Handle tool lifecycle events
+    if (input.eventType === "tool_before" || input.eventType === "tool_after") {
+      if (!hook.command) {
+        return {
+          success: false,
+          continue: false,
+          error: `Agent hook for ${input.eventType} requires a command`,
+          durationMs: 0,
+        };
+      }
+
+      const stdinPayload = JSON.stringify({
+        hook_id: hook.id,
+        event_type: input.eventType,
+        tool_name: input.eventPayload.tool_name || input.eventPayload.toolName,
+        input: input.eventPayload.input,
+        result: input.eventPayload.result,
+        context: input.context,
+      });
+
+      try {
+        const stdout = execSync(hook.command, {
+          input: stdinPayload,
+          encoding: "utf-8",
+          timeout: hook.timeoutMs,
+          maxBuffer: 1024 * 1024,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+
+        try {
+          const result = JSON.parse(stdout.trim()) as {
+            allow?: boolean;
+            reason?: string;
+            input?: Record<string, unknown>;
+            systemMessage?: string;
+            continue?: boolean;
+          };
+
+          // tool_before can block or modify input
+          if (input.eventType === "tool_before") {
+            if (result.allow === false) {
+              return {
+                success: true,
+                continue: false,
+                blocked: true,
+                blockReason: result.reason || "Hook blocked execution",
+                systemMessage: result.systemMessage,
+                durationMs: 0,
+              };
+            }
+            if (result.input) {
+              return {
+                success: true,
+                continue: result.continue !== false,
+                updatedInput: result.input,
+                systemMessage: result.systemMessage,
+                durationMs: 0,
+              };
+            }
+          }
+
+          // tool_after is informational
+          return {
+            success: true,
+            continue: result.continue !== false,
+            systemMessage: result.systemMessage || stdout.trim(),
+            durationMs: 0,
+          };
+        } catch {
+          // Non-JSON output, treat as system message
+          return {
+            success: true,
+            continue: true,
+            systemMessage: stdout.trim() || undefined,
+            durationMs: 0,
+          };
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          continue: hook.continueOnError,
+          error: `Agent hook command failed: ${message}`,
+          durationMs: 0,
+        };
+      }
+    }
+
+    // Handle run lifecycle events
+    if (input.eventType === "run_start" || input.eventType === "run_end") {
+      if (hook.command) {
+        const stdinPayload = JSON.stringify({
+          hook_id: hook.id,
+          event_type: input.eventType,
+          ...input.eventPayload,
+          context: input.context,
+        });
+
+        try {
+          const stdout = execSync(hook.command, {
+            input: stdinPayload,
+            encoding: "utf-8",
+            timeout: hook.timeoutMs,
+            maxBuffer: 1024 * 1024,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+
+          return {
+            success: true,
+            continue: true,
+            systemMessage: `[Hook Agent: ${hook.name}] ${stdout.trim()}`,
+            durationMs: 0,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            continue: hook.continueOnError,
+            error: `Agent hook command failed: ${message}`,
+            durationMs: 0,
+          };
+        }
+      }
+    }
+
+    // Handle command lifecycle events
+    if (input.eventType === "command_before" || input.eventType === "command_after") {
+      if (hook.command) {
+        const stdinPayload = JSON.stringify({
+          hook_id: hook.id,
+          event_type: input.eventType,
+          ...input.eventPayload,
+          context: input.context,
+        });
+
+        try {
+          const stdout = execSync(hook.command, {
+            input: stdinPayload,
+            encoding: "utf-8",
+            timeout: hook.timeoutMs,
+            maxBuffer: 1024 * 1024,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+
+          return {
+            success: true,
+            continue: true,
+            systemMessage: `[Hook Agent: ${hook.name}] ${stdout.trim()}`,
+            durationMs: 0,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            continue: hook.continueOnError,
+            error: `Agent hook command failed: ${message}`,
+            durationMs: 0,
+          };
+        }
+      }
+    }
+
+    // Default behavior for other event types
     return {
       success: true,
       continue: true,

@@ -20,6 +20,7 @@ import {
   PanelRightClose,
   PanelLeftOpen,
   Play,
+  RotateCcw,
   Square,
   ScrollText,
   SendHorizontal,
@@ -30,14 +31,15 @@ import {
 import type { WorkflowMoveRequest } from "../../../shared/contracts";
 import type { useMissionControlLiveData } from "../../hooks/useMissionControlLiveData";
 import { useUiStore } from "../../store/uiStore";
-import { getMissionTaskDetailV8 } from "../../lib/apiClient";
+import { getMissionTaskDetailV8, resumeAgenticRun } from "../../lib/apiClient";
 import { executionModeLabel, modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { Chip, Panel, PanelHeader } from "../UI";
 import { OutcomeDebriefDrawer } from "../mission/OutcomeDebriefDrawer";
 import { ProjectMemoryPanel } from "../mission/ProjectMemoryPanel";
+import { MemoryBrowserPanel } from "./MemoryBrowserPanel";
 import { ProcessingIndicator } from "../ui/processing-indicator";
 import { cn } from "../ui/utils";
-import { AgenticRunDeepPanel } from "../agentic";
+import { AgenticRunDeepPanel, RunReplayPanel } from "../agentic";
 
 type MissionData = ReturnType<typeof useMissionControlLiveData>;
 type WorkflowStatusFilter = "all" | "backlog" | "in_progress" | "needs_review" | "completed";
@@ -251,6 +253,12 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
   const [commentDraft, setCommentDraft] = useState("");
   const [replyTargetId, setReplyTargetId] = useState<string | null>(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [refineInput, setRefineInput] = useState("");
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [rejectInput, setRejectInput] = useState("");
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [answerInputs, setAnswerInputs] = useState<Record<string, string>>({});
 
   const taskDetailQuery = useQuery({
     queryKey: ["command-workflow-task-detail", mission.selectedRepo?.id, selectedWorkflowId],
@@ -647,6 +655,48 @@ function OverseerCommandCard({
                 />
                 Plan mode
               </label>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#111113] px-2.5 py-1.5 text-[11px] text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={Boolean((mission as { coordinatorEnabled?: boolean }).coordinatorEnabled)}
+                  onChange={(event) =>
+                    (mission as { setCoordinatorEnabled?: (value: boolean) => void }).setCoordinatorEnabled?.(event.target.checked)
+                  }
+                  className="h-3.5 w-3.5 rounded border-white/10 bg-transparent"
+                />
+                Coordinator
+                <span className="text-zinc-600 text-[10px]">multi-agent</span>
+              </label>
+              {(mission as { coordinatorEnabled?: boolean }).coordinatorEnabled && (
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+                    Agents
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={(mission as { coordinatorMaxAgents?: number }).coordinatorMaxAgents ?? 5}
+                      onChange={(e) =>
+                        (mission as { setCoordinatorMaxAgents?: (value: number) => void }).setCoordinatorMaxAgents?.(Number(e.target.value))
+                      }
+                      className="w-12 rounded border border-white/10 bg-black/30 px-1.5 py-0.5 text-xs text-zinc-300 outline-none focus:border-cyan-500/30"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+                    Concurrent
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={(mission as { coordinatorMaxConcurrent?: number }).coordinatorMaxConcurrent ?? 3}
+                      onChange={(e) =>
+                        (mission as { setCoordinatorMaxConcurrent?: (value: number) => void }).setCoordinatorMaxConcurrent?.(Number(e.target.value))
+                      }
+                      className="w-12 rounded border border-white/10 bg-black/30 px-1.5 py-0.5 text-xs text-zinc-300 outline-none focus:border-cyan-500/30"
+                    />
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -751,6 +801,13 @@ function OverseerCommandCard({
                 <div className="mt-2 text-sm text-amber-50">
                   Review the proposed plan below, then approve to resume execution or request refinement.
                 </div>
+                {mission.agenticRun.plan?.planContent && (
+                  <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-black/30 p-3">
+                    <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-mono leading-relaxed">
+                      {mission.agenticRun.plan.planContent}
+                    </pre>
+                  </div>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -759,30 +816,88 @@ function OverseerCommandCard({
                   >
                     Approve plan
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const feedback = window.prompt("What should change in the plan?");
-                      if (feedback) {
-                        (mission as { refinePlan?: (runId: string, feedback: string) => void }).refinePlan?.(mission.agenticRun!.runId, feedback);
-                      }
-                    }}
-                    className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-200 transition hover:bg-white/[0.08]"
-                  >
-                    Request changes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const reason = window.prompt("Why are you rejecting this plan?");
-                      if (reason) {
-                        (mission as { rejectPlan?: (runId: string, reason: string) => void }).rejectPlan?.(mission.agenticRun!.runId, reason);
-                      }
-                    }}
-                    className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-500/16"
-                  >
-                    Reject plan
-                  </button>
+                  {refineOpen ? (
+                    <div className="flex-1 min-w-[200px]">
+                      <textarea
+                        value={refineInput}
+                        onChange={(e) => setRefineInput(e.target.value)}
+                        placeholder="What should change in the plan?"
+                        className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/30 focus:outline-none resize-none"
+                        rows={2}
+                      />
+                      <div className="mt-1.5 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (refineInput.trim()) {
+                              (mission as { refinePlan?: (runId: string, feedback: string) => void }).refinePlan?.(mission.agenticRun!.runId, refineInput.trim());
+                              setRefineInput("");
+                              setRefineOpen(false);
+                            }
+                          }}
+                          className="rounded-lg border border-amber-500/20 bg-amber-500/12 px-3 py-1 text-xs text-amber-100 transition hover:bg-amber-500/20"
+                        >
+                          Submit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setRefineOpen(false); setRefineInput(""); }}
+                          className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-zinc-400 transition hover:bg-white/[0.06]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setRefineOpen(true)}
+                      className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-200 transition hover:bg-white/[0.08]"
+                    >
+                      Request changes
+                    </button>
+                  )}
+                  {rejectOpen ? (
+                    <div className="flex-1 min-w-[200px]">
+                      <textarea
+                        value={rejectInput}
+                        onChange={(e) => setRejectInput(e.target.value)}
+                        placeholder="Why are you rejecting this plan?"
+                        className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-rose-500/30 focus:outline-none resize-none"
+                        rows={2}
+                      />
+                      <div className="mt-1.5 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (rejectInput.trim()) {
+                              (mission as { rejectPlan?: (runId: string, reason: string) => void }).rejectPlan?.(mission.agenticRun!.runId, rejectInput.trim());
+                              setRejectInput("");
+                              setRejectOpen(false);
+                            }
+                          }}
+                          className="rounded-lg border border-rose-500/20 bg-rose-500/12 px-3 py-1 text-xs text-rose-100 transition hover:bg-rose-500/20"
+                        >
+                          Submit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setRejectOpen(false); setRejectInput(""); }}
+                          className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-zinc-400 transition hover:bg-white/[0.06]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setRejectOpen(true)}
+                      className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-500/16"
+                    >
+                      Reject plan
+                    </button>
+                  )}
                 </div>
               </div>
             ) : null}
@@ -796,29 +911,105 @@ function OverseerCommandCard({
                     .map((question) => (
                       <div key={question.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
                         <div className="text-sm text-zinc-100">{question.question}</div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const answer = window.prompt("Answer plan question", "");
-                            if (answer) {
-                              (mission as { answerPlanQuestion?: (runId: string, questionId: string, answer: string) => void }).answerPlanQuestion?.(
-                                mission.agenticRun!.runId,
-                                question.id,
-                                answer,
-                              );
-                            }
-                          }}
-                          className="mt-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/16"
-                        >
-                          Answer
-                        </button>
+                        {answerInputs[question.id] !== undefined ? (
+                          <div className="mt-2">
+                            <textarea
+                              value={answerInputs[question.id]}
+                              onChange={(e) => setAnswerInputs((prev) => ({ ...prev, [question.id]: e.target.value }))}
+                              placeholder="Enter your answer"
+                              className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500/30 focus:outline-none resize-none"
+                              rows={2}
+                            />
+                            <div className="mt-1.5 flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (answerInputs[question.id].trim()) {
+                                    (mission as { answerPlanQuestion?: (runId: string, questionId: string, answer: string) => void }).answerPlanQuestion?.(
+                                      mission.agenticRun!.runId,
+                                      question.id,
+                                      answerInputs[question.id].trim(),
+                                    );
+                                    setAnswerInputs((prev) => {
+                                      const next = { ...prev };
+                                      delete next[question.id];
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                className="rounded-lg border border-cyan-500/20 bg-cyan-500/12 px-3 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/20"
+                              >
+                                Submit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAnswerInputs((prev) => {
+                                    const next = { ...prev };
+                                    delete next[question.id];
+                                    return next;
+                                  });
+                                }}
+                                className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-zinc-400 transition hover:bg-white/[0.06]"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setAnswerInputs((prev) => ({ ...prev, [question.id]: "" }))}
+                            className="mt-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/16"
+                          >
+                            Answer
+                          </button>
+                        )}
                       </div>
                     ))}
                 </div>
               </div>
             ) : null}
 
-            <AgenticRunDeepPanel run={mission.agenticRun} />
+            <AgenticRunDeepPanel run={mission.agenticRun} ticketId={mission.selectedTicket?.id} />
+
+            {(mission.agenticRun.status === "failed" || mission.agenticRun.status === "aborted") && mission.agenticRun.resumable && (
+              <div className="mt-4">
+                <button
+                  onClick={async () => {
+                    setResuming(true);
+                    try {
+                      await resumeAgenticRun(mission.agenticRun!.runId);
+                      mission.refreshSnapshot();
+                    } catch (error) {
+                      console.error("Failed to resume run:", error);
+                    } finally {
+                      setResuming(false);
+                    }
+                  }}
+                  disabled={resuming}
+                  className={cn(
+                    "w-full rounded-xl border px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
+                    resuming
+                      ? "border-zinc-700 bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                      : "border-emerald-500/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/16 hover:border-emerald-500/30"
+                  )}
+                >
+                  <RotateCcw className={cn("h-4 w-4", resuming && "animate-spin")} />
+                  {resuming ? "Resuming Run..." : "Resume Run"}
+                </button>
+              </div>
+            )}
+
+            {(mission.agenticRun.status === "completed" || mission.agenticRun.status === "aborted" || mission.agenticRun.status === "failed") && (
+              <div className="mt-4 rounded-xl border border-white/6 bg-black/20 overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/6">
+                  <div className="text-sm font-medium text-zinc-200">Run Replay</div>
+                  <div className="text-xs text-zinc-500 mt-0.5">Step through the execution timeline</div>
+                </div>
+                <RunReplayPanel runId={mission.agenticRun.runId} />
+              </div>
+            )}
           </div>
         ) : null}
       </div>
@@ -2235,14 +2426,8 @@ function CommandContextDrawer({
             })()}
           </div>
         ) : activeMode === "memory" ? (
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            <ProjectMemoryPanel
-              worktreePath={
-                mission.selectedRepo?.managedWorktreeRoot
-                  ? `${mission.selectedRepo.managedWorktreeRoot}/active`
-                  : null
-              }
-            />
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+            <MemoryBrowserPanel projectId={mission.selectedRepo?.id} />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">

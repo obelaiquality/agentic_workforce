@@ -24,6 +24,7 @@
  */
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ChevronDown,
@@ -37,6 +38,10 @@ import {
   Sparkles,
   Webhook,
   BookOpen,
+  RotateCcw,
+  Clock,
+  Wrench,
+  GitMerge,
 } from "lucide-react";
 import type {
   AgenticRunSnapshot,
@@ -48,15 +53,41 @@ import type {
   AgenticHookEventRecord,
   AgenticMemoryExtractionRecord,
   ToolResultDto,
+  DomainEvent,
+  ToolInvocationEvent,
 } from "../../../shared/contracts";
 import { cn } from "../UI";
+import { resumeAgenticRun, getTaskTimelineV2, listRunToolEventsV9, getMergeReportV3 } from "../../lib/apiClient";
 
 interface AgenticRunDeepPanelProps {
   run: AgenticRunSnapshot;
+  ticketId?: string | null;
 }
 
-export function AgenticRunDeepPanel({ run }: AgenticRunDeepPanelProps) {
+export function AgenticRunDeepPanel({ run, ticketId }: AgenticRunDeepPanelProps) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [resuming, setResuming] = useState(false);
+
+  const { data: timelineData } = useQuery({
+    queryKey: ["task-timeline", ticketId],
+    queryFn: () => getTaskTimelineV2(ticketId!),
+    enabled: !!ticketId,
+    staleTime: 30_000,
+  });
+
+  const { data: toolEventsData } = useQuery({
+    queryKey: ["run-tool-events", run.runId],
+    queryFn: () => listRunToolEventsV9(run.runId),
+    enabled: run.status !== "idle",
+    staleTime: 15_000,
+  });
+
+  const { data: mergeReportData } = useQuery({
+    queryKey: ["merge-report", run.runId],
+    queryFn: () => getMergeReportV3(run.runId),
+    enabled: run.status !== "idle",
+    staleTime: 30_000,
+  });
 
   const toggleSection = (section: string) => {
     setExpandedSections((prev) => {
@@ -73,6 +104,17 @@ export function AgenticRunDeepPanel({ run }: AgenticRunDeepPanelProps) {
   const handleMetricClick = (section: string) => {
     if (!expandedSections.has(section)) {
       toggleSection(section);
+    }
+  };
+
+  const handleResume = async () => {
+    setResuming(true);
+    try {
+      await resumeAgenticRun(run.runId);
+    } catch (error) {
+      console.error("Failed to resume run:", error);
+    } finally {
+      setResuming(false);
     }
   };
 
@@ -96,7 +138,70 @@ export function AgenticRunDeepPanel({ run }: AgenticRunDeepPanelProps) {
             </div>
           )}
         </div>
+        {(run.status === "failed" || run.status === "aborted") && run.resumable && (
+          <button
+            onClick={handleResume}
+            disabled={resuming}
+            className={cn(
+              "rounded-lg border px-3 py-2 text-sm font-medium transition-colors flex items-center gap-2",
+              resuming
+                ? "border-zinc-700 bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                : "border-cyan-500/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/16 hover:border-cyan-500/30"
+            )}
+          >
+            <RotateCcw className={cn("h-4 w-4", resuming && "animate-spin")} />
+            {resuming ? "Resuming..." : "Resume"}
+          </button>
+        )}
       </div>
+
+      {/* Plan */}
+      {run.plan && run.plan.planContent && (
+        <ExpandableSection
+          title="Plan"
+          icon={BookOpen}
+          badge={run.plan.phase}
+          expanded={expandedSections.has("plan")}
+          onToggle={() => toggleSection("plan")}
+        >
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className={cn(
+                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                run.plan.phase === "executing" ? "bg-emerald-500/15 text-emerald-300" :
+                run.plan.phase === "plan_review" ? "bg-amber-500/15 text-amber-300" :
+                run.plan.phase === "planning" ? "bg-cyan-500/15 text-cyan-300" :
+                "bg-zinc-500/15 text-zinc-400"
+              )}>
+                {run.plan.phase}
+              </span>
+              {run.plan.approved && (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
+                  Approved
+                </span>
+              )}
+            </div>
+            <pre className="whitespace-pre-wrap rounded-lg border border-white/6 bg-black/20 p-3 text-sm text-zinc-300 font-mono leading-relaxed">
+              {run.plan.planContent}
+            </pre>
+            {run.plan.questions.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Questions</div>
+                {run.plan.questions.map((q) => (
+                  <div key={q.id} className="rounded-lg border border-white/6 bg-black/10 p-2">
+                    <div className="text-sm text-zinc-300">{q.question}</div>
+                    {q.answer && (
+                      <div className="mt-1 text-sm text-cyan-300/80 pl-3 border-l-2 border-cyan-500/20">
+                        {q.answer}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </ExpandableSection>
+      )}
 
       {/* Doom Loop Alert */}
       {run.doomLoopCount > 0 && run.doomLoops.length > 0 && (
@@ -251,6 +356,45 @@ export function AgenticRunDeepPanel({ run }: AgenticRunDeepPanelProps) {
           onToggle={() => toggleSection("memory")}
         >
           <MemoryExtractionList extractions={run.memoryExtractions} />
+        </ExpandableSection>
+      )}
+
+      {/* Merge Report */}
+      {mergeReportData?.item && mergeReportData.item.changedFiles.length > 0 && (
+        <ExpandableSection
+          title="Merge Report"
+          icon={GitMerge}
+          badge={mergeReportData.item.changedFiles.length.toLocaleString()}
+          expanded={expandedSections.has("mergeReport")}
+          onToggle={() => toggleSection("mergeReport")}
+        >
+          <MergeReportList report={mergeReportData.item} />
+        </ExpandableSection>
+      )}
+
+      {/* Task Timeline */}
+      {timelineData && timelineData.items.length > 0 && (
+        <ExpandableSection
+          title="Task Timeline"
+          icon={Clock}
+          badge={timelineData.items.length.toLocaleString()}
+          expanded={expandedSections.has("timeline")}
+          onToggle={() => toggleSection("timeline")}
+        >
+          <TaskTimelineList events={timelineData.items} />
+        </ExpandableSection>
+      )}
+
+      {/* Run Tool Events */}
+      {toolEventsData && toolEventsData.items.length > 0 && (
+        <ExpandableSection
+          title="Tool Events"
+          icon={Wrench}
+          badge={toolEventsData.items.length.toLocaleString()}
+          expanded={expandedSections.has("toolEvents")}
+          onToggle={() => toggleSection("toolEvents")}
+        >
+          <ToolInvocationList events={toolEventsData.items} />
         </ExpandableSection>
       )}
 
@@ -729,6 +873,171 @@ function MemoryExtractionList({ extractions }: { extractions: AgenticMemoryExtra
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function MergeReportList({ report }: { report: import("../../../shared/contracts").MergeReport }) {
+  const statusVariants = {
+    clean: { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/20" },
+    conflict: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20" },
+    added: { bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/20" },
+    deleted: { bg: "bg-zinc-500/10", text: "text-zinc-400", border: "border-zinc-500/20" },
+  };
+
+  return (
+    <div className="space-y-3">
+      {report.changedFiles.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-zinc-500">Changed Files</div>
+          {report.changedFiles.map((filePath, idx) => {
+            const status = "clean";
+            const variant = statusVariants[status];
+            return (
+              <div key={idx} className="rounded-lg border border-white/6 bg-black/10 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-zinc-300 font-mono truncate">{filePath}</div>
+                  <span
+                    className={cn(
+                      "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border uppercase tracking-wide flex-shrink-0",
+                      variant.bg,
+                      variant.text,
+                      variant.border
+                    )}
+                  >
+                    {status}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {report.semanticConflicts && report.semanticConflicts.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-zinc-500">Semantic Conflicts</div>
+          {report.semanticConflicts.map((conflict, idx) => (
+            <div key={idx} className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+              <div className="text-xs text-red-300">{conflict}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {report.outcome && (
+        <div className="rounded-lg border border-white/6 bg-black/10 px-3 py-2">
+          <div className="text-xs text-zinc-500 mb-1">Outcome</div>
+          <div className="text-sm text-zinc-200 capitalize">{report.outcome.replace(/_/g, " ")}</div>
+        </div>
+      )}
+
+      {report.overlapScore !== undefined && (
+        <div className="rounded-lg border border-white/6 bg-black/10 px-3 py-2">
+          <div className="text-xs text-zinc-500 mb-1">Overlap Score</div>
+          <div className="text-sm text-zinc-200">{(report.overlapScore * 100).toFixed(1)}%</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskTimelineList({ events }: { events: DomainEvent[] }) {
+  return (
+    <div className="space-y-2">
+      {events.map((event) => {
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(event.payload_json);
+        } catch {
+          // ignore parse errors
+        }
+        return (
+          <div key={event.event_id} className="rounded-lg border border-white/6 bg-black/10 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Clock className="h-3.5 w-3.5 text-cyan-400" />
+                <span className="text-sm font-medium text-zinc-200 font-mono">{event.type}</span>
+              </div>
+              <span className="text-[10px] text-zinc-600">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-[10px] text-zinc-500">
+              <span>actor: {event.actor}</span>
+              <span className="text-zinc-700">|</span>
+              <span className="font-mono">{event.aggregate_id.slice(0, 12)}</span>
+            </div>
+            {Object.keys(payload).length > 0 && (
+              <details className="mt-1.5">
+                <summary className="text-[10px] text-zinc-600 cursor-pointer hover:text-zinc-400">
+                  payload
+                </summary>
+                <pre className="mt-1 text-[10px] text-zinc-400 bg-black/20 rounded p-1.5 overflow-x-auto font-mono">
+                  {JSON.stringify(payload, null, 2)}
+                </pre>
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToolInvocationList({ events }: { events: ToolInvocationEvent[] }) {
+  const policyVariants: Record<string, { bg: string; text: string; border: string }> = {
+    allowed: { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/20" },
+    approval_required: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/20" },
+    denied: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20" },
+  };
+
+  return (
+    <div className="space-y-2">
+      {events.map((event) => {
+        const variant = policyVariants[event.policyDecision] || policyVariants.allowed;
+        return (
+          <div key={event.id} className="rounded-lg border border-white/6 bg-black/10 px-3 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-zinc-200 font-mono">{event.command}</span>
+                  <span className="text-[10px] text-zinc-600">{event.stage}</span>
+                  <span
+                    className={cn(
+                      "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border uppercase tracking-wide",
+                      variant.bg, variant.text, variant.border
+                    )}
+                  >
+                    {event.policyDecision.replace("_", " ")}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-500">
+                  <span>{event.durationMs}ms</span>
+                  {event.exitCode !== null && (
+                    <>
+                      <span className="text-zinc-700">|</span>
+                      <span className={event.exitCode === 0 ? "text-emerald-500" : "text-red-400"}>
+                        exit {event.exitCode}
+                      </span>
+                    </>
+                  )}
+                  <span className="text-zinc-700">|</span>
+                  <span className="font-mono">{event.toolType}</span>
+                </div>
+              </div>
+            </div>
+            {event.summary && (
+              <div className="mt-1.5 text-xs text-zinc-400 line-clamp-2">{event.summary}</div>
+            )}
+            {event.errorClass !== "none" && (
+              <div className="mt-1 text-[10px] text-red-400">
+                Error: {event.errorClass.replace(/_/g, " ")}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

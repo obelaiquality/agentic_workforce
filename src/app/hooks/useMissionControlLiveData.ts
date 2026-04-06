@@ -429,6 +429,9 @@ export function useMissionControlLiveData() {
   const [projectSetupState, setProjectSetupState] = useState<ProjectSetupState | null>(null);
   const [agenticAssistantText, setAgenticAssistantText] = useState("");
   const [planModeEnabled, setPlanModeEnabled] = useState(false);
+  const [coordinatorEnabled, setCoordinatorEnabled] = useState(false);
+  const [coordinatorMaxAgents, setCoordinatorMaxAgents] = useState(5);
+  const [coordinatorMaxConcurrent, setCoordinatorMaxConcurrent] = useState(3);
   const [agenticLiveEvents, setAgenticLiveEvents] = useState<Array<{
     createdAt: string;
     event: import("../../shared/contracts").AgenticEvent;
@@ -982,6 +985,11 @@ export function useMissionControlLiveData() {
         initial_model_role: selectedExecutionProfileStages.build,
         use_deferred_tools: true,
         plan_mode: planModeEnabled,
+        coordinator: coordinatorEnabled || undefined,
+        coordinator_options: coordinatorEnabled ? {
+          max_agents: coordinatorMaxAgents,
+          max_concurrent: coordinatorMaxConcurrent,
+        } : undefined,
       });
     },
     onMutate: () => {
@@ -1364,6 +1372,12 @@ export function useMissionControlLiveData() {
     setInput,
     planModeEnabled,
     setPlanModeEnabled,
+    coordinatorEnabled,
+    setCoordinatorEnabled,
+    coordinatorMaxAgents,
+    setCoordinatorMaxAgents,
+    coordinatorMaxConcurrent,
+    setCoordinatorMaxConcurrent,
     streaming,
     roleLabels: ROLE_LABELS,
     executionProfiles,

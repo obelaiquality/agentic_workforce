@@ -22,6 +22,13 @@ const agenticExecuteSchema = z.object({
   provider_id: z.enum(["qwen-cli", "openai-compatible", "onprem-qwen", "openai-responses"]).optional(),
   use_deferred_tools: z.boolean().optional(),
   plan_mode: z.boolean().optional(),
+  coordinator: z.boolean().optional(),
+  coordinator_options: z.object({
+    max_agents: z.number().int().positive().optional(),
+    max_concurrent: z.number().int().positive().optional(),
+    allow_respawn: z.boolean().optional(),
+    conflict_resolution: z.enum(["first_wins", "merge", "integrator"]).optional(),
+  }).optional(),
   budget: z.object({
     max_tokens: z.number().int().positive().optional(),
     max_cost_usd: z.number().positive().optional(),
@@ -176,6 +183,15 @@ async function prepareAgenticExecution(input: AgenticExecuteInput, deps: {
     providerId: input.provider_id,
     useDeferredTools: input.use_deferred_tools ?? true,
     planMode: input.plan_mode ?? false,
+    coordinator: input.coordinator ?? false,
+    coordinatorOptions: input.coordinator_options
+      ? {
+          maxAgents: input.coordinator_options.max_agents,
+          maxConcurrent: input.coordinator_options.max_concurrent,
+          allowRespawn: input.coordinator_options.allow_respawn,
+          conflictResolution: input.coordinator_options.conflict_resolution,
+        }
+      : undefined,
     budget: input.budget
       ? {
           maxTokens: input.budget.max_tokens,
@@ -193,10 +209,12 @@ async function prepareAgenticExecution(input: AgenticExecuteInput, deps: {
     worktree_path: worktreePath,
     model_role: input.initial_model_role ?? "coder_default",
     provider_id: input.provider_id ?? null,
-    execution_mode: "single_agent",
+    execution_mode: input.coordinator ? "coordinator" : "single_agent",
     verification_depth: "standard",
     use_deferred_tools: executionInput.useDeferredTools,
     plan_mode: executionInput.planMode,
+    coordinator: executionInput.coordinator,
+    coordinator_options: executionInput.coordinatorOptions ?? null,
     budget: executionInput.budget ?? null,
   } satisfies Record<string, unknown>;
 
@@ -253,6 +271,7 @@ async function loadPreparedAgenticRun(input: {
   }
 
   const budget = toRecord(metadata.budget);
+  const coordinatorOpts = toRecord(metadata.coordinator_options);
   const executionInput: AgenticExecutionInput = {
     runId: input.runId,
     repoId: repo.id,
@@ -277,6 +296,20 @@ async function loadPreparedAgenticRun(input: {
         : undefined,
     useDeferredTools: metadata.use_deferred_tools !== false,
     planMode: input.overrides?.planMode ?? (metadata.plan_mode === true),
+    coordinator: metadata.coordinator === true,
+    coordinatorOptions: metadata.coordinator
+      ? {
+          maxAgents: typeof coordinatorOpts.maxAgents === "number" ? coordinatorOpts.maxAgents : undefined,
+          maxConcurrent: typeof coordinatorOpts.maxConcurrent === "number" ? coordinatorOpts.maxConcurrent : undefined,
+          allowRespawn: typeof coordinatorOpts.allowRespawn === "boolean" ? coordinatorOpts.allowRespawn : undefined,
+          conflictResolution:
+            coordinatorOpts.conflictResolution === "first_wins" ||
+            coordinatorOpts.conflictResolution === "merge" ||
+            coordinatorOpts.conflictResolution === "integrator"
+              ? coordinatorOpts.conflictResolution
+              : undefined,
+        }
+      : undefined,
     systemPromptSuffix: input.overrides?.systemPromptSuffix,
     budget: {
       maxTokens: typeof budget.maxTokens === "number" ? budget.maxTokens : undefined,
@@ -506,8 +539,18 @@ async function executeAgenticRun(input: {
   executionService: ExecutionService;
   ticketService: TicketService;
   prepared: PreparedExecution;
+  checkpoint?: {
+    runId: string;
+    messages: Array<{ role: string; content: string; pinned?: boolean; timestamp: string }>;
+    iterationCount: number;
+    budgetUsed: { tokens: number; cost: number };
+    currentRole: string;
+    toolCallsTotal: number;
+    recentlyReadFiles: Array<{ path: string; content: string }>;
+    timestamp: string;
+  };
 }) {
-  for await (const event of input.executionService.executeAgentic(input.toolRegistry, input.prepared.executionInput)) {
+  for await (const event of input.executionService.executeAgentic(input.toolRegistry, input.prepared.executionInput, input.checkpoint)) {
     await handleAgenticEvent({
       event,
       runId: input.prepared.runId,
@@ -747,6 +790,112 @@ export function registerAgenticRoutes(deps: AgenticRouteDeps) {
     });
 
     return reply.send({ item: plan });
+  });
+
+  app.post("/api/agentic/runs/:id/resume", async (request, reply) => {
+    const params = agenticRunParamsSchema.parse(request.params);
+
+    // Load the run projection to validate it exists and is resumable
+    const row = await prisma.runProjection.findUnique({
+      where: { runId: params.id },
+    });
+    if (!row) {
+      return reply.code(404).send({
+        error: "Run not found",
+      });
+    }
+
+    // Check if run is in a resumable state (aborted, failed, or paused)
+    const resumableStatuses = ["aborted", "failed"];
+    if (!resumableStatuses.includes(row.status)) {
+      return reply.code(400).send({
+        error: `Run is not resumable. Current status: ${row.status}. Only runs with status 'aborted' or 'failed' can be resumed.`,
+      });
+    }
+
+    // Load checkpoint
+    const checkpointKey = `agentic.checkpoint.${params.id}`;
+    const checkpointRow = await prisma.appSetting.findUnique({
+      where: { key: checkpointKey },
+    });
+    if (!checkpointRow?.value) {
+      return reply.code(404).send({
+        error: "No checkpoint found for this run. Cannot resume.",
+      });
+    }
+
+    const checkpoint = checkpointRow.value as unknown as {
+      runId: string;
+      messages: Array<{ role: string; content: string; pinned?: boolean; timestamp: string }>;
+      iterationCount: number;
+      budgetUsed: { tokens: number; cost: number };
+      currentRole: string;
+      toolCallsTotal: number;
+      recentlyReadFiles: Array<{ path: string; content: string }>;
+      timestamp: string;
+    };
+
+    // Load the prepared run
+    const prepared = await loadPreparedAgenticRun({
+      runId: params.id,
+      repoService,
+      ticketService,
+    });
+
+    // Update run status to "running"
+    await upsertAgenticRunProjection({
+      runId: prepared.runId,
+      ticketId: prepared.ticket.id,
+      status: "running",
+      providerId: prepared.executionInput.providerId ?? null,
+      metadata: {
+        ...prepared.projectionMetadata,
+        resumed_at: new Date().toISOString(),
+        resumed_from_iteration: checkpoint.iterationCount,
+      },
+    });
+
+    // Start execution with checkpoint in the background
+    void executeAgenticRun({
+      toolRegistry,
+      executionService,
+      ticketService,
+      prepared,
+      checkpoint,
+    }).catch(async (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      await upsertAgenticRunProjection({
+        runId: prepared.runId,
+        ticketId: prepared.ticket.id,
+        status: "failed",
+        providerId: prepared.executionInput.providerId ?? null,
+        metadata: {
+          ...prepared.projectionMetadata,
+          last_error: message,
+        },
+      });
+      publishEvent(`agentic:${prepared.runId}`, "agentic.error", {
+        runId: prepared.runId,
+        run_id: prepared.runId,
+        projectId: prepared.repo.id,
+        project_id: prepared.repo.id,
+        ticketId: prepared.ticket.id,
+        ticket_id: prepared.ticket.id,
+        event: {
+          type: "error",
+          error: message,
+          recoverable: false,
+        } satisfies AgenticEvent,
+      });
+    });
+
+    return {
+      runId: prepared.runId,
+      ticket: prepared.ticket,
+      projectId: prepared.repo.id,
+      worktreePath: prepared.worktreePath,
+      resumedFromIteration: checkpoint.iterationCount,
+    };
   });
 
   app.post<{ Body: AgenticExecuteInput }>("/api/agentic/execute", async (request, reply) => {

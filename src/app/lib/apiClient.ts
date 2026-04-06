@@ -1799,6 +1799,13 @@ export async function startAgenticRun(input: {
     max_cost_usd?: number;
     max_duration_ms?: number;
   };
+  coordinator?: boolean;
+  coordinator_options?: {
+    max_agents?: number;
+    max_concurrent?: number;
+    allow_respawn?: boolean;
+    conflict_resolution?: "first_wins" | "merge" | "integrator";
+  };
 }) {
   return apiRequest<{
     runId: string;
@@ -1843,6 +1850,18 @@ export async function answerAgenticRunPlanQuestion(runId: string, questionId: st
   return apiRequest<{ item: import("../../shared/contracts").AgenticRunPlan }>(`/api/agentic/runs/${encodeURIComponent(runId)}/plan/answer`, {
     method: "POST",
     body: JSON.stringify({ questionId, answer }),
+  });
+}
+
+export async function resumeAgenticRun(runId: string) {
+  return apiRequest<{
+    runId: string;
+    ticket: import("../../shared/contracts").Ticket;
+    projectId: string;
+    worktreePath: string;
+    resumedFromIteration: number;
+  }>(`/api/agentic/runs/${encodeURIComponent(runId)}/resume`, {
+    method: "POST",
   });
 }
 
@@ -2301,4 +2320,72 @@ export async function getTelemetryMetrics() {
 
 export async function getMcpServerHealth(serverId: string) {
   return apiRequest<{ status: string; consecutiveFailures: number; restartAttempts: number; lastCheckTime?: number }>(`/api/v1/settings/integrations/mcp/${encodeURIComponent(serverId)}/health`);
+}
+
+export async function getContextCompactionConfig(): Promise<{
+  thresholds: { summarize: number; compress: number; dropFiles: number; merge: number; emergency: number };
+  microcompact: { enabled: boolean; cacheWindowSize: number; minAgeForRemoval: number };
+  snipCompact: { protectedTailTurns: number; minPressureThreshold: number };
+}> {
+  return apiRequest("/api/settings/context-compaction");
+}
+
+export async function updateContextCompactionConfig(config: Record<string, unknown>): Promise<{ ok: boolean }> {
+  return apiRequest("/api/settings/context-compaction", { method: "PATCH", body: JSON.stringify(config) });
+}
+
+export async function getPrivacyConfig(): Promise<{
+  redactionEnabled: boolean;
+  patterns: Array<{ type: string; label: string; enabled: boolean }>;
+  stats: { totalRedactions: number; byType: Record<string, number> };
+}> {
+  return apiRequest("/api/settings/privacy");
+}
+
+export async function updatePrivacyConfig(config: Record<string, unknown>): Promise<{ ok: boolean }> {
+  return apiRequest("/api/settings/privacy", { method: "PATCH", body: JSON.stringify(config) });
+}
+
+export async function listSecrets(): Promise<{
+  items: Array<{ name: string; source: "stored" | "env"; updatedAt: string | null }>;
+}> {
+  return apiRequest("/api/settings/secrets");
+}
+
+export async function addSecret(name: string, value: string): Promise<{ ok: boolean }> {
+  return apiRequest("/api/settings/secrets", { method: "POST", body: JSON.stringify({ name, value }) });
+}
+
+export async function deleteSecret(name: string): Promise<{ ok: boolean }> {
+  return apiRequest(`/api/settings/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function getCacheBreakDiagnostics(): Promise<{
+  baselineCacheReadTokens: number;
+  sampleCount: number;
+  emaAlpha: number;
+  recentBreaks: Array<{
+    timestamp: string;
+    possibleCauses: string[];
+    readTokensBefore: number;
+    readTokensAfter: number;
+  }>;
+  hitRateEstimate: number;
+}> {
+  return apiRequest("/api/diagnostics/cache-breaks");
+}
+
+export async function getEnvironmentDiagnostics(): Promise<{
+  gitVersion: string;
+  nodeVersion: string;
+  osVersion: string;
+  arch: string;
+  cpuCount: number;
+  totalMemory: string;
+  freeMemory: string;
+  diskSpace: { available: string; total: string };
+  dbLatencyMs: number;
+  uptime: string;
+}> {
+  return apiRequest("/api/diagnostics/environment");
 }

@@ -7,12 +7,19 @@ import { useUiStore } from "../../store/uiStore";
 const apiClientMock = vi.hoisted(() => ({
   activateModelPluginV2: vi.fn().mockResolvedValue({}),
   activateProviderV2: vi.fn().mockResolvedValue({}),
+  addSecret: vi.fn().mockResolvedValue({ ok: true }),
   bootstrapQwenAccount: vi.fn().mockResolvedValue({}),
   connectMcpIntegration: vi.fn().mockResolvedValue({}),
   createOrUpdateMcpIntegration: vi.fn().mockResolvedValue({}),
   createQwenAccount: vi.fn().mockResolvedValue({}),
   deleteMcpIntegration: vi.fn().mockResolvedValue({}),
+  deleteSecret: vi.fn().mockResolvedValue({ ok: true }),
   disconnectMcpIntegration: vi.fn().mockResolvedValue({}),
+  getContextCompactionConfig: vi.fn().mockResolvedValue({
+    thresholds: { summarize: 0.7, compress: 0.8, dropFiles: 0.85, merge: 0.9, emergency: 0.99 },
+    microcompact: { enabled: true, cacheWindowSize: 50, minAgeForRemoval: 3 },
+    snipCompact: { protectedTailTurns: 10, minPressureThreshold: 0.5 },
+  }),
   getLatestInferenceBenchmarksV2: vi.fn().mockResolvedValue({ items: [] }),
   getLspIntegrations: vi.fn().mockResolvedValue({
     items: [
@@ -46,6 +53,14 @@ const apiClientMock = vi.hoisted(() => ({
       },
     ],
   }),
+  getPrivacyConfig: vi.fn().mockResolvedValue({
+    redactionEnabled: true,
+    patterns: [
+      { type: "jwt", label: "JSON Web Tokens", enabled: true },
+      { type: "api_key", label: "API Keys", enabled: true },
+    ],
+    stats: { totalRedactions: 0, byType: {} },
+  }),
   listExperimentalChannelActivity: vi.fn().mockResolvedValue({ items: { channels: [], subagents: [] } }),
   listOnPremRoleRuntimes: vi.fn().mockResolvedValue({ items: [] }),
   getOpenAiBudgetV3: vi.fn().mockResolvedValue({ item: { remainingUsd: 12 } }),
@@ -60,6 +75,7 @@ const apiClientMock = vi.hoisted(() => ({
   listProviders: vi.fn().mockResolvedValue({ items: [], activeProvider: "onprem-qwen" }),
   listQwenAccountAuthSessions: vi.fn().mockResolvedValue({ items: [] }),
   listQwenAccounts: vi.fn().mockResolvedValue({ items: [] }),
+  listSecrets: vi.fn().mockResolvedValue({ items: [] }),
   policyDecideV2: vi.fn().mockResolvedValue({ decision: { decision: "allow", policy_version: "test" } }),
   reauthQwenAccount: vi.fn().mockResolvedValue({}),
   runInferenceAutotuneV2: vi.fn().mockResolvedValue({}),
@@ -72,6 +88,8 @@ const apiClientMock = vi.hoisted(() => ({
   switchInferenceBackendV2: vi.fn().mockResolvedValue({}),
   patchMcpIntegration: vi.fn().mockResolvedValue({}),
   testOnPremRoleRuntime: vi.fn().mockResolvedValue({}),
+  updateContextCompactionConfig: vi.fn().mockResolvedValue({ ok: true }),
+  updatePrivacyConfig: vi.fn().mockResolvedValue({ ok: true }),
   updateQwenAccount: vi.fn().mockResolvedValue({}),
   updateSettings: vi.fn().mockResolvedValue({}),
   setRuntimeMode: vi.fn().mockResolvedValue({}),

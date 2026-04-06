@@ -37,12 +37,53 @@ export interface MCPHealthState {
 }
 
 // ---------------------------------------------------------------------------
-// MCP Client — manages connections to MCP servers via stdio transport
+// SSE Transport Types
+// ---------------------------------------------------------------------------
+
+export interface SSETransportState {
+  url: string;
+  abortController: AbortController;
+  reconnectAttempts: number;
+  reconnecting: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// MCP Client — manages connections to MCP servers via stdio or SSE transport
+//
+// Supports two transport types:
+//
+// 1. stdio (default): Spawns a child process and communicates via stdin/stdout
+//    Example config:
+//    {
+//      id: "my-server",
+//      name: "My Server",
+//      transport: "stdio",
+//      command: "npx",
+//      args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
+//      enabled: true
+//    }
+//
+// 2. sse: Connects to a remote MCP server via Server-Sent Events
+//    Example config:
+//    {
+//      id: "remote-server",
+//      name: "Remote Server",
+//      transport: "sse",
+//      url: "http://localhost:3001/sse",
+//      enabled: true
+//    }
+//
+//    SSE protocol:
+//    - Server → Client: SSE stream at `url` (e.g., http://localhost:3001/sse)
+//      Each SSE event contains a JSON-RPC response/notification
+//    - Client → Server: HTTP POST to `url` with "/message" suffix (e.g., http://localhost:3001/message)
+//      Request body is a JSON-RPC request
 // ---------------------------------------------------------------------------
 
 export class MCPClient {
   private connections = new Map<string, MCPConnection>();
   private healthMonitors = new Map<string, MCPHealthState>();
+  private sseTransports = new Map<string, SSETransportState>();
   private readonly requestTimeout = 30000; // 30 seconds
   private readonly initializeTimeout = 10000; // 10 seconds
   private static readonly HEALTH_CHECK_TIMEOUT = 5000;
@@ -50,20 +91,31 @@ export class MCPClient {
   private static readonly MAX_RESTART_ATTEMPTS = 5;
   private static readonly BASE_BACKOFF_MS = 5000;
   private static readonly MAX_BACKOFF_MS = 60000;
+  private static readonly SSE_RECONNECT_DELAY_MS = 2000;
+  private static readonly SSE_MAX_RECONNECT_ATTEMPTS = 5;
 
   /**
    * Connect to an MCP server.
-   * Currently only supports stdio transport.
+   * Supports both stdio and SSE transports.
    */
   async connect(config: MCPServerConfig): Promise<void> {
     if (this.connections.has(config.id)) {
       throw new Error(`Already connected to server: ${config.id}`);
     }
 
-    if (config.transport !== "stdio") {
-      throw new Error(`Unsupported transport: ${config.transport}. Only stdio is currently supported.`);
+    if (config.transport === "stdio") {
+      await this.connectStdio(config);
+    } else if (config.transport === "sse") {
+      await this.connectSSE(config);
+    } else {
+      throw new Error(`Unsupported transport: ${config.transport}`);
     }
+  }
 
+  /**
+   * Connect to an MCP server via stdio transport.
+   */
+  private async connectStdio(config: MCPServerConfig): Promise<void> {
     if (!config.command) {
       throw new Error(`Command is required for stdio transport`);
     }
@@ -223,6 +275,205 @@ export class MCPClient {
   }
 
   /**
+   * Connect to an MCP server via SSE transport.
+   */
+  private async connectSSE(config: MCPServerConfig): Promise<void> {
+    if (!config.url) {
+      throw new Error(`URL is required for SSE transport`);
+    }
+
+    // Initialize connection state
+    const connection: MCPConnection = {
+      serverId: config.id,
+      config,
+      connected: false,
+      tools: [],
+      resources: [],
+      nextRequestId: 1,
+      pendingRequests: new Map(),
+    };
+
+    this.connections.set(config.id, connection);
+
+    try {
+      // Set up SSE transport state
+      const abortController = new AbortController();
+      const sseState: SSETransportState = {
+        url: config.url,
+        abortController,
+        reconnectAttempts: 0,
+        reconnecting: false,
+      };
+      this.sseTransports.set(config.id, sseState);
+
+      // Start SSE connection in background
+      this.startSSEStream(config.id, config.url, abortController.signal);
+
+      // Send initialize request
+      const initializeParams: MCPInitializeParams = {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: {
+          name: "agentic-workforce",
+          version: "1.0.0",
+        },
+      };
+
+      const initResult = await this.sendRequest<MCPInitializeResult>(
+        config.id,
+        "initialize",
+        initializeParams,
+        this.initializeTimeout
+      );
+
+      connection.serverInfo = initResult.serverInfo;
+      connection.capabilities = initResult.capabilities;
+
+      // Send initialized notification
+      this.sendNotification(config.id, "notifications/initialized", {});
+
+      connection.connected = true;
+      connection.lastConnected = new Date().toISOString();
+
+      // List available tools and resources
+      if (initResult.capabilities.tools) {
+        const toolsResult = await this.sendRequest<{ tools: MCPToolInfo[] }>(
+          config.id,
+          "tools/list",
+          {}
+        );
+        connection.tools = toolsResult.tools.map((t) => ({
+          serverId: config.id,
+          name: t.name,
+          description: t.description || "",
+          inputSchema: t.inputSchema,
+        }));
+      }
+
+      if (initResult.capabilities.resources) {
+        const resourcesResult = await this.sendRequest<{ resources: MCPResourceInfo[] }>(
+          config.id,
+          "resources/list",
+          {}
+        );
+        connection.resources = resourcesResult.resources.map((r) => ({
+          serverId: config.id,
+          uri: r.uri,
+          name: r.name,
+          description: r.description,
+          mimeType: r.mimeType,
+        }));
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      connection.error = errorMessage;
+      connection.connected = false;
+
+      // Clean up SSE transport if it was started
+      const sseState = this.sseTransports.get(config.id);
+      if (sseState) {
+        sseState.abortController.abort();
+        this.sseTransports.delete(config.id);
+      }
+
+      throw new Error(`Failed to connect to MCP server ${config.id}: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Start SSE stream from server.
+   */
+  private async startSSEStream(serverId: string, url: string, signal: AbortSignal): Promise<void> {
+    try {
+      const response = await fetch(url, { signal });
+
+      if (!response.ok) {
+        throw new Error(`SSE connection failed: ${response.status} ${response.statusText}`);
+      }
+
+      if (!response.body) {
+        throw new Error("SSE response has no body");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim();
+            if (data) {
+              this.handleMessage(serverId, data);
+            }
+          }
+        }
+      }
+
+      // Connection closed — attempt reconnect if not aborted
+      if (!signal.aborted) {
+        await this.reconnectSSE(serverId);
+      }
+    } catch (err) {
+      if (signal.aborted) {
+        // Intentional disconnect, don't reconnect
+        return;
+      }
+
+      log.error(`[${serverId}] SSE stream error:`, err);
+      const connection = this.connections.get(serverId);
+      if (connection) {
+        connection.error = `SSE error: ${err instanceof Error ? err.message : String(err)}`;
+        connection.connected = false;
+      }
+
+      // Attempt reconnect
+      await this.reconnectSSE(serverId);
+    }
+  }
+
+  /**
+   * Reconnect SSE transport with exponential backoff.
+   */
+  private async reconnectSSE(serverId: string): Promise<void> {
+    const sseState = this.sseTransports.get(serverId);
+    const connection = this.connections.get(serverId);
+    if (!sseState || !connection || sseState.reconnecting) {
+      return;
+    }
+
+    if (sseState.reconnectAttempts >= MCPClient.SSE_MAX_RECONNECT_ATTEMPTS) {
+      log.error(`[${serverId}] Max SSE reconnect attempts reached`);
+      connection.error = "Max reconnect attempts reached";
+      connection.connected = false;
+      return;
+    }
+
+    sseState.reconnecting = true;
+    sseState.reconnectAttempts++;
+
+    const delay = Math.min(
+      MCPClient.SSE_RECONNECT_DELAY_MS * Math.pow(2, sseState.reconnectAttempts - 1),
+      MCPClient.MAX_BACKOFF_MS
+    );
+
+    log.info(`[${serverId}] Reconnecting SSE in ${delay}ms (attempt ${sseState.reconnectAttempts})`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    sseState.reconnecting = false;
+
+    // Start new stream with same abort controller
+    this.startSSEStream(serverId, sseState.url, sseState.abortController.signal);
+  }
+
+  /**
    * Disconnect from an MCP server.
    */
   async disconnect(serverId: string): Promise<void> {
@@ -234,20 +485,30 @@ export class MCPClient {
     // Reject all pending requests
     this.rejectAllPending(serverId, new Error("Server disconnecting"));
 
-    // Kill the process
-    if (connection.process) {
-      try {
-        process.kill(connection.process.pid, "SIGTERM");
-        // Give it a moment to shut down gracefully
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        // Force kill if still alive
+    // Clean up based on transport type
+    if (connection.config.transport === "stdio") {
+      // Kill the process
+      if (connection.process) {
         try {
-          process.kill(connection.process.pid, "SIGKILL");
-        } catch {
-          // Process already dead
+          process.kill(connection.process.pid, "SIGTERM");
+          // Give it a moment to shut down gracefully
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          // Force kill if still alive
+          try {
+            process.kill(connection.process.pid, "SIGKILL");
+          } catch {
+            // Process already dead
+          }
+        } catch (err) {
+          // Process might already be dead
         }
-      } catch (err) {
-        // Process might already be dead
+      }
+    } else if (connection.config.transport === "sse") {
+      // Abort SSE connection
+      const sseState = this.sseTransports.get(serverId);
+      if (sseState) {
+        sseState.abortController.abort();
+        this.sseTransports.delete(serverId);
       }
     }
 
@@ -338,30 +599,46 @@ export class MCPClient {
    */
   async healthCheck(serverId: string): Promise<boolean> {
     const connection = this.connections.get(serverId);
-    if (!connection || !connection.process) {
+    if (!connection) {
       return false;
     }
 
-    // Check if the process is alive
-    try {
-      process.kill(connection.process.pid, 0);
-    } catch {
-      return false;
-    }
+    if (connection.config.transport === "stdio") {
+      if (!connection.process) {
+        return false;
+      }
 
-    // Try to send a ping request and wait for response
-    try {
-      await this.sendRequest(serverId, "ping", {}, MCPClient.HEALTH_CHECK_TIMEOUT);
-      return true;
-    } catch {
-      // If ping fails, fall back to just checking if process is alive
+      // Check if the process is alive
       try {
         process.kill(connection.process.pid, 0);
+      } catch {
+        return false;
+      }
+
+      // Try to send a ping request and wait for response
+      try {
+        await this.sendRequest(serverId, "ping", {}, MCPClient.HEALTH_CHECK_TIMEOUT);
+        return true;
+      } catch {
+        // If ping fails, fall back to just checking if process is alive
+        try {
+          process.kill(connection.process.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    } else if (connection.config.transport === "sse") {
+      // For SSE, just try to send a ping request
+      try {
+        await this.sendRequest(serverId, "ping", {}, MCPClient.HEALTH_CHECK_TIMEOUT);
         return true;
       } catch {
         return false;
       }
     }
+
+    return false;
   }
 
   /**
@@ -504,7 +781,7 @@ export class MCPClient {
     timeout = this.requestTimeout
   ): Promise<T> {
     const connection = this.connections.get(serverId);
-    if (!connection || !connection.process) {
+    if (!connection) {
       return Promise.reject(new Error(`No connection to server: ${serverId}`));
     }
 
@@ -538,13 +815,41 @@ export class MCPClient {
 
       connection.pendingRequests.set(requestId, pendingRequest);
 
-      try {
-        const message = JSON.stringify(request) + "\n";
-        connection.process.stdin.write(message);
-      } catch (err) {
-        clearTimeout(timeoutHandle);
-        connection.pendingRequests.delete(requestId);
-        reject(err);
+      if (connection.config.transport === "stdio") {
+        if (!connection.process) {
+          clearTimeout(timeoutHandle);
+          connection.pendingRequests.delete(requestId);
+          reject(new Error(`No process for stdio connection: ${serverId}`));
+          return;
+        }
+
+        try {
+          const message = JSON.stringify(request) + "\n";
+          connection.process.stdin.write(message);
+        } catch (err) {
+          clearTimeout(timeoutHandle);
+          connection.pendingRequests.delete(requestId);
+          reject(err);
+        }
+      } else if (connection.config.transport === "sse") {
+        if (!connection.config.url) {
+          clearTimeout(timeoutHandle);
+          connection.pendingRequests.delete(requestId);
+          reject(new Error(`No URL for SSE connection: ${serverId}`));
+          return;
+        }
+
+        // Send via HTTP POST to the message endpoint
+        const messageUrl = connection.config.url.replace(/\/sse$/, "/message");
+        fetch(messageUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        }).catch((err) => {
+          clearTimeout(timeoutHandle);
+          connection.pendingRequests.delete(requestId);
+          reject(new Error(`Failed to send SSE request: ${err.message}`));
+        });
       }
     });
   }
@@ -554,7 +859,7 @@ export class MCPClient {
    */
   private sendNotification(serverId: string, method: string, params: unknown): void {
     const connection = this.connections.get(serverId);
-    if (!connection || !connection.process) {
+    if (!connection) {
       return;
     }
 
@@ -564,11 +869,31 @@ export class MCPClient {
       params,
     };
 
-    try {
-      const message = JSON.stringify(notification) + "\n";
-      connection.process.stdin.write(message);
-    } catch (err) {
-      log.error(`Failed to send notification to ${serverId}:`, err);
+    if (connection.config.transport === "stdio") {
+      if (!connection.process) {
+        return;
+      }
+
+      try {
+        const message = JSON.stringify(notification) + "\n";
+        connection.process.stdin.write(message);
+      } catch (err) {
+        log.error(`Failed to send notification to ${serverId}:`, err);
+      }
+    } else if (connection.config.transport === "sse") {
+      if (!connection.config.url) {
+        return;
+      }
+
+      // Send via HTTP POST to the message endpoint
+      const messageUrl = connection.config.url.replace(/\/sse$/, "/message");
+      fetch(messageUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(notification),
+      }).catch((err) => {
+        log.error(`Failed to send SSE notification to ${serverId}:`, err);
+      });
     }
   }
 

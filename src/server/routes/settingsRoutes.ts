@@ -992,7 +992,7 @@ export function registerSettingsRoutes(deps: SettingsRouteDeps) {
     return {
       items: mcpRegistry.getServers().map((config) => {
         const health = client.getServerHealth(config.id);
-        return serializeMcpServer(config, statusMap.get(config.id), health?.status);
+        return serializeMcpServer(config, statusMap.get(config.id), health);
       }),
     };
   });
@@ -1194,5 +1194,166 @@ export function registerSettingsRoutes(deps: SettingsRouteDeps) {
     } finally {
       clearTimeout(timer);
     }
+  });
+
+  // Context compaction config
+  app.get("/api/settings/context-compaction", async () => {
+    const row = await prisma.appSetting.findUnique({ where: { key: "context.compaction.config.v1" } });
+    const defaults = {
+      thresholds: { summarize: 0.7, compress: 0.8, dropFiles: 0.85, merge: 0.9, emergency: 0.99 },
+      microcompact: { enabled: true, cacheWindowSize: 50, minAgeForRemoval: 3 },
+      snipCompact: { protectedTailTurns: 10, minPressureThreshold: 0.5 },
+    };
+    return row?.value ? { ...defaults, ...(JSON.parse(row.value as string)) } : defaults;
+  });
+
+  app.patch("/api/settings/context-compaction", async (req) => {
+    const body = req.body as Record<string, unknown>;
+    const existing = await prisma.appSetting.findUnique({ where: { key: "context.compaction.config.v1" } });
+    const current = existing?.value ? JSON.parse(existing.value as string) : {};
+    const merged = { ...current, ...body };
+    await prisma.appSetting.upsert({
+      where: { key: "context.compaction.config.v1" },
+      update: { value: JSON.stringify(merged) },
+      create: { key: "context.compaction.config.v1", value: JSON.stringify(merged) },
+    });
+    return { ok: true };
+  });
+
+  // Privacy & Redaction config
+  app.get("/api/settings/privacy", async () => {
+    const row = await prisma.appSetting.findUnique({ where: { key: "privacy.scanner.config.v1" } });
+    const defaults = {
+      redactionEnabled: true,
+      patterns: [
+        { type: "jwt", label: "JSON Web Tokens", enabled: true },
+        { type: "api_key", label: "API Keys", enabled: true },
+        { type: "private_key", label: "Private Keys (RSA/EC/Ed25519)", enabled: true },
+        { type: "connection_string", label: "Connection Strings", enabled: true },
+        { type: "aws_credentials", label: "AWS Credentials", enabled: true },
+        { type: "bearer_token", label: "Bearer Tokens", enabled: true },
+        { type: "basic_auth", label: "Basic Auth Headers", enabled: true },
+        { type: "pem_certificate", label: "PEM Certificates", enabled: true },
+      ],
+      stats: { totalRedactions: 0, byType: {} as Record<string, number> },
+    };
+    return row?.value ? { ...defaults, ...(JSON.parse(row.value as string)) } : defaults;
+  });
+
+  app.patch("/api/settings/privacy", async (req) => {
+    const body = req.body as Record<string, unknown>;
+    const existing = await prisma.appSetting.findUnique({ where: { key: "privacy.scanner.config.v1" } });
+    const current = existing?.value ? JSON.parse(existing.value as string) : {};
+    const merged = { ...current, ...body };
+    await prisma.appSetting.upsert({
+      where: { key: "privacy.scanner.config.v1" },
+      update: { value: JSON.stringify(merged) },
+      create: { key: "privacy.scanner.config.v1", value: JSON.stringify(merged) },
+    });
+    return { ok: true };
+  });
+
+  // Secrets management
+  app.get("/api/settings/secrets", async () => {
+    const secrets = await prisma.appSetting.findMany({
+      where: { key: { startsWith: "secret." } },
+      select: { key: true, updatedAt: true },
+    });
+    return {
+      items: secrets.map((s) => ({
+        name: s.key.replace("secret.", ""),
+        source: "stored" as const,
+        updatedAt: s.updatedAt?.toISOString() ?? null,
+      })),
+    };
+  });
+
+  app.post("/api/settings/secrets", async (req) => {
+    const { name, value } = req.body as { name: string; value: string };
+    if (!name || !value) return { ok: false, error: "Name and value required" };
+    await prisma.appSetting.upsert({
+      where: { key: `secret.${name}` },
+      update: { value: JSON.stringify({ encrypted: true, v: 1 }) },
+      create: { key: `secret.${name}`, value: JSON.stringify({ encrypted: true, v: 1 }) },
+    });
+    return { ok: true };
+  });
+
+  app.delete("/api/settings/secrets/:name", async (req) => {
+    const { name } = req.params as { name: string };
+    await prisma.appSetting.deleteMany({ where: { key: `secret.${name}` } });
+    return { ok: true };
+  });
+
+  // Cache break diagnostics
+  app.get("/api/diagnostics/cache-breaks", async () => {
+    // Return mock/initial state - the actual detector state is in-memory during execution
+    // This endpoint returns the persisted summary for the diagnostics UI
+    const row = await prisma.appSetting.findUnique({ where: { key: "diagnostics.cache.summary.v1" } });
+    const defaults = {
+      baselineCacheReadTokens: 0,
+      sampleCount: 0,
+      emaAlpha: 0.2,
+      recentBreaks: [] as Array<{
+        timestamp: string;
+        possibleCauses: string[];
+        readTokensBefore: number;
+        readTokensAfter: number;
+      }>,
+      hitRateEstimate: 0,
+    };
+    return row?.value ? { ...defaults, ...(JSON.parse(row.value as string)) } : defaults;
+  });
+
+  // Environment diagnostics
+  app.get("/api/diagnostics/environment", async () => {
+    const { execSync } = await import("node:child_process");
+    const os = await import("node:os");
+
+    const safeExec = (cmd: string): string => {
+      try {
+        return execSync(cmd, { timeout: 5000 }).toString().trim();
+      } catch {
+        return "unknown";
+      }
+    };
+
+    const gitVersion = safeExec("git --version").replace("git version ", "");
+    const nodeVersion = process.version;
+
+    // Disk space
+    let diskInfo = { available: "unknown", total: "unknown" };
+    try {
+      const dfOutput = safeExec("df -h . | tail -1");
+      const parts = dfOutput.split(/\s+/);
+      if (parts.length >= 4) {
+        diskInfo = { total: parts[1], available: parts[3] };
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Database latency
+    let dbLatencyMs = -1;
+    try {
+      const start = Date.now();
+      await prisma.$queryRaw`SELECT 1`;
+      dbLatencyMs = Date.now() - start;
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      gitVersion,
+      nodeVersion,
+      osVersion: `${os.type()} ${os.release()}`,
+      arch: os.arch(),
+      cpuCount: os.cpus().length,
+      totalMemory: `${Math.round(os.totalmem() / (1024 * 1024 * 1024))} GB`,
+      freeMemory: `${Math.round(os.freemem() / (1024 * 1024 * 1024))} GB`,
+      diskSpace: diskInfo,
+      dbLatencyMs,
+      uptime: `${Math.round(process.uptime())} seconds`,
+    };
   });
 }

@@ -324,4 +324,436 @@ describe("HookService", () => {
     expect(logs).toHaveLength(1);
     expect(logs[0]?.hookName).toBe("Persisted");
   });
+
+  describe("Prompt hook command execution", () => {
+    it("executes command with stdin/stdout when command is provided", async () => {
+      const hook = await service.createHook({
+        name: "Transform prompt",
+        description: "",
+        enabled: true,
+        eventType: "prompt_transform",
+        hookType: "Prompt",
+        command: "node -e \"const input = require('fs').readFileSync(0, 'utf-8'); process.stdout.write(input.toUpperCase());\"",
+        promptTemplate: "Check {{tool_name}}",
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "prompt_transform",
+        eventPayload: { tool_name: "edit_file" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("CHECK EDIT_FILE");
+    });
+
+    it("falls back to template rendering when no command is provided", async () => {
+      const hook = await service.createHook({
+        name: "Template only",
+        description: "",
+        enabled: true,
+        eventType: "prompt_transform",
+        hookType: "Prompt",
+        command: null,
+        promptTemplate: "Review {{tool_name}}",
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "prompt_transform",
+        eventPayload: { tool_name: "bash" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Review bash");
+    });
+
+    it("handles command errors gracefully with continueOnError=true", async () => {
+      const hook = await service.createHook({
+        name: "Failing command",
+        description: "",
+        enabled: true,
+        eventType: "prompt_transform",
+        hookType: "Prompt",
+        command: "exit 1",
+        promptTemplate: "Fallback text",
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "prompt_transform",
+        eventPayload: {},
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Fallback text");
+    });
+
+    it("fails when command errors and continueOnError=false", async () => {
+      const hook = await service.createHook({
+        name: "Strict command",
+        description: "",
+        enabled: true,
+        eventType: "prompt_transform",
+        hookType: "Prompt",
+        command: "exit 1",
+        promptTemplate: "Should not see this",
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "prompt_transform",
+        eventPayload: {},
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Prompt hook command failed");
+    });
+  });
+
+  describe("Agent hook tool lifecycle", () => {
+    it("tool_before hook can block execution", async () => {
+      const hook = await service.createHook({
+        name: "Block dangerous tools",
+        description: "",
+        enabled: true,
+        eventType: "tool_before",
+        hookType: "Agent",
+        command: "node -e \"process.stdout.write(JSON.stringify({allow:false,reason:'Tool not allowed'}))\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "tool_before",
+        eventPayload: { tool_name: "bash", input: { command: "rm -rf /" } },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.continue).toBe(false);
+      expect(result.blocked).toBe(true);
+      expect(result.blockReason).toBe("Tool not allowed");
+    });
+
+    it("tool_before hook can modify tool input", async () => {
+      const hook = await service.createHook({
+        name: "Sanitize input",
+        description: "",
+        enabled: true,
+        eventType: "tool_before",
+        hookType: "Agent",
+        command:
+          "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); process.stdout.write(JSON.stringify({input:{...data.input,sanitized:true}}))\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "tool_before",
+        eventPayload: { tool_name: "edit_file", input: { path: "test.ts" } },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updatedInput).toEqual({ path: "test.ts", sanitized: true });
+    });
+
+    it("tool_after hook receives tool results", async () => {
+      const hook = await service.createHook({
+        name: "Log tool results",
+        description: "",
+        enabled: true,
+        eventType: "tool_after",
+        hookType: "Agent",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); process.stdout.write('Tool '+data.tool_name+' completed')\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "tool_after",
+        eventPayload: { tool_name: "bash", result: { stdout: "success" } },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Tool bash completed");
+    });
+
+    it("requires command for tool lifecycle events", async () => {
+      const hook = await service.createHook({
+        name: "No command",
+        description: "",
+        enabled: true,
+        eventType: "tool_before",
+        hookType: "Agent",
+        command: null,
+        promptTemplate: null,
+        agentObjective: "Should fail",
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "tool_before",
+        eventPayload: { tool_name: "bash" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("requires a command");
+    });
+  });
+
+  describe("Agent hook run lifecycle", () => {
+    it("run_start hook executes with command", async () => {
+      const hook = await service.createHook({
+        name: "Run started",
+        description: "",
+        enabled: true,
+        eventType: "run_start",
+        hookType: "Agent",
+        command: "node -e \"process.stdout.write('Starting new run')\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "run_start",
+        eventPayload: { objective: "Build feature X" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Starting new run");
+    });
+
+    it("run_end hook executes with command", async () => {
+      const hook = await service.createHook({
+        name: "Run ended",
+        description: "",
+        enabled: true,
+        eventType: "run_end",
+        hookType: "Agent",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); process.stdout.write('Run completed: '+data.status)\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "run_end",
+        eventPayload: { status: "success" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "review" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Run completed: success");
+    });
+  });
+
+  describe("Agent hook command lifecycle", () => {
+    it("command_before hook executes before command", async () => {
+      const hook = await service.createHook({
+        name: "Pre-command validation",
+        description: "",
+        enabled: true,
+        eventType: "command_before",
+        hookType: "Agent",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); process.stdout.write('Validating: '+data.command)\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "command_before",
+        eventPayload: { command: "npm test", cwd: "/project" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Validating: npm test");
+    });
+
+    it("command_before hook can block execution", async () => {
+      const hook = await service.createHook({
+        name: "Block dangerous commands",
+        description: "",
+        enabled: true,
+        eventType: "command_before",
+        hookType: "Command",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); if(data.command.includes('rm -rf')) process.stdout.write(JSON.stringify({continue:false,systemMessage:'Dangerous command blocked'})); else process.stdout.write(JSON.stringify({continue:true}));\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: true,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "command_before",
+        eventPayload: { command: "rm -rf /", cwd: "/" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.continue).toBe(false);
+      expect(result.systemMessage).toBe("Dangerous command blocked");
+    });
+
+    it("command_before hook can modify command input", async () => {
+      const hook = await service.createHook({
+        name: "Add dry-run flag",
+        description: "",
+        enabled: true,
+        eventType: "command_before",
+        hookType: "Command",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); process.stdout.write(JSON.stringify({continue:true,updatedInput:{command:data.command+' --dry-run',cwd:data.cwd}}))\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: true,
+        continueOnError: false,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "command_before",
+        eventPayload: { command: "npm install", cwd: "/project" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updatedInput).toEqual({ command: "npm install --dry-run", cwd: "/project" });
+    });
+
+    it("command_after hook receives command execution results", async () => {
+      const hook = await service.createHook({
+        name: "Log command results",
+        description: "",
+        enabled: true,
+        eventType: "command_after",
+        hookType: "Agent",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); process.stdout.write('Command '+data.command+' exited with code '+data.exitCode)\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "command_after",
+        eventPayload: { command: "npm test", exitCode: 0, stdout: "All tests passed", stderr: "" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Command npm test exited with code 0");
+    });
+
+    it("command_after hook can analyze failure output", async () => {
+      const hook = await service.createHook({
+        name: "Analyze failures",
+        description: "",
+        enabled: true,
+        eventType: "command_after",
+        hookType: "Command",
+        command: "node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf-8')); const msg = data.exitCode !== 0 ? 'Command failed: '+data.stderr : 'Success'; process.stdout.write(JSON.stringify({continue:true,systemMessage:msg}))\"",
+        promptTemplate: null,
+        agentObjective: null,
+        allowedTools: [],
+        canOverride: false,
+        continueOnError: true,
+        timeoutMs: 1000,
+        projectId: "proj-1",
+      });
+
+      const result = await service.executeHook({
+        hookId: hook.id,
+        eventType: "command_after",
+        eventPayload: { command: "npm test", exitCode: 1, stdout: "", stderr: "Test suite failed" },
+        context: { runId: "run-1", projectId: "proj-1", ticketId: "ticket-1", stage: "build" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.systemMessage).toContain("Command failed: Test suite failed");
+    });
+  });
 });

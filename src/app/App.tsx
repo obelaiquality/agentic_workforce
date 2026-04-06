@@ -10,6 +10,10 @@ import { useMissionControlLiveData } from "./hooks/useMissionControlLiveData";
 import { useUiStore } from "./store/uiStore";
 import { CommandCenterView } from "./components/views/CommandCenterView";
 import { TelemetryView } from "./components/views/TelemetryView";
+import { AgentLanesView } from "./components/views/AgentLanesView";
+import { PatternsView } from "./components/views/PatternsView";
+import { DistillationView } from "./components/views/DistillationView";
+import { BenchmarkView } from "./components/views/BenchmarkView";
 import { ProcessingIndicator } from "./components/ui/processing-indicator";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
@@ -24,7 +28,7 @@ const SIDEBAR_ITEMS: Array<{ key: SidebarSection; icon: React.ReactNode; label: 
 
 function normalizeSection(value: string | null | undefined): SidebarSection {
   if (value === "overseer" || value === "runs") return "live";
-  if (value === "benchmarks") return "settings";
+  if (value === "benchmarks" || value === "distillation") return "settings";
   if (value === "codebase" || value === "console" || value === "projects" || value === "settings") return value;
   return "live";
 }
@@ -338,12 +342,12 @@ export default function App() {
                     <TelemetryView />
                   )}
 
-                  {liveTab !== "Execution" && liveTab !== "Telemetry" && (
-                    <EmptyState
-                      icon={<Activity className="h-6 w-6 text-zinc-500" />}
-                      heading={`${liveTab} is coming soon`}
-                      description="This feature is in active development. Enable Labs mode in Settings to preview experimental capabilities as they ship."
-                    />
+                  {liveTab === "Agents" && (
+                    <AgentLanesView />
+                  )}
+
+                  {liveTab === "Patterns" && (
+                    <PatternsView />
                   )}
                 </>
               )}
@@ -417,7 +421,13 @@ export default function App() {
 
               {sidebarSection === "settings" && (
                 <>
-                  <SettingsControlView />
+                  {activeSection === "distillation" ? (
+                    <DistillationView />
+                  ) : activeSection === "benchmarks" ? (
+                    <BenchmarkView />
+                  ) : (
+                    <SettingsControlView />
+                  )}
                 </>
               )}
             </div>

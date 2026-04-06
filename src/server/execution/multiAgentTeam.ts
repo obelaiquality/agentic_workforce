@@ -412,5 +412,14 @@ export function createTeamContext(team: MultiAgentTeam, agentId: string) {
     receiveMessages: () => {
       return team.receiveMessages(agentId);
     },
+    getAllAgents: () => {
+      return team.getAllAgents();
+    },
+    getActiveAgents: () => {
+      return team.getActiveAgents();
+    },
+    addAgent: (spec: AgentSpec) => {
+      team.addAgent(spec);
+    },
   };
 }

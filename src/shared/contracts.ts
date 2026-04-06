@@ -151,6 +151,7 @@ export interface AgenticRunSnapshot {
   lastAssistantText: string | null;
   lastReason: string | null;
   latestRole: ModelRole | null;
+  resumable?: boolean;
   budget: {
     tokensConsumed: number | null;
     maxTokens: number | null;
@@ -195,6 +196,13 @@ export interface AgenticExecutionInput {
   useDeferredTools?: boolean;
   systemPromptSuffix?: string;
   planMode?: boolean;
+  coordinator?: boolean;
+  coordinatorOptions?: {
+    maxAgents?: number;
+    maxConcurrent?: number;
+    allowRespawn?: boolean;
+    conflictResolution?: "first_wins" | "merge" | "integrator";
+  };
 }
 
 export interface ProviderCapabilities {
@@ -1771,7 +1779,14 @@ export type HookEventType =
   | "PostCompact"
   | "UserPromptSubmit"
   | "SessionStart"
-  | "Notification";
+  | "Notification"
+  | "command_before"
+  | "command_after"
+  | "prompt_transform"
+  | "tool_before"
+  | "tool_after"
+  | "run_start"
+  | "run_end";
 
 export type HookType = "Command" | "Prompt" | "Agent";
 

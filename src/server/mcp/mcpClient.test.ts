@@ -17,15 +17,14 @@ describe("MCPClient", () => {
   describe("connect", () => {
     it("should reject unsupported transport types", async () => {
       const config: MCPServerConfig = {
-        id: "test-sse",
-        name: "Test SSE Server",
-        transport: "sse",
-        url: "http://localhost:3000",
+        id: "test-unknown",
+        name: "Test Unknown Transport",
+        transport: "unknown" as any,
         enabled: true,
       };
 
       await expect(client.connect(config)).rejects.toThrow(
-        "Unsupported transport: sse. Only stdio is currently supported."
+        "Unsupported transport: unknown"
       );
     });
 
@@ -738,6 +737,317 @@ describe("MCPClient", () => {
       await expect(client.callTool("error-server", "read_secret", {})).rejects.toThrow(
         "Permission denied: cannot access /root",
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SSE Transport Tests
+  // -------------------------------------------------------------------------
+
+  describe("SSE transport", () => {
+    let fetchSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      // Mock global fetch
+      fetchSpy = vi.fn();
+      global.fetch = fetchSpy as any;
+    });
+
+    afterEach(() => {
+      delete (global as any).fetch;
+    });
+
+    it("rejects SSE config without URL", async () => {
+      const config: MCPServerConfig = {
+        id: "sse-no-url",
+        name: "SSE No URL",
+        transport: "sse",
+        enabled: true,
+      };
+
+      await expect(client.connect(config)).rejects.toThrow(
+        "URL is required for SSE transport"
+      );
+    });
+
+    it("connects via SSE transport and initializes", async () => {
+      const config: MCPServerConfig = {
+        id: "sse-server",
+        name: "SSE Server",
+        transport: "sse",
+        url: "http://localhost:3001/sse",
+        enabled: true,
+      };
+
+      let requestId = 0;
+      const responses: Record<number, any> = {};
+
+      // Mock SSE stream that keeps running
+      const mockReader = {
+        read: vi.fn().mockImplementation(() => {
+          // Keep stream open but idle
+          return new Promise(() => {});
+        }),
+      };
+
+      fetchSpy.mockImplementation((url: string, options?: any) => {
+        if (url === "http://localhost:3001/sse") {
+          // SSE stream
+          return Promise.resolve({
+            ok: true,
+            body: {
+              getReader: () => mockReader,
+            },
+          });
+        } else if (url === "http://localhost:3001/message") {
+          // HTTP POST for requests - simulate immediate response
+          const body = JSON.parse(options.body);
+          const reqId = body.id;
+
+          setTimeout(() => {
+            if (body.method === "initialize") {
+              (client as any).handleMessage(
+                "sse-server",
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: reqId,
+                  result: {
+                    protocolVersion: "2024-11-05",
+                    capabilities: { tools: { listChanged: false } },
+                    serverInfo: { name: "test-server", version: "1.0.0" }
+                  }
+                })
+              );
+            } else if (body.method === "tools/list") {
+              (client as any).handleMessage(
+                "sse-server",
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: reqId,
+                  result: {
+                    tools: [{ name: "test_tool", description: "Test", inputSchema: { type: "object" } }]
+                  }
+                })
+              );
+            }
+          }, 5);
+
+          return Promise.resolve({ ok: true });
+        }
+        return Promise.reject(new Error("Unknown URL"));
+      });
+
+      try {
+        await client.connect(config);
+
+        const status = client.getStatus();
+        const serverStatus = status.find(s => s.id === "sse-server");
+        expect(serverStatus?.connected).toBe(true);
+        expect(serverStatus?.toolCount).toBe(1);
+      } finally {
+        // Clean up
+        await client.disconnect("sse-server");
+      }
+    });
+
+    it("sends requests via HTTP POST for SSE transport", async () => {
+      const pendingRequests = new Map<number, PendingRequest>();
+      const connection: MCPConnection = {
+        serverId: "sse-post-server",
+        config: { id: "sse-post-server", name: "SSE POST", transport: "sse", url: "http://localhost:3002/sse", enabled: true },
+        connected: true,
+        tools: [{ serverId: "sse-post-server", name: "echo", description: "Echo", inputSchema: {} }],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests,
+      };
+      (client as any).connections.set("sse-post-server", connection);
+
+      let postedRequest: any = null;
+      fetchSpy.mockImplementation((url: string, options?: any) => {
+        if (url === "http://localhost:3002/message" && options?.method === "POST") {
+          postedRequest = JSON.parse(options.body);
+          // Simulate async response via SSE
+          setTimeout(() => {
+            (client as any).handleMessage(
+              "sse-post-server",
+              JSON.stringify({ jsonrpc: "2.0", id: postedRequest.id, result: { content: [{ type: "text", text: "echo response" }], isError: false } })
+            );
+          }, 5);
+          return Promise.resolve({ ok: true });
+        }
+        return Promise.reject(new Error("Unknown URL"));
+      });
+
+      const result = await client.callTool("sse-post-server", "echo", { msg: "hello" });
+      expect(result).toBe("echo response");
+      expect(postedRequest).toBeDefined();
+      expect(postedRequest.method).toBe("tools/call");
+      expect(postedRequest.params.name).toBe("echo");
+    });
+
+    it("sends notifications via HTTP POST for SSE transport", () => {
+      const connection: MCPConnection = {
+        serverId: "sse-notification-server",
+        config: { id: "sse-notification-server", name: "SSE Notification", transport: "sse", url: "http://localhost:3003/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-notification-server", connection);
+
+      let postedNotification: any = null;
+      fetchSpy.mockImplementation((url: string, options?: any) => {
+        if (url === "http://localhost:3003/message" && options?.method === "POST") {
+          postedNotification = JSON.parse(options.body);
+          return Promise.resolve({ ok: true });
+        }
+        return Promise.reject(new Error("Unknown URL"));
+      });
+
+      (client as any).sendNotification("sse-notification-server", "test/notify", { data: "test" });
+
+      // Wait a tick for async fetch
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          expect(postedNotification).toBeDefined();
+          expect(postedNotification.method).toBe("test/notify");
+          expect(postedNotification.params).toEqual({ data: "test" });
+          expect(postedNotification.id).toBeUndefined(); // Notifications don't have IDs
+          resolve();
+        }, 10);
+      });
+    });
+
+    it("disconnects SSE transport by aborting controller", async () => {
+      const abortController = new AbortController();
+      const sseState = {
+        url: "http://localhost:3004/sse",
+        abortController,
+        reconnectAttempts: 0,
+        reconnecting: false,
+      };
+
+      const connection: MCPConnection = {
+        serverId: "sse-disconnect-server",
+        config: { id: "sse-disconnect-server", name: "SSE Disconnect", transport: "sse", url: "http://localhost:3004/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-disconnect-server", connection);
+      (client as any).sseTransports.set("sse-disconnect-server", sseState);
+
+      const abortSpy = vi.spyOn(abortController, "abort");
+
+      await client.disconnect("sse-disconnect-server");
+
+      expect(abortSpy).toHaveBeenCalled();
+      expect((client as any).sseTransports.has("sse-disconnect-server")).toBe(false);
+      expect((client as any).connections.has("sse-disconnect-server")).toBe(false);
+    });
+
+    it("healthCheck works for SSE transport via ping", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-health-server",
+        config: { id: "sse-health-server", name: "SSE Health", transport: "sse", url: "http://localhost:3005/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-health-server", connection);
+
+      fetchSpy.mockImplementation((url: string, options?: any) => {
+        if (url === "http://localhost:3005/message" && options?.method === "POST") {
+          const request = JSON.parse(options.body);
+          if (request.method === "ping") {
+            setTimeout(() => {
+              (client as any).handleMessage(
+                "sse-health-server",
+                JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} })
+              );
+            }, 5);
+          }
+          return Promise.resolve({ ok: true });
+        }
+        return Promise.reject(new Error("Unknown URL"));
+      });
+
+      const healthy = await client.healthCheck("sse-health-server");
+      expect(healthy).toBe(true);
+    });
+
+    it("SSE stream parses multiple SSE events from buffer", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-parse-server",
+        config: { id: "sse-parse-server", name: "SSE Parse", transport: "sse", url: "http://localhost:3006/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-parse-server", connection);
+
+      const resolvedValues: unknown[] = [];
+      const t1 = setTimeout(() => {}, 5000);
+      const t2 = setTimeout(() => {}, 5000);
+      connection.pendingRequests.set(1, {
+        requestId: 1,
+        method: "test1",
+        resolve: (val) => { resolvedValues.push(val); clearTimeout(t1); },
+        reject: vi.fn(),
+        timeout: t1,
+      });
+      connection.pendingRequests.set(2, {
+        requestId: 2,
+        method: "test2",
+        resolve: (val) => { resolvedValues.push(val); clearTimeout(t2); },
+        reject: vi.fn(),
+        timeout: t2,
+      });
+
+      const abortController = new AbortController();
+      const sseState = {
+        url: "http://localhost:3006/sse",
+        abortController,
+        reconnectAttempts: 0,
+        reconnecting: false,
+      };
+      (client as any).sseTransports.set("sse-parse-server", sseState);
+
+      // Simulate SSE stream with multiple events
+      const mockReader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: new TextEncoder().encode('data: {"jsonrpc":"2.0","id":1,"result":{"value":"first"}}\n\ndata: {"jsonrpc":"2.0","id":2,"result":{"value":"second"}}\n\n')
+          })
+          .mockImplementation(() => {
+            // Abort after sending data to prevent infinite loop
+            abortController.abort();
+            return Promise.resolve({ done: true, value: undefined });
+          }),
+      };
+
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => mockReader,
+        },
+      });
+
+      await (client as any).startSSEStream("sse-parse-server", "http://localhost:3006/sse", abortController.signal);
+
+      expect(resolvedValues).toHaveLength(2);
+      expect(resolvedValues[0]).toEqual({ value: "first" });
+      expect(resolvedValues[1]).toEqual({ value: "second" });
     });
   });
 });

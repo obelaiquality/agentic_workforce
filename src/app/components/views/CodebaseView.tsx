@@ -4,8 +4,8 @@ import { ArrowLeft, Check, ChevronRight, Code2, Copy, FileCode2, Folder, FolderO
 import { EmptyState } from "../ui/empty-state";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { CodebaseTreeNode } from "../../../shared/contracts";
-import { getMissionCodeFileDiffV8, getMissionCodeFileV8, getMissionCodebaseTreeV8 } from "../../lib/apiClient";
+import type { CodebaseTreeNode, CodeGraphNode, ContextPack } from "../../../shared/contracts";
+import { getMissionCodeFileDiffV8, getMissionCodeFileV8, getMissionCodebaseTreeV8, getCodeGraphStatusV5, queryCodeGraphV5, buildContextPackV5, getLatestContextPackV5 } from "../../lib/apiClient";
 import { getDesktopBridge, openDesktopExternal } from "../../lib/desktopBridge";
 import { sanitizeSvgMarkup } from "../../lib/sanitizeSvgMarkup";
 import { useUiStore } from "../../store/uiStore";
@@ -631,6 +631,206 @@ function parsePatchBlocks(patch: string) {
   });
 }
 
+function CodeGraphPanel({ repoId }: { repoId: string }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [queryMode, setQueryMode] = useState<"basic" | "impact" | "review" | "architecture" | "cross_project">("basic");
+  const [searchSubmitted, setSearchSubmitted] = useState(false);
+  const [submittedQuery, setSubmittedQuery] = useState("");
+
+  const statusQuery = useQuery({
+    queryKey: ["code-graph-status-v5", repoId],
+    queryFn: () => getCodeGraphStatusV5(repoId),
+    enabled: Boolean(repoId),
+    staleTime: 10000,
+  });
+
+  const resultsQuery = useQuery({
+    queryKey: ["code-graph-query-v5", repoId, submittedQuery, queryMode],
+    queryFn: () => queryCodeGraphV5(repoId, submittedQuery, queryMode),
+    enabled: Boolean(repoId && searchSubmitted && submittedQuery.trim()),
+    staleTime: 5000,
+  });
+
+  const latestPackQuery = useQuery({
+    queryKey: ["latest-context-pack-v5", repoId],
+    queryFn: () => getLatestContextPackV5(repoId),
+    enabled: Boolean(repoId),
+    staleTime: 10000,
+  });
+
+  const status = statusQuery.data?.item;
+  const results = resultsQuery.data?.items || [];
+  const latestPack = latestPackQuery.data?.item;
+
+  function handleSearch(event: React.FormEvent) {
+    event.preventDefault();
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
+    setSubmittedQuery(trimmed);
+    setSearchSubmitted(true);
+  }
+
+  async function handleBuildContextPack() {
+    if (!repoId || !submittedQuery.trim()) return;
+    try {
+      await buildContextPackV5({
+        repoId,
+        objective: submittedQuery,
+        queryMode,
+      });
+      await latestPackQuery.refetch();
+    } catch (error) {
+      console.error("Failed to build context pack:", error);
+    }
+  }
+
+  const kindColors: Record<string, string> = {
+    file: "bg-cyan-500/10 text-cyan-300 border-cyan-400/20",
+    symbol: "bg-violet-500/10 text-violet-300 border-violet-400/20",
+    test: "bg-emerald-500/10 text-emerald-300 border-emerald-400/20",
+    doc: "bg-amber-500/10 text-amber-300 border-amber-400/20",
+    command: "bg-rose-500/10 text-rose-300 border-rose-400/20",
+  };
+
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      <div className="rounded-[18px] border border-white/8 bg-white/[0.02] px-4 py-3">
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-zinc-400">Status:</span>
+            {statusQuery.isLoading ? (
+              <ProcessingIndicator kind="processing" active size="xs" tone="subtle" />
+            ) : status ? (
+              <>
+                <span className={status.indexed ? "text-emerald-300" : "text-amber-300"}>
+                  {status.indexed ? "Indexed" : "Not indexed"}
+                </span>
+                {status.indexed && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-zinc-400">{status.nodeCount} nodes</span>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-zinc-400">{status.edgeCount} edges</span>
+                    {status.lastIndexedAt && (
+                      <>
+                        <span className="text-zinc-600">•</span>
+                        <span className="text-zinc-500 font-mono text-[10px]">
+                          {new Date(status.lastIndexedAt).toLocaleString()}
+                        </span>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            ) : (
+              <span className="text-zinc-500">No status available</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <form onSubmit={handleSearch} className="rounded-[18px] border border-white/8 bg-white/[0.02] px-4 py-4">
+        <label className="block">
+          <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-zinc-400">Symbol Search</span>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search symbols, files, or entities..."
+              className="flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600"
+            />
+            <select
+              value={queryMode}
+              onChange={(e) => setQueryMode(e.target.value as typeof queryMode)}
+              className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-200"
+            >
+              <option value="basic">Basic</option>
+              <option value="impact">Impact</option>
+              <option value="review">Review</option>
+              <option value="architecture">Architecture</option>
+              <option value="cross_project">Cross Project</option>
+            </select>
+            <button
+              type="submit"
+              className="rounded-xl border border-cyan-400/20 bg-cyan-500/[0.10] px-4 py-2 text-xs text-cyan-100 transition hover:bg-cyan-500/[0.15]"
+            >
+              Search
+            </button>
+          </div>
+        </label>
+      </form>
+
+      {resultsQuery.isLoading ? (
+        <div className="rounded-[18px] border border-white/8 bg-white/[0.02] px-4 py-3 text-xs text-zinc-500">
+          <div className="inline-flex items-center gap-2">
+            <ProcessingIndicator kind="processing" active size="xs" tone="subtle" />
+            Searching...
+          </div>
+        </div>
+      ) : results.length > 0 ? (
+        <div className="rounded-[18px] border border-white/8 bg-white/[0.02] p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400">
+              {results.length} {results.length === 1 ? "result" : "results"}
+            </span>
+            <button
+              type="button"
+              onClick={handleBuildContextPack}
+              className="rounded-xl border border-emerald-400/20 bg-emerald-500/[0.10] px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/[0.15]"
+            >
+              Build Context Pack
+            </button>
+          </div>
+          <div className="space-y-2">
+            {results.map((node) => (
+              <div
+                key={node.id}
+                className="rounded-xl border border-white/8 bg-black/20 px-3 py-2 transition hover:bg-white/[0.02]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-zinc-200">{node.name}</span>
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] ${kindColors[node.kind] || "bg-zinc-500/10 text-zinc-300 border-zinc-400/20"}`}>
+                        {node.kind}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[10px] text-zinc-500">
+                      {node.path}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : searchSubmitted ? (
+        <div className="rounded-[18px] border border-white/8 bg-white/[0.02] px-4 py-3 text-xs text-zinc-500">
+          No results found for "{submittedQuery}"
+        </div>
+      ) : null}
+
+      {latestPack ? (
+        <div className="rounded-[18px] border border-emerald-500/16 bg-emerald-500/[0.06] px-4 py-3">
+          <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-emerald-300">Latest Context Pack</div>
+          <div className="text-xs text-emerald-100">
+            <div className="mb-1">
+              <span className="text-emerald-200/70">Objective:</span> {latestPack.objective}
+            </div>
+            <div className="mb-1">
+              <span className="text-emerald-200/70">Mode:</span> {latestPack.queryMode}
+            </div>
+            <div>
+              <span className="text-emerald-200/70">Files:</span> {latestPack.files.length}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function CodebaseView({
   repoId,
   contextPaths = [],
@@ -646,6 +846,7 @@ export function CodebaseView({
   workflowTitle?: string | null;
   requestedScope?: "context" | "tests" | "docs" | "all";
 }) {
+  const [activeTab, setActiveTab] = useState<"files" | "graph">("files");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "modified" | "added" | "unchanged" | "deleted">("all");
   const [fileSearch, setFileSearch] = useState("");
@@ -1170,12 +1371,42 @@ export function CodebaseView({
         </div>
       </div>
 
-      <div className="flex gap-4" style={{ minHeight: 500 }}>
-        <div data-testid="codebase-file-tree" className="w-80 shrink-0 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)] flex flex-col">
-          <div className="px-3 py-3 border-b border-white/6 text-[10px] text-zinc-500 uppercase tracking-[0.18em] font-medium flex items-center gap-2">
-            <FolderTree className="w-3.5 h-3.5 text-cyan-400" />
+      <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-1 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
+        <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-1">
+          <button
+            onClick={() => setActiveTab("files")}
+            className={`rounded-lg px-4 py-2 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+              activeTab === "files"
+                ? "border border-cyan-400/20 bg-cyan-500/[0.12] text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
             Files
-          </div>
+          </button>
+          <button
+            onClick={() => setActiveTab("graph")}
+            className={`rounded-lg px-4 py-2 text-[10px] uppercase tracking-[0.18em] transition-colors ${
+              activeTab === "graph"
+                ? "border border-cyan-400/20 bg-cyan-500/[0.12] text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Graph
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "graph" ? (
+        <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)]" style={{ minHeight: 500 }}>
+          <CodeGraphPanel repoId={repoId} />
+        </div>
+      ) : (
+        <div className="flex gap-4" style={{ minHeight: 500 }}>
+          <div data-testid="codebase-file-tree" className="w-80 shrink-0 overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(15,17,23,0.96),rgba(10,11,15,0.94))] shadow-[0_16px_44px_rgba(0,0,0,0.26)] flex flex-col">
+            <div className="px-3 py-3 border-b border-white/6 text-[10px] text-zinc-500 uppercase tracking-[0.18em] font-medium flex items-center gap-2">
+              <FolderTree className="w-3.5 h-3.5 text-cyan-400" />
+              Files
+            </div>
           <div className="border-b border-white/6 px-3 py-3">
             <label className="relative block">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-600" />
@@ -1570,6 +1801,7 @@ export function CodebaseView({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

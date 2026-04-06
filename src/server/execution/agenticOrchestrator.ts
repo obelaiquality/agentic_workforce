@@ -26,6 +26,57 @@ import type { PlanService } from "../plans/planService";
 import type { AutoMemoryExtractor } from "../memory/autoExtractor";
 import type { LSPClient } from "../lsp/lspClient";
 import { createRootAbortController, type HierarchicalAbortController } from "../services/abortHierarchy";
+import { createLogger } from "../logger";
+
+const log = createLogger("Orchestrator");
+import { prisma } from "../db";
+
+// ---------------------------------------------------------------------------
+// Checkpoint Persistence
+// ---------------------------------------------------------------------------
+
+interface RunCheckpoint {
+  runId: string;
+  messages: ConversationMessage[];
+  iterationCount: number;
+  budgetUsed: { tokens: number; cost: number };
+  currentRole: ModelRole;
+  toolCallsTotal: number;
+  recentlyReadFiles: RecentlyReadFile[];
+  timestamp: string;
+}
+
+async function saveCheckpoint(checkpoint: RunCheckpoint): Promise<void> {
+  const key = `agentic.checkpoint.${checkpoint.runId}`;
+  await prisma.appSetting.upsert({
+    where: { key },
+    update: {
+      value: checkpoint,
+    },
+    create: {
+      key,
+      value: checkpoint,
+    },
+  });
+}
+
+async function loadCheckpoint(runId: string): Promise<RunCheckpoint | null> {
+  const key = `agentic.checkpoint.${runId}`;
+  const row = await prisma.appSetting.findUnique({
+    where: { key },
+  });
+  if (!row?.value) {
+    return null;
+  }
+  return row.value as unknown as RunCheckpoint;
+}
+
+async function deleteCheckpoint(runId: string): Promise<void> {
+  const key = `agentic.checkpoint.${runId}`;
+  await prisma.appSetting.deleteMany({
+    where: { key },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Agent Behavior Guidelines
@@ -211,7 +262,7 @@ export class AgenticOrchestrator {
     this.autoMemoryExtractor = deps.autoMemoryExtractor;
   }
 
-  async *execute(input: AgenticExecutionInput): AsyncGenerator<AgenticEvent> {
+  async *execute(input: AgenticExecutionInput, resumeFrom?: RunCheckpoint): AsyncGenerator<AgenticEvent> {
     const telemetry = getTelemetry();
     const executionStartTime = Date.now();
     const executionSpan = telemetry.startSpan({ name: "agentic.execute", attributes: { "run.id": input.runId } });
@@ -294,23 +345,54 @@ export class AgenticOrchestrator {
       extraPromptSections.join("\n\n") || undefined,
     );
 
-    const state: IterationState = {
-      iteration: 0,
-      currentRole: initialRole,
-      conversation: [
-        { role: "system", content: systemPrompt, pinned: true, timestamp: new Date().toISOString() },
-        { role: "user", content: input.objective, pinned: true, timestamp: new Date().toISOString() },
-      ],
-      budget: {
-        tokensConsumed: 0,
-        iterationsConsumed: 0,
-        costUsd: 0,
-      },
-      toolCallsTotal: 0,
-      recentlyReadFiles: [],
-      consecutiveCompactionFailures: 0,
-      activeSkillConstraint: null,
-    };
+    // Initialize state from checkpoint if resuming, otherwise start fresh
+    const state: IterationState = resumeFrom
+      ? {
+          iteration: resumeFrom.iterationCount,
+          currentRole: resumeFrom.currentRole,
+          conversation: resumeFrom.messages,
+          budget: {
+            tokensConsumed: resumeFrom.budgetUsed.tokens,
+            iterationsConsumed: resumeFrom.iterationCount,
+            costUsd: resumeFrom.budgetUsed.cost,
+          },
+          toolCallsTotal: resumeFrom.toolCallsTotal,
+          recentlyReadFiles: resumeFrom.recentlyReadFiles,
+          consecutiveCompactionFailures: 0,
+          activeSkillConstraint: null,
+        }
+      : {
+          iteration: 0,
+          currentRole: initialRole,
+          conversation: [
+            { role: "system", content: systemPrompt, pinned: true, timestamp: new Date().toISOString() },
+            { role: "user", content: input.objective, pinned: true, timestamp: new Date().toISOString() },
+          ],
+          budget: {
+            tokensConsumed: 0,
+            iterationsConsumed: 0,
+            costUsd: 0,
+          },
+          toolCallsTotal: 0,
+          recentlyReadFiles: [],
+          consecutiveCompactionFailures: 0,
+          activeSkillConstraint: null,
+        };
+
+    if (resumeFrom) {
+      yield {
+        type: "iteration_start",
+        iteration: state.iteration,
+        messageCount: state.conversation.length,
+      };
+      // Emit a resume notification
+      const resumeSystemMessage = `[Session resumed from checkpoint at iteration ${state.iteration} with ${state.conversation.length} messages]`;
+      state.conversation.push({
+        role: "system",
+        content: resumeSystemMessage,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     if (plan) {
       yield { type: "plan_started" };
@@ -945,7 +1027,27 @@ export class AgenticOrchestrator {
         }
       }
 
-      // 8. Continue loop
+      // 8. Save checkpoint after iteration
+      try {
+        await saveCheckpoint({
+          runId: input.runId,
+          messages: state.conversation,
+          iterationCount: state.iteration,
+          budgetUsed: {
+            tokens: state.budget.tokensConsumed,
+            cost: state.budget.costUsd,
+          },
+          currentRole: state.currentRole,
+          toolCallsTotal: state.toolCallsTotal,
+          recentlyReadFiles: state.recentlyReadFiles,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (checkpointError) {
+        // Log but don't fail the run if checkpoint save fails
+        log.warn(`Failed to save checkpoint for run ${input.runId}:`, checkpointError);
+      }
+
+      // 9. Continue loop
       yield {
         type: "loop_continuing",
         reason: `Iteration ${state.iteration} completed with ${toolCalls.length} tool call(s)`,
@@ -990,6 +1092,12 @@ export class AgenticOrchestrator {
       // Clean up budget tracker
       if (this.budgetTracker) {
         this.budgetTracker.removeBudget(input.runId);
+      }
+      // Clean up checkpoint on successful completion
+      try {
+        await deleteCheckpoint(input.runId);
+      } catch (cleanupError) {
+        log.warn(`Failed to delete checkpoint for run ${input.runId}:`, cleanupError);
       }
       // Record total loop duration
       telemetry.recordMetric(METRICS.AGENTIC_LOOP_DURATION_MS, Date.now() - executionStartTime, { [METRIC_LABELS.RUN_ID]: input.runId });

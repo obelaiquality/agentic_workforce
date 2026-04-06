@@ -60,6 +60,19 @@ export interface TeamContext {
   agentId: string;
   sendMessage: (toAgent: string, message: string) => void;
   receiveMessages: () => ConversationMessage[];
+  getAllAgents: () => Array<{
+    id: string;
+    role: "planner" | "implementer" | "tester" | "reviewer" | "researcher";
+    objective: string;
+    fileScope?: string[];
+  }>;
+  getActiveAgents: () => string[];
+  addAgent: (spec: {
+    id: string;
+    role: "planner" | "implementer" | "tester" | "reviewer" | "researcher";
+    objective: string;
+    fileScope?: string[];
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------

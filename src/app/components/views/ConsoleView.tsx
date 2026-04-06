@@ -1,13 +1,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Check, ChevronDown, ChevronRight, Filter, Terminal } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Filter, Shield, Terminal } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
 import type { ApiEventStream } from "../../lib/apiClient";
-import { getMissionConsoleV8, openMissionConsoleStreamV8, requestDependencyBootstrapV9 } from "../../lib/apiClient";
+import { getMissionConsoleV8, listAuditEvents, openMissionConsoleStreamV8, requestDependencyBootstrapV9 } from "../../lib/apiClient";
 import { EmptyState } from "../ui/empty-state";
 import { modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { ProcessingIndicator } from "../ui/processing-indicator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { cn } from "../ui/utils";
 
 const LEVEL_STYLES: Record<ConsoleEvent["level"], { color: string; badge: string; label: string }> = {
@@ -241,6 +242,7 @@ export function ConsoleView({
   workflowLogs?: WorkflowLog[];
 }) {
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"events" | "audit">("events");
   const [categoryFilter, setCategoryFilter] = useState<"all" | ConsoleEvent["category"]>("all");
   const [followTail, setFollowTail] = useState(true);
   const [scope, setScope] = useState<"workflow" | "project">("project");
@@ -273,6 +275,13 @@ export function ConsoleView({
     queryFn: () => getMissionConsoleV8(projectId!),
     enabled: Boolean(projectId) && !snapshotEvents?.length,
     staleTime: 3000,
+  });
+
+  const auditQuery = useQuery({
+    queryKey: ["audit-events"],
+    queryFn: () => listAuditEvents(),
+    refetchInterval: 10_000,
+    enabled: activeTab === "audit",
   });
 
   const toolInvokeMutation = useMutation({
@@ -426,6 +435,18 @@ export function ConsoleView({
       <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2 flex-wrap">
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "events" | "audit")} className="w-auto">
+              <TabsList className="bg-white/[0.03] border border-white/10">
+                <TabsTrigger value="events" className="gap-1.5">
+                  <Terminal className="h-3.5 w-3.5" />
+                  Events
+                </TabsTrigger>
+                <TabsTrigger value="audit" className="gap-1.5">
+                  <Shield className="h-3.5 w-3.5" />
+                  Audit
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
             <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
               <img
                 src={scope === "workflow" ? "/assets/worker-cluster.svg" : "/assets/telemetry-wave.svg"}
@@ -546,20 +567,22 @@ export function ConsoleView({
         </div>
       </div>
 
-      <div
-        className="overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(10,11,14,0.98),rgba(7,8,11,0.96))] shadow-[0_16px_44px_rgba(0,0,0,0.28)] flex flex-col"
-        style={{ minHeight: 500 }}
-      >
-        <div className="px-4 py-3 border-b border-white/6 bg-zinc-900/30 flex items-center gap-2 shrink-0">
-          <img src="/assets/quantum-rail.svg" alt="" className="h-3.5 w-3.5 opacity-85" aria-hidden="true" />
-          <ProcessingIndicator kind="telemetry" active size="xs" tone="subtle" />
-          <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-mono">
-            mission-control — {scope === "workflow" ? "workflow telemetry" : "real event stream"}
-          </span>
-          <span className="ml-auto text-[10px] font-mono text-zinc-600">{query.isLoading ? "loading" : `${filtered.length} entries`}</span>
-        </div>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "events" | "audit")}>
+        <TabsContent value="events" className="flex-1">
+          <div
+            className="overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(10,11,14,0.98),rgba(7,8,11,0.96))] shadow-[0_16px_44px_rgba(0,0,0,0.28)] flex flex-col"
+            style={{ minHeight: 500 }}
+          >
+            <div className="px-4 py-3 border-b border-white/6 bg-zinc-900/30 flex items-center gap-2 shrink-0">
+              <img src="/assets/quantum-rail.svg" alt="" className="h-3.5 w-3.5 opacity-85" aria-hidden="true" />
+              <ProcessingIndicator kind="telemetry" active size="xs" tone="subtle" />
+              <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-mono">
+                mission-control — {scope === "workflow" ? "workflow telemetry" : "real event stream"}
+              </span>
+              <span className="ml-auto text-[10px] font-mono text-zinc-600">{query.isLoading ? "loading" : `${filtered.length} entries`}</span>
+            </div>
 
-        <div data-testid="console-event-stream" ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
+            <div data-testid="console-event-stream" ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
           {filtered.length === 0 ? (
             <div className="py-8 text-center">
               <div className="text-sm text-zinc-300">{query.isLoading ? "Loading event stream…" : "No real events yet for this view"}</div>
@@ -753,9 +776,93 @@ export function ConsoleView({
               );
             })
           )}
-          <div ref={bottomRef} />
-        </div>
-      </div>
+              <div ref={bottomRef} />
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="audit" className="flex-1">
+          <div
+            className="overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(10,11,14,0.98),rgba(7,8,11,0.96))] shadow-[0_16px_44px_rgba(0,0,0,0.28)] flex flex-col"
+            style={{ minHeight: 500 }}
+          >
+            <div className="px-4 py-3 border-b border-white/6 bg-zinc-900/30 flex items-center gap-2 shrink-0">
+              <Shield className="h-3.5 w-3.5 opacity-85 text-zinc-400" aria-hidden="true" />
+              <ProcessingIndicator kind="telemetry" active={auditQuery.isRefetching} size="xs" tone="subtle" />
+              <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-mono">
+                audit log — security & policy events
+              </span>
+              <span className="ml-auto text-[10px] font-mono text-zinc-600">
+                {auditQuery.isLoading ? "loading" : `${auditQuery.data?.items?.length ?? 0} events`}
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[11px] leading-relaxed">
+              {auditQuery.isLoading ? (
+                <div className="py-8 text-center">
+                  <div className="text-sm text-zinc-300">Loading audit events…</div>
+                </div>
+              ) : auditQuery.isError ? (
+                <div className="py-8 text-center">
+                  <div className="text-sm text-rose-300">Failed to load audit events</div>
+                  <div className="mt-2 text-xs text-rose-400">
+                    {auditQuery.error instanceof Error ? auditQuery.error.message : "Unknown error"}
+                  </div>
+                </div>
+              ) : !auditQuery.data?.items?.length ? (
+                <div className="py-8 text-center">
+                  <div className="text-sm text-zinc-300">No audit events yet</div>
+                  <div className="mt-2 text-xs text-zinc-500">
+                    Audit events will appear here as actions are performed across the system.
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {auditQuery.data.items.map((event) => (
+                    <div
+                      key={event.id}
+                      className={cn(
+                        "group relative overflow-hidden rounded-lg border border-white/6 bg-[linear-gradient(90deg,rgba(255,255,255,0.02),rgba(0,0,0,0.12))] px-3 py-2.5 transition",
+                        "hover:border-white/12 hover:bg-white/[0.03]"
+                      )}
+                    >
+                      <div className="absolute bottom-0 left-0 top-0 w-[2px] bg-amber-400/70" />
+                      <div className="relative z-[1] flex flex-wrap items-start gap-2">
+                        <span
+                          className="shrink-0 tabular-nums select-none rounded border border-white/6 bg-black/30 px-1.5 py-0.5 text-[10px] text-zinc-500"
+                          title={format(new Date(event.createdAt), "yyyy-MM-dd HH:mm:ss.SSS")}
+                        >
+                          {format(new Date(event.createdAt), "HH:mm:ss")}
+                        </span>
+                        <span className="shrink-0 rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] text-amber-200">
+                          {event.eventType}
+                        </span>
+                        <span className="ml-auto text-[9px] text-zinc-600">
+                          actor: {event.actor}
+                        </span>
+                      </div>
+                      <div className="relative z-[1] mt-1.5 space-y-1.5">
+                        {Object.entries(event.payload).map(([key, value]) => (
+                          <div key={key} className="flex items-start gap-2">
+                            <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500 min-w-[100px]">
+                              {key.replace(/_/g, " ")}
+                            </span>
+                            <span className="text-[11px] text-zinc-200 break-all">
+                              {typeof value === "object" && value !== null
+                                ? JSON.stringify(value, null, 2)
+                                : String(value ?? "—")}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

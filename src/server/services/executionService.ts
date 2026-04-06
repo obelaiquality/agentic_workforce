@@ -27,6 +27,8 @@ import { DoomLoopDetector } from "./doomLoopDetector";
 import { recordFileAccess } from "./contextCompactionService";
 import { shortErrorStack } from "../errors";
 import { AgenticOrchestrator } from "../execution/agenticOrchestrator";
+import { runCoordinatorMode } from "../execution/coordinatorAgent";
+import type { AgentSpec } from "../execution/multiAgentTeam";
 import type { ToolRegistry } from "../tools/registry";
 import type { AgenticExecutionInput, AgenticEvent } from "../tools/types";
 import type { PermissionPolicyEngine } from "../permissions/policyEngine";
@@ -4002,6 +4004,9 @@ export class ExecutionService {
    * Execute an agentic workflow — the agent loops autonomously using tools
    * until it completes the objective or hits a budget/iteration limit.
    *
+   * If input.coordinator is true, uses coordinator mode (multi-agent decomposition).
+   * Otherwise, runs a single agent orchestrator.
+   *
    * Returns an AsyncGenerator of AgenticEvent for streaming to the client.
    *
    * @param registry - Tool registry with available tools
@@ -4010,7 +4015,15 @@ export class ExecutionService {
   async *executeAgentic(
     registry: ToolRegistry,
     input: AgenticExecutionInput,
+    checkpoint?: unknown,
   ): AsyncGenerator<AgenticEvent> {
+    // Route to coordinator mode if requested
+    if (input.coordinator) {
+      yield* this.executeCoordinatorMode(registry, input);
+      return;
+    }
+
+    // Standard single-agent mode
     const memoryService = this.getMemory(input.worktreePath);
     const doomLoopDetector = new DoomLoopDetector(20, 3, 5);
     const autoMemoryExtractor = new AutoMemoryExtractor(memoryService);
@@ -4032,7 +4045,7 @@ export class ExecutionService {
     });
 
     try {
-      for await (const event of orchestrator.execute(input)) {
+      for await (const event of orchestrator.execute(input, checkpoint as any)) {
         yield event;
 
         // Record significant events
@@ -4084,6 +4097,102 @@ export class ExecutionService {
         payload: {
           error: errorMsg,
           stack: error instanceof Error ? shortErrorStack(error) : undefined,
+        },
+      });
+    }
+  }
+
+  /**
+   * Execute in coordinator mode — LLM decomposes the task into sub-agents
+   * and coordinates their execution.
+   */
+  private async *executeCoordinatorMode(
+    registry: ToolRegistry,
+    input: AgenticExecutionInput,
+  ): AsyncGenerator<AgenticEvent> {
+    const memoryService = this.getMemory(input.worktreePath);
+
+    // Factory function to create orchestrators for sub-agents
+    const createOrchestrator = (spec: AgentSpec, baseInput: AgenticExecutionInput) => {
+      const doomLoopDetector = new DoomLoopDetector(20, 3, 5);
+      const autoMemoryExtractor = new AutoMemoryExtractor(memoryService);
+
+      const orchestrator = new AgenticOrchestrator({
+        registry,
+        providerOrchestrator: this.providerOrchestrator,
+        contextService: this.contextService,
+        memoryService,
+        doomLoopDetector,
+        events: this.events,
+        policyEngine: this.policyEngine,
+        approvalService: this.approvalService,
+        contextCollapseService: this.contextCollapseService,
+        hookService: this.hookService,
+        planService: this.planService,
+        autoMemoryExtractor,
+        lspClient: this.lspClient,
+      });
+
+      // Create a modified input for this agent
+      const agentInput: AgenticExecutionInput = {
+        ...baseInput,
+        runId: `${baseInput.runId}:${spec.id}`,
+        objective: spec.objective,
+      };
+
+      return orchestrator.execute(agentInput);
+    };
+
+    try {
+      for await (const event of runCoordinatorMode(
+        input,
+        this.providerOrchestrator,
+        createOrchestrator,
+        input.coordinatorOptions
+      )) {
+        yield event;
+
+        // Record significant events
+        if (event.type === "execution_complete") {
+          await this.events.appendEvent({
+            type: "agentic.execution.completed",
+            aggregateId: input.runId,
+            actor: input.actor,
+            payload: {
+              objective: input.objective,
+              iterations: event.totalIterations,
+              toolCalls: event.totalToolCalls,
+              mode: "coordinator",
+            },
+          });
+        } else if (event.type === "execution_aborted") {
+          await this.events.appendEvent({
+            type: "agentic.execution.aborted",
+            aggregateId: input.runId,
+            actor: input.actor,
+            payload: {
+              reason: event.reason,
+              mode: "coordinator",
+            },
+          });
+        }
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      yield {
+        type: "error",
+        error: `Coordinator execution failed: ${errorMsg}`,
+        recoverable: false,
+      };
+
+      await this.events.appendEvent({
+        type: "agentic.execution.failed",
+        aggregateId: input.runId,
+        actor: input.actor,
+        payload: {
+          error: errorMsg,
+          stack: error instanceof Error ? shortErrorStack(error) : undefined,
+          mode: "coordinator",
         },
       });
     }

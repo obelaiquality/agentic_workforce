@@ -104,14 +104,32 @@ Use this to understand who else is working on the project and what they're respo
       };
     }
 
-    // Note: This requires access to the team instance, which we'll need to pass through metadata
-    // For now, return a placeholder response
+    const allAgents = ctx.teamContext.getAllAgents();
+    const activeAgents = new Set(ctx.teamContext.getActiveAgents());
+    const peers = allAgents
+      .filter((a) => a.id !== ctx.teamContext!.agentId)
+      .map((a) => ({
+        id: a.id,
+        role: a.role,
+        objective: a.objective,
+        fileScope: a.fileScope || [],
+        active: activeAgents.has(a.id),
+      }));
+
     return {
       type: "success",
-      content: `Team members (available via team context):\n\nTo fully implement this, the team instance needs to be accessible via ctx.teamContext`,
-      metadata: {
-        currentAgent: ctx.teamContext.agentId,
-      },
+      content:
+        peers.length > 0
+          ? `Team members:\n${peers
+              .map(
+                (p) =>
+                  `- ${p.id} (${p.role}, ${p.active ? "active" : "idle"}): ${p.objective}${
+                    p.fileScope.length ? `\n  Files: ${p.fileScope.join(", ")}` : ""
+                  }`
+              )
+              .join("\n")}`
+          : "No other agents in the team.",
+      metadata: { peers },
     };
   },
 };
@@ -159,12 +177,20 @@ WARNING: Use sparingly - spawning too many agents can lead to coordination overh
       };
     }
 
-    // This would require integration with the team orchestrator
-    // For now, return a placeholder
+    const spec = {
+      id: `${input.role}-${Date.now()}`,
+      role: input.role,
+      objective: input.objective,
+      fileScope: input.file_scope,
+    };
+
+    ctx.teamContext.addAgent(spec);
+
     return {
       type: "success",
-      content: `Agent spawn requested:\n  Role: ${input.role}\n  Objective: ${input.objective}\n  File scope: ${input.file_scope?.join(", ") || "none"}\n\nNote: Full implementation requires orchestrator integration.`,
+      content: `Agent spawned:\n  ID: ${spec.id}\n  Role: ${input.role}\n  Objective: ${input.objective}\n  File scope: ${input.file_scope?.join(", ") || "none"}`,
       metadata: {
+        agentId: spec.id,
         role: input.role,
         objective: input.objective,
         fileScope: input.file_scope,

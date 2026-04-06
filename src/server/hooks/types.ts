@@ -20,4 +20,6 @@ export interface HookExecutionOutput {
   updatedInput?: Record<string, unknown>;
   error?: string;
   durationMs: number;
+  blocked?: boolean;
+  blockReason?: string;
 }

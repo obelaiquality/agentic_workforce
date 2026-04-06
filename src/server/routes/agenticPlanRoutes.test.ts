@@ -125,6 +125,7 @@ describe("agentic plan routes", () => {
         planMode: false,
         systemPromptSuffix: expect.stringContaining("Implement approved work"),
       }),
+      undefined,
     );
 
     await app.close();
@@ -153,6 +154,7 @@ describe("agentic plan routes", () => {
         planMode: true,
         systemPromptSuffix: expect.stringContaining("Staging first"),
       }),
+      undefined,
     );
 
     await app.close();

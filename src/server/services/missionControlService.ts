@@ -558,6 +558,9 @@ function buildAgenticRunSnapshot(input: {
       ? "running"
       : "idle";
 
+  // A run is resumable if it's aborted or failed and we expect a checkpoint to exist
+  const resumable = (status === "aborted" || status === "failed") && iterationCount > 0;
+
   return {
     runId: input.runId,
     status,
@@ -574,6 +577,7 @@ function buildAgenticRunSnapshot(input: {
     lastAssistantText,
     lastReason,
     latestRole,
+    resumable,
     budget: {
       tokensConsumed: typeof metadata.total_tokens === "number" ? metadata.total_tokens : null,
       maxTokens: typeof budget.maxTokens === "number" ? budget.maxTokens : null,
