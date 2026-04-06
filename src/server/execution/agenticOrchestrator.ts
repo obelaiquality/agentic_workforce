@@ -121,6 +121,8 @@ interface OrchestratorDependencies {
   autoMemoryExtractor?: AutoMemoryExtractor;
   lspClient?: LSPClient;
   learningsService?: LearningsService;
+  globalKnowledgePool?: { formatForSystemPrompt(techFingerprint: string[], maxTokens?: number): Promise<string>; rankSkillsForProject(skills: import("../../shared/contracts").SkillRecord[], techFingerprint: string[]): Array<import("../../shared/contracts").SkillRecord & { relevanceScore: number }> };
+  techFingerprint?: string[];
 }
 
 interface BudgetState {
@@ -248,6 +250,8 @@ export class AgenticOrchestrator {
   private readonly planService?: PlanService;
   private readonly autoMemoryExtractor?: AutoMemoryExtractor;
   private readonly learningsService?: LearningsService;
+  private readonly globalKnowledgePool?: OrchestratorDependencies["globalKnowledgePool"];
+  private readonly techFingerprint: string[];
 
   constructor(deps: OrchestratorDependencies) {
     this.registry = deps.registry;
@@ -264,6 +268,8 @@ export class AgenticOrchestrator {
     this.planService = deps.planService;
     this.autoMemoryExtractor = deps.autoMemoryExtractor;
     this.learningsService = deps.learningsService;
+    this.globalKnowledgePool = deps.globalKnowledgePool;
+    this.techFingerprint = deps.techFingerprint || [];
   }
 
   async *execute(input: AgenticExecutionInput, resumeFrom?: RunCheckpoint): AsyncGenerator<AgenticEvent> {
@@ -335,9 +341,20 @@ export class AgenticOrchestrator {
       skillConstraint: null,
     });
     const toolSummaries = toolSchemas.map((t) => ({ name: t.name, description: t.description }));
+    // Fetch cross-project knowledge (async, best-effort)
+    let globalKnowledgePrompt = "";
+    if (this.globalKnowledgePool && this.techFingerprint.length > 0) {
+      try {
+        globalKnowledgePrompt = await this.globalKnowledgePool.formatForSystemPrompt(this.techFingerprint, 1500);
+      } catch {
+        // Best-effort — don't block execution
+      }
+    }
+
     const extraPromptSections = [
       this.memoryService.formatMemoriesForPrompt(prefetchedMemories),
       this.learningsService?.formatForSystemPrompt(input.projectId || input.repoId) || "",
+      globalKnowledgePrompt,
       deferredLoader?.getDeferredToolsList() || "",
       this.formatPlanContext(plan),
       input.systemPromptSuffix || "",

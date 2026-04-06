@@ -265,6 +265,43 @@ model SecretRecord {
   updatedAt  DateTime @updatedAt
 }
 
+// ---------------------------------------------------------------------------
+// Cross-Project Knowledge Pool
+// ---------------------------------------------------------------------------
+
+model GlobalLearning {
+  id                  String   @id @default(uuid())
+  category            String
+  summary             String
+  detail              String   @default("")
+  techFingerprint     Json     @default("[]")
+  sourceProjectIds    Json     @default("[]")
+  occurrences         Int      @default(1)
+  confidence          Float    @default(0.3)
+  universality        Float    @default(0.0)
+  relatedTools        Json     @default("[]")
+  relatedFilePatterns Json     @default("[]")
+  lastSeenAt          DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([category, confidence])
+  @@index([universality])
+}
+
+model GlobalPrinciple {
+  id                  String   @id @default(uuid())
+  principle           String
+  reasoning           String   @default("")
+  techFingerprint     Json     @default("[]")
+  sourceProjectCount  Int      @default(1)
+  confidence          Float    @default(0.5)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([confidence])
+}
+
 model EventLog {
   eventId       String   @id @map("event_id")
   aggregateId   String   @map("aggregate_id")

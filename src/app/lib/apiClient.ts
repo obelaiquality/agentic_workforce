@@ -2415,3 +2415,18 @@ export async function dismissSuggestedSkill(id: string, projectId?: string) {
     },
   );
 }
+
+// ---- Cross-Project Global Knowledge ----
+
+export async function listGlobalLearnings(opts?: { techFingerprint?: string[]; limit?: number; minConfidence?: number }) {
+  const params = new URLSearchParams();
+  if (opts?.techFingerprint?.length) params.set("techFingerprint", opts.techFingerprint.join(","));
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.minConfidence) params.set("minConfidence", String(opts.minConfidence));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: import("../../shared/contracts").GlobalLearningRecord[] }>(`/api/learnings/global${suffix}`);
+}
+
+export async function listGlobalPrinciples() {
+  return apiRequest<{ items: import("../../shared/contracts").GlobalPrincipleRecord[] }>("/api/learnings/global/principles");
+}

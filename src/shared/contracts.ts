@@ -1747,6 +1747,8 @@ export interface SkillRecord {
   author: string;
   tags: string[];
   builtIn: boolean;
+  techFingerprint?: string[];
+  sourceProjectIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1880,6 +1882,8 @@ export interface SuggestedSkill {
   systemPrompt: string;
   allowedTools: string[];
   tags: string[];
+  techFingerprint?: string[];
+  sourceProjectIds?: string[];
   derivedFromLearnings: string[];
   confidence: number;
   status: "pending" | "approved" | "dismissed";
@@ -1892,4 +1896,38 @@ export interface DreamCycleStats {
   learningsCount: number;
   principlesCount: number;
   suggestedSkillsCount: number;
+  globalLearningsPromoted?: number;
+  globalPrinciplesConsolidated?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-Project Knowledge Pool
+// ---------------------------------------------------------------------------
+
+export interface GlobalLearningRecord {
+  id: string;
+  category: LearningCategory;
+  summary: string;
+  detail: string;
+  techFingerprint: string[];
+  sourceProjectIds: string[];
+  occurrences: number;
+  confidence: number;
+  universality: number;
+  relatedTools: string[];
+  relatedFilePatterns: string[];
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GlobalPrincipleRecord {
+  id: string;
+  principle: string;
+  reasoning: string;
+  techFingerprint: string[];
+  sourceProjectCount: number;
+  confidence: number;
+  createdAt: string;
+  updatedAt: string;
 }

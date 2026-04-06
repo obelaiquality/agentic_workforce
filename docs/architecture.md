@@ -156,6 +156,7 @@ graph TB
     DreamSched["DreamScheduler<br/><i>24h background consolidation</i>"]
     LearnSvc["LearningsService<br/><i>Pattern / antipattern storage</i>"]
     SkillSynth["SkillSynthesizer<br/><i>Skill generation from learnings</i>"]
+    GlobalPool["GlobalKnowledgePool<br/><i>Cross-project learning<br/>aggregation + relevance</i>"]
   end
 
   subgraph Reliability["Reliability & Safety"]
@@ -220,6 +221,9 @@ graph TB
   DreamSched --> AutoExtract
   DreamSched --> LearnSvc
   DreamSched --> SkillSynth
+  DreamSched --> GlobalPool
+
+  AgenticOrch --> GlobalPool
 
   ExecSvc --> ShadowGit
   ToolExec --> EditChain
@@ -293,7 +297,7 @@ sequenceDiagram
 
 ## Self-Learning Pipeline
 
-How the system learns from execution runs and synthesizes reusable skills.
+How the system learns from execution runs, synthesizes skills, and shares knowledge across projects.
 
 ```mermaid
 graph LR
@@ -302,7 +306,7 @@ graph LR
     Extract["AutoMemoryExtractor<br/><i>Every 5 iterations</i>"]
   end
 
-  subgraph Storage["Learnings Storage"]
+  subgraph Storage["Per-Project Storage"]
     Learnings["LearningsService<br/><i>Patterns, antipatterns,<br/>preferences</i>"]
     Memory["MemoryService<br/><i>Episodic summaries</i>"]
   end
@@ -311,10 +315,16 @@ graph LR
     Scheduler["DreamScheduler"]
     Consolidate["Consolidate<br/><i>Merge similar learnings<br/>→ principles</i>"]
     Synthesize["SkillSynthesizer<br/><i>Generate suggested skills</i>"]
+    Promote["Promote to Global<br/><i>confidence ≥ 0.6</i>"]
+  end
+
+  subgraph Global["Cross-Project Pool (PostgreSQL)"]
+    GlobLearn["GlobalLearning<br/><i>Tech fingerprint indexed</i>"]
+    GlobPrinciple["GlobalPrinciple<br/><i>Universality scored</i>"]
   end
 
   subgraph Output["Applied Knowledge"]
-    Principles["Consolidated<br/>Principles"]
+    Principles["Project<br/>Principles"]
     Skills["Suggested<br/>Skills"]
     Catalog["Skill Catalog<br/><i>Available in future runs</i>"]
   end
@@ -329,14 +339,98 @@ graph LR
   Consolidate --> Synthesize
   Synthesize --> Skills
 
+  Consolidate --> Promote
+  Promote --> GlobLearn
+  GlobLearn --> GlobPrinciple
+
   Skills -- "user approves" --> Catalog
   Catalog -- "injected into<br/>future runs" --> Run
+  GlobPrinciple -- "injected into<br/>system prompt" --> Run
 
   style Runtime fill:#0f172a,stroke:#475569,color:#e2e8f0
   style Storage fill:#0f172a,stroke:#475569,color:#e2e8f0
   style Dream fill:#0f172a,stroke:#475569,color:#e2e8f0
+  style Global fill:#164e63,stroke:#22d3ee,color:#cffafe
   style Output fill:#0f172a,stroke:#475569,color:#e2e8f0
 ```
+
+---
+
+## Cross-Project Knowledge System
+
+How knowledge flows between projects to benefit the user across their entire workspace.
+
+### Data Model
+
+```mermaid
+graph TB
+  subgraph PerProject["Per-Project (File-Based)"]
+    direction TB
+    LJ["learnings.json<br/><i>Patterns, antipatterns,<br/>preferences with confidence</i>"]
+    PJ["principles.json<br/><i>Consolidated rules<br/>from repeated learnings</i>"]
+    SJ["suggested-skills.json<br/><i>Auto-synthesized skills<br/>pending user approval</i>"]
+  end
+
+  subgraph GlobalDB["Global Pool (PostgreSQL)"]
+    direction TB
+    GL["GlobalLearning<br/><i>category, summary, detail<br/>techFingerprint[], sourceProjectIds[]<br/>occurrences, confidence, universality</i>"]
+    GP["GlobalPrinciple<br/><i>principle, reasoning<br/>techFingerprint[]<br/>sourceProjectCount, confidence</i>"]
+  end
+
+  subgraph Matching["Relevance Matching"]
+    TF["Tech Fingerprint<br/><i>Extracted from<br/>RepoGuidelineProfile.languages<br/>+ blueprint framework hints</i>"]
+    Jaccard["Jaccard Similarity<br/><i>|A ∩ B| / |A ∪ B|<br/>on fingerprint arrays</i>"]
+  end
+
+  LJ -- "promote<br/>(confidence ≥ 0.6)" --> GL
+  GL -- "consolidate" --> GP
+
+  TF --> Jaccard
+  Jaccard -- "filter + rank" --> GP
+
+  GP -- "## Cross-Project Learnings<br/>injected into system prompt" --> Agent["Agentic<br/>Orchestrator"]
+
+  style PerProject fill:#0f172a,stroke:#475569,color:#e2e8f0
+  style GlobalDB fill:#164e63,stroke:#22d3ee,color:#cffafe
+  style Matching fill:#1e1b4b,stroke:#7c3aed,color:#e9d5ff
+```
+
+### How It Works
+
+1. **During execution**, the `AutoMemoryExtractor` records learnings (patterns, antipatterns) every 5 iterations into per-project JSON files.
+
+2. **During the dream cycle** (every 24 hours), the `DreamScheduler` iterates all projects:
+   - Consolidates local learnings into per-project principles
+   - Synthesizes skill suggestions from repeated patterns
+   - **Promotes** learnings with `confidence ≥ 0.6` to the `GlobalLearning` table
+   - Deduplicates via cosine similarity on summary text (threshold: 0.55)
+   - Merges matching entries: increments occurrences, merges source project IDs, boosts confidence
+
+3. **Global consolidation** runs after all projects are processed:
+   - Groups related global learnings and synthesizes `GlobalPrinciple` records
+   - Recomputes `universality` scores: `sourceProjectCount / totalProjectCount`
+
+4. **At run start**, the `AgenticOrchestrator` fetches relevant global principles:
+   - Extracts the current project's tech fingerprint from `RepoGuidelineProfile.languages`
+   - Queries global principles filtered by Jaccard similarity on tech fingerprints
+   - Injects as `## Cross-Project Learnings` in the system prompt (up to 1500 tokens)
+   - Format: `- [principle] (N projects, confidence: 0.85)`
+
+5. **Skills are ranked** by tech fingerprint relevance when the agent lists or searches for skills.
+
+### Tech Fingerprint Example
+
+```
+Project A: ["typescript", "react", "vitest", "tailwind"]
+Project B: ["typescript", "node", "fastify", "prisma"]
+Project C: ["python", "django", "pytest"]
+
+Jaccard(A, B) = 1/7 = 0.14  →  TypeScript learnings shared
+Jaccard(A, C) = 0/8 = 0.00  →  No overlap, filtered out
+Jaccard(B, C) = 0/7 = 0.00  →  No overlap, filtered out
+```
+
+A "prefer named exports" learning from Project A (TypeScript) will be surfaced in Project B (also TypeScript) but not in Project C (Python).
 
 ---
 
@@ -546,6 +640,10 @@ Each run produces a verification bundle describing: commands run, passing checks
 - drag/drop changes real backend state
 - self-learning loop runs in background (24h dream cycle)
 - skills and hooks are first-class extensibility primitives
+- cross-project knowledge sharing via GlobalKnowledgePool — learnings validated in one project benefit all projects with similar tech stacks
+- tech fingerprint matching uses Jaccard similarity on language/framework arrays — fast, deterministic, no embeddings required
+- promotion threshold (confidence ≥ 0.6) prevents low-quality noise from spreading globally
+- global knowledge is additive — injected as a separate system prompt section, never overrides local project learnings
 
 ### What is intentionally deferred
 - broad mutating multi-agent execution

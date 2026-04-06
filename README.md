@@ -165,6 +165,7 @@ graph TB
 **Key data flows:**
 - **Execution pipeline** — objective → route → context → agentic loop → verification → report
 - **Self-learning** — execution insights → learnings → 24h dream cycle → consolidated principles → suggested skills
+- **Cross-project knowledge** — high-confidence learnings promoted to global pool → tech-fingerprint matched → injected into future runs across all projects
 - **Approval gating** — tool calls → permission policy → safety classifier → user approval → audit log
 
 Full architecture with C4 diagrams: [docs/architecture.md](docs/architecture.md)

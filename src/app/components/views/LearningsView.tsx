@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Brain, Lightbulb, AlertTriangle, Sparkles, Trash2, RefreshCw } from "lucide-react";
+import { Brain, Globe, Lightbulb, AlertTriangle, Sparkles, Trash2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Panel, PanelHeader, Chip } from "../UI";
-import type { LearningCategory, LearningEntry, ConsolidatedPrinciple, SuggestedSkill, DreamCycleStats } from "../../../shared/contracts";
+import type { LearningCategory, LearningEntry, ConsolidatedPrinciple, SuggestedSkill, DreamCycleStats, GlobalPrincipleRecord } from "../../../shared/contracts";
 import {
   listLearnings,
   listPrinciples,
@@ -13,6 +13,7 @@ import {
   listSuggestedSkills,
   approveSuggestedSkill,
   dismissSuggestedSkill,
+  listGlobalPrinciples,
 } from "../../lib/apiClient";
 
 const CATEGORY_META: Record<LearningCategory, { label: string; icon: React.ReactNode; chipClass: string }> = {
@@ -60,6 +61,12 @@ export function LearningsView({ projectId }: { projectId?: string | null }) {
     staleTime: 30_000,
   });
 
+  const globalPrinciplesQuery = useQuery({
+    queryKey: ["global-principles"],
+    queryFn: () => listGlobalPrinciples(),
+    staleTime: 60_000,
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteLearning(id),
     onSuccess: () => {
@@ -103,6 +110,7 @@ export function LearningsView({ projectId }: { projectId?: string | null }) {
   const principles: ConsolidatedPrinciple[] = principlesQuery.data?.items ?? [];
   const dreamStats: DreamCycleStats | null = dreamStatsQuery.data ?? null;
   const suggestedSkills: SuggestedSkill[] = (suggestedSkillsQuery.data?.items ?? []).filter((s: SuggestedSkill) => s.status === "pending");
+  const globalPrinciples: GlobalPrincipleRecord[] = (globalPrinciplesQuery.data?.items ?? []) as GlobalPrincipleRecord[];
 
   return (
     <div className="space-y-4">
@@ -186,6 +194,39 @@ export function LearningsView({ projectId }: { projectId?: string | null }) {
           )}
         </div>
       </Panel>
+
+      {globalPrinciples.length > 0 && (
+        <Panel className="border-cyan-500/20">
+          <PanelHeader title={`Cross-Project Insights (${globalPrinciples.length})`}>
+            <div className="flex items-center gap-1.5 text-[10px] text-cyan-400">
+              <Globe className="h-3 w-3" />
+              Validated across projects
+            </div>
+          </PanelHeader>
+          <div className="p-4 space-y-2">
+            {globalPrinciples.map((p) => (
+              <div key={p.id} className="rounded-lg border border-cyan-500/10 bg-cyan-500/[0.03] px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+                  <span className="text-sm text-white">{p.principle}</span>
+                  <ConfidenceBar value={p.confidence} />
+                  <span className="text-[10px] text-cyan-400/70 shrink-0">
+                    {p.sourceProjectCount} project{p.sourceProjectCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                {p.reasoning && <div className="mt-1 pl-5.5 text-xs text-zinc-500">{p.reasoning}</div>}
+                {((p.techFingerprint as string[]) || []).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1 pl-5.5">
+                    {((p.techFingerprint as string[]) || []).map((t) => (
+                      <span key={t} className="text-[10px] rounded bg-cyan-500/10 px-1.5 py-0.5 text-cyan-300/60">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
 
       <Panel className="border-white/8">
         <PanelHeader title="Learnings">

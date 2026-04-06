@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { LearningsService } from "../services/learningsService";
 import { SkillSynthesizer } from "../services/skillSynthesizer";
+import { GlobalKnowledgePool } from "../services/globalKnowledgePool";
 import type { RepoService } from "../services/repoService";
 import type { LearningCategory } from "../../shared/contracts";
 
@@ -148,5 +149,29 @@ export function registerLearningsRoutes({ app, repoService }: LearningsRouteDeps
     const synth = new SkillSynthesizer(svc, worktreePath);
     const item = synth.dismissSkill(id);
     return { item };
+  });
+
+  // ---- Cross-Project Global Knowledge ----
+
+  app.get("/api/learnings/global", async (request) => {
+    const query = request.query as { techFingerprint?: string; limit?: string; minConfidence?: string };
+    const pool = new GlobalKnowledgePool();
+    const fingerprint = query.techFingerprint ? query.techFingerprint.split(",").map((s) => s.trim()) : [];
+    const items = await pool.queryRelevant(fingerprint, {
+      limit: query.limit ? parseInt(query.limit, 10) : undefined,
+      minConfidence: query.minConfidence ? parseFloat(query.minConfidence) : undefined,
+    });
+    return { items };
+  });
+
+  app.get("/api/learnings/global/principles", async () => {
+    const pool = new GlobalKnowledgePool();
+    const items = await pool.consolidateGlobal();
+    // Return existing principles rather than re-consolidating
+    const { prisma } = await import("../db");
+    const principles = await prisma.globalPrinciple.findMany({
+      orderBy: { confidence: "desc" },
+    });
+    return { items: principles };
   });
 }
