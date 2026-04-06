@@ -498,44 +498,6 @@ export async function listQwenAccountAuthSessions() {
   return apiRequest<{ items: QwenAccountAuthSession[] }>("/api/v1/providers/qwen/accounts/auth-sessions");
 }
 
-export async function listQuotaStatus() {
-  return apiRequest<{ items: QwenAccountProfile[] }>("/api/v1/providers/qwen/quota");
-}
-
-export async function listChatSessions(repoId?: string) {
-  const suffix = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
-  return apiRequest<{ items: ChatSessionDto[] }>(`/api/v1/chat/sessions${suffix}`);
-}
-
-export async function createChatSession(title: string, repoId?: string) {
-  return apiRequest<{ ok: true; item: ChatSessionDto }>("/api/v1/chat/sessions", {
-    method: "POST",
-    body: JSON.stringify({ title, repoId }),
-  });
-}
-
-export async function listMessages(sessionId: string) {
-  return apiRequest<{ items: ChatMessageDto[] }>(`/api/v1/chat/sessions/${sessionId}/messages`);
-}
-
-export async function sendMessage(sessionId: string, content: string) {
-  return apiRequest<{ ok: true; item: ChatMessageDto }>(`/api/v1/chat/sessions/${sessionId}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ content }),
-  });
-}
-
-export async function sendMessageWithRole(
-  sessionId: string,
-  content: string,
-  modelRole: "utility_fast" | "coder_default" | "review_deep" | "overseer_escalation"
-) {
-  return apiRequest<{ ok: true; item: ChatMessageDto }>(`/api/v1/chat/sessions/${sessionId}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ content, modelRole }),
-  });
-}
-
 export async function openSessionStream(sessionId: string) {
   return openApiEventStream(`/api/v1/chat/sessions/${sessionId}/stream`);
 }
@@ -581,11 +543,6 @@ export async function addTicketComment(
       body: JSON.stringify(input),
     }
   );
-}
-
-export async function getBoard(repoId?: string) {
-  const suffix = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
-  return apiRequest<{ items: Record<Ticket["status"], Ticket[]> }>(`/api/v1/board${suffix}`);
 }
 
 export async function getBoardV2(repoId?: string) {
@@ -2381,11 +2338,18 @@ export async function getEnvironmentDiagnostics(): Promise<{
   osVersion: string;
   arch: string;
   cpuCount: number;
+  cpuModel: string;
   totalMemory: string;
   freeMemory: string;
   diskSpace: { available: string; total: string };
   dbLatencyMs: number;
   uptime: string;
+  hardware: {
+    platform: "apple-silicon" | "nvidia-cuda" | "generic-cpu";
+    vramMb?: number;
+    unifiedMemoryMb?: number;
+    computeCapability?: string;
+  };
 }> {
   return apiRequest("/api/diagnostics/environment");
 }

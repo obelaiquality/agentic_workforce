@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import type { ApiEventStream } from "../lib/apiClient";
 import {
   activateProjectV5,
@@ -759,12 +760,14 @@ export function useMissionControlLiveData() {
       setProjectSetupState(null);
       setRepoPickerMessage(null);
       setActionMessage("Repo connected.");
+      toast.success("Project connected");
       setActiveSection("live");
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : "Unable to connect the selected folder.";
       setRepoPickerMessage(message);
       setActionMessage(`Local repo attach failed: ${message}`);
+      toast.error("Failed to connect project");
     },
   });
 
@@ -898,7 +901,13 @@ export function useMissionControlLiveData() {
       setGithubOwner("");
       setGithubRepo("");
       setActionMessage("GitHub project connected.");
+      toast.success("GitHub project connected");
       setActiveSection("live");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Unable to connect GitHub project.";
+      setActionMessage(`GitHub connect failed: ${message}`);
+      toast.error("Failed to connect GitHub project");
     },
   });
 
@@ -1001,14 +1010,17 @@ export function useMissionControlLiveData() {
       setAgenticAssistantText("");
       setAgenticLiveEvents([]);
       setActionMessage("Agentic run started. Mission Control is now following the live execution stream.");
+      toast.success("Execution started");
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
     },
     onError: (error) => {
       if (error instanceof Error) {
         setActionMessage(buildExecutionFailureActionMessage(error.message));
+        toast.error("Execution failed", { description: error.message });
         return;
       }
       setActionMessage("Execution failed.");
+      toast.error("Execution failed");
     },
   });
 
@@ -1087,6 +1099,7 @@ export function useMissionControlLiveData() {
       }
 
       setActionMessage(followup.actionMessage);
+      toast(variables.decision === "approved" ? "Approved" : "Rejected");
     },
   });
 
@@ -1192,7 +1205,9 @@ export function useMissionControlLiveData() {
       queryClient.invalidateQueries({ queryKey: ["mission-snapshot-v8"] });
       queryClient.invalidateQueries({ queryKey: ["project-blueprint-v8"] });
       setActionMessage("Blueprint regenerated from repo guidance.");
+      toast.success("Blueprint regenerated");
     },
+    onError: () => toast.error("Failed to regenerate blueprint"),
   });
 
   function setExecutionProfile(profileId: string) {

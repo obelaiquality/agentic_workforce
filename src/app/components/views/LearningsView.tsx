@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Brain, Lightbulb, AlertTriangle, Sparkles, Trash2, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { Panel, PanelHeader, Chip } from "../UI";
 import type { LearningCategory, LearningEntry, ConsolidatedPrinciple, SuggestedSkill, DreamCycleStats } from "../../../shared/contracts";
 import {
@@ -61,7 +62,11 @@ export function LearningsView({ projectId }: { projectId?: string | null }) {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteLearning(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["learnings"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["learnings"] });
+      toast.success("Learning removed");
+    },
+    onError: () => toast.error("Failed to delete learning"),
   });
 
   const dreamMutation = useMutation({
@@ -71,17 +76,27 @@ export function LearningsView({ projectId }: { projectId?: string | null }) {
       queryClient.invalidateQueries({ queryKey: ["principles"] });
       queryClient.invalidateQueries({ queryKey: ["dream-stats"] });
       queryClient.invalidateQueries({ queryKey: ["suggested-skills"] });
+      toast.success("Dream cycle completed");
     },
+    onError: () => toast.error("Dream cycle failed"),
   });
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => approveSuggestedSkill(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["suggested-skills"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["suggested-skills"] });
+      toast.success("Skill approved");
+    },
+    onError: () => toast.error("Failed to approve skill"),
   });
 
   const dismissMutation = useMutation({
     mutationFn: (id: string) => dismissSuggestedSkill(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["suggested-skills"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["suggested-skills"] });
+      toast("Skill dismissed");
+    },
+    onError: () => toast.error("Failed to dismiss skill"),
   });
 
   const learnings: LearningEntry[] = learningsQuery.data?.items ?? [];

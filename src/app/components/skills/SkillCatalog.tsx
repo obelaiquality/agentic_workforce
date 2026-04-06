@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Pencil, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   createSkill,
   deleteSkill,
@@ -24,6 +25,8 @@ export function SkillCatalog() {
   const queryClient = useQueryClient();
   const [editingSkill, setEditingSkill] = useState<SkillRecord | null>(null);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
 
   const skillsQuery = useQuery({
     queryKey: ["skills"],
@@ -54,19 +57,38 @@ export function SkillCatalog() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
+      toast.success(editingSkill ? "Skill updated" : "Skill created");
       setEditingSkill(null);
       setDraft(EMPTY_DRAFT);
     },
+    onError: () => toast.error("Failed to save skill"),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteSkill(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["skills"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills"] });
+      toast("Skill removed");
+    },
+    onError: () => toast.error("Failed to delete skill"),
   });
 
   const skills = skillsQuery.data?.items || [];
-  const builtIn = skills.filter((skill) => skill.builtIn);
-  const custom = skills.filter((skill) => !skill.builtIn);
+  const allTags = useMemo(() => [...new Set(skills.flatMap((s) => s.tags))].sort(), [skills]);
+
+  const filteredSkills = useMemo(() => {
+    return skills.filter((skill) => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        if (!skill.name.toLowerCase().includes(q) && !skill.description.toLowerCase().includes(q)) return false;
+      }
+      if (activeTag && !skill.tags.includes(activeTag)) return false;
+      return true;
+    });
+  }, [skills, searchQuery, activeTag]);
+
+  const builtIn = filteredSkills.filter((skill) => skill.builtIn);
+  const custom = filteredSkills.filter((skill) => !skill.builtIn);
   const recentInvocations = invocationsQuery.data?.items || [];
   const editorTitle = editingSkill ? `Edit ${editingSkill.name}` : "Create Custom Skill";
   const saveDisabled = !draft.name.trim() || !draft.description.trim() || !draft.systemPrompt.trim() || saveMutation.isPending;
@@ -100,6 +122,42 @@ export function SkillCatalog() {
 
   return (
     <div className="space-y-6">
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search skills..."
+            className="w-full rounded-lg border border-white/10 bg-[#111113] pl-9 pr-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-cyan-500/30"
+          />
+        </div>
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <button
+              onClick={() => setActiveTag(null)}
+              className={`rounded-md px-2 py-1 text-[10px] uppercase tracking-wider transition-colors ${
+                !activeTag ? "bg-white/[0.08] text-white" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              All
+            </button>
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                className={`rounded-md px-2 py-1 text-[10px] uppercase tracking-wider transition-colors ${
+                  activeTag === tag ? "bg-cyan-500/15 text-cyan-300" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="rounded-xl border border-white/8 bg-black/20 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>

@@ -8,6 +8,7 @@ import {
   getSettings,
   apiRequest,
   getCacheBreakDiagnostics,
+  getEnvironmentDiagnostics,
 } from "../../lib/apiClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 
@@ -121,7 +122,12 @@ export function DiagnosticsView() {
     refetchInterval: 5000,
   });
 
-  const isLoading = isLoadingBackend || isLoadingDistill || isLoadingBackends || isLoadingMcp || isLoadingLsp || isLoadingSettings || isLoadingCache;
+  const { data: envData, isLoading: isLoadingEnv } = useQuery({
+    queryKey: ["diagnostics-environment"],
+    queryFn: getEnvironmentDiagnostics,
+  });
+
+  const isLoading = isLoadingBackend || isLoadingDistill || isLoadingBackends || isLoadingMcp || isLoadingLsp || isLoadingSettings || isLoadingCache || isLoadingEnv;
 
   if (isLoading) {
     return (
@@ -326,6 +332,75 @@ export function DiagnosticsView() {
               </div>
             ) : (
               <div className="text-xs text-zinc-500">No LSP servers configured</div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Hardware & Environment */}
+        <Card className="border-white/10 bg-white/[0.02]">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Cpu className="w-5 h-5 text-cyan-400" />
+              <CardTitle className="text-base font-semibold text-white">Hardware &amp; Environment</CardTitle>
+            </div>
+            <CardDescription className="text-xs text-zinc-500">System hardware and runtime info</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {envData ? (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">Platform</span>
+                  <span className="text-sm font-medium text-zinc-200 capitalize">
+                    {envData.hardware.platform.replace(/-/g, " ")}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">CPU</span>
+                  <span className="text-sm font-medium text-zinc-200 truncate max-w-[200px]" title={envData.cpuModel}>
+                    {envData.cpuCount} cores
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">Memory</span>
+                  <span className="text-sm font-medium text-zinc-200">{envData.totalMemory}</span>
+                </div>
+                {envData.hardware.unifiedMemoryMb && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-zinc-400">Unified Memory</span>
+                    <span className="text-sm font-medium text-zinc-200">{Math.round(envData.hardware.unifiedMemoryMb / 1024)} GB</span>
+                  </div>
+                )}
+                {envData.hardware.vramMb && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-zinc-400">VRAM</span>
+                    <span className="text-sm font-medium text-zinc-200">{Math.round(envData.hardware.vramMb / 1024)} GB</span>
+                  </div>
+                )}
+                {envData.hardware.computeCapability && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-zinc-400">Compute Capability</span>
+                    <span className="text-sm font-medium text-zinc-200">{envData.hardware.computeCapability}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">OS</span>
+                  <span className="text-sm font-medium text-zinc-200">{envData.osVersion}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">Node</span>
+                  <span className="text-sm font-medium text-zinc-200">{envData.nodeVersion}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">DB Latency</span>
+                  <span className="text-sm font-medium text-zinc-200">{envData.dbLatencyMs >= 0 ? `${envData.dbLatencyMs}ms` : "N/A"}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-400">Disk</span>
+                  <span className="text-sm font-medium text-zinc-200">{envData.diskSpace.available} free / {envData.diskSpace.total}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-500">Environment data unavailable</div>
             )}
           </CardContent>
         </Card>

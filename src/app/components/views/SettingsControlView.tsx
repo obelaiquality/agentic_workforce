@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   activateModelPluginV2,
   activateProviderV2,
@@ -517,7 +518,9 @@ export function SettingsControlView() {
       if (variables.experimentalChannels?.ciMonitoring?.signingSecret !== undefined || variables.experimentalChannels?.ciMonitoring?.clearSigningSecret) {
         setCiMonitoringSigningSecretDraft("");
       }
+      toast.success("Settings saved");
     },
+    onError: () => toast.error("Failed to save settings"),
   });
 
   const updateContextCompactionMutation = useMutation({
@@ -538,14 +541,18 @@ export function SettingsControlView() {
     mutationFn: ({ name, value }: { name: string; value: string }) => addSecret(name, value),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["secrets"] });
+      toast.success("Secret added");
     },
+    onError: () => toast.error("Failed to add secret"),
   });
 
   const deleteSecretMutation = useMutation({
     mutationFn: deleteSecret,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["secrets"] });
+      toast("Secret removed");
     },
+    onError: () => toast.error("Failed to delete secret"),
   });
 
   const startEnabledRoleRuntimesMutation = useMutation({
@@ -643,7 +650,9 @@ export function SettingsControlView() {
         url: "",
         enabled: true,
       });
+      toast.success("MCP server saved");
     },
+    onError: () => toast.error("Failed to save MCP server"),
   });
   const patchMcpIntegrationMutation = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Parameters<typeof patchMcpIntegration>[1] }) =>
@@ -652,15 +661,25 @@ export function SettingsControlView() {
   });
   const connectMcpIntegrationMutation = useMutation({
     mutationFn: connectMcpIntegration,
-    onSuccess: invalidateIntegrationQueries,
+    onSuccess: () => {
+      invalidateIntegrationQueries();
+      toast.success("MCP server connected");
+    },
+    onError: () => toast.error("Failed to connect MCP server"),
   });
   const disconnectMcpIntegrationMutation = useMutation({
     mutationFn: disconnectMcpIntegration,
-    onSuccess: invalidateIntegrationQueries,
+    onSuccess: () => {
+      invalidateIntegrationQueries();
+      toast("MCP server disconnected");
+    },
   });
   const deleteMcpIntegrationMutation = useMutation({
     mutationFn: deleteMcpIntegration,
-    onSuccess: invalidateIntegrationQueries,
+    onSuccess: () => {
+      invalidateIntegrationQueries();
+      toast("MCP server removed");
+    },
   });
 
   const safety = useMemo(() => {

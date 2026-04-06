@@ -16,6 +16,10 @@ import { DistillationView } from "./components/views/DistillationView";
 import { BenchmarkView } from "./components/views/BenchmarkView";
 import { LearningsView } from "./components/views/LearningsView";
 import { ProcessingIndicator } from "./components/ui/processing-indicator";
+import { Toaster } from "./components/ui/sonner";
+import { CommandPalette } from "./components/CommandPalette";
+import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcut";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
 type LiveTab = "Execution" | "Agents" | "Patterns" | "Telemetry";
@@ -48,6 +52,15 @@ export default function App() {
 
   const sidebarSection = normalizeSection(activeSection);
   const liveTabs: LiveTab[] = labsMode ? ["Execution", "Agents", "Patterns", "Telemetry"] : ["Execution"];
+
+  const NAV_SECTIONS = ["live", "codebase", "console", "projects", "settings"] as const;
+  useKeyboardShortcuts(
+    NAV_SECTIONS.map((section, i) => ({
+      key: String(i + 1),
+      modifiers: ["meta" as const],
+      handler: () => setActiveSection(section),
+    })),
+  );
 
   useEffect(() => {
     // Only reset activeSection when navigating to a genuinely different sidebar area.
@@ -143,6 +156,12 @@ export default function App() {
   return (
     <PreflightGate>
       <div data-testid="app-root" className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:z-[200] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-purple-600 focus:px-4 focus:py-2 focus:text-white focus:text-sm focus:font-medium focus:shadow-lg"
+        >
+          Skip to content
+        </a>
         <style>{`
           .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
           .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
@@ -197,7 +216,7 @@ export default function App() {
                 tone="subtle"
                 className="border-0 bg-transparent p-0"
               />
-              <span data-testid="app-header-status">{headerStatus.label}</span>
+              <span data-testid="app-header-status" role="status" aria-live="polite">{headerStatus.label}</span>
             </div>
             <div ref={profileMenuRef} className="relative shrink-0">
               <button
@@ -243,7 +262,7 @@ export default function App() {
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          <aside data-testid="app-sidebar" className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0 transition-[width] duration-200">
+          <aside data-testid="app-sidebar" className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0 transition-[width] duration-200" role="navigation" aria-label="Main navigation">
             <div className="p-2 flex flex-col gap-1 pt-3">
               {SIDEBAR_ITEMS.map((item) => (
                 <SidebarItem
@@ -303,7 +322,7 @@ export default function App() {
             </div>
           </aside>
 
-          <main data-testid="app-main-content" className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
+          <main id="main-content" data-testid="app-main-content" className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
             {labsMode && (
               <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-300">
                 <span className="font-semibold uppercase tracking-wider">Labs</span>
@@ -440,6 +459,9 @@ export default function App() {
           </main>
         </div>
       </div>
+      <CommandPalette />
+      <KeyboardShortcutsDialog />
+      <Toaster position="bottom-right" richColors closeButton />
     </PreflightGate>
   );
 }

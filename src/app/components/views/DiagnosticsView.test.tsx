@@ -13,6 +13,7 @@ vi.mock("../../lib/apiClient", () => ({
   getLspIntegrations: vi.fn(),
   getSettings: vi.fn(),
   getCacheBreakDiagnostics: vi.fn(),
+  getEnvironmentDiagnostics: vi.fn(),
 }));
 
 function renderWithQueryClient(ui: React.ReactElement) {
@@ -34,6 +35,24 @@ function renderWithQueryClient(ui: React.ReactElement) {
 describe("DiagnosticsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default mock for environment diagnostics
+    vi.mocked(apiClient.getEnvironmentDiagnostics).mockResolvedValue({
+      gitVersion: "2.44.0",
+      nodeVersion: "v22.0.0",
+      osVersion: "Darwin 24.0.0",
+      arch: "arm64",
+      cpuCount: 10,
+      cpuModel: "Apple M3 Pro",
+      totalMemory: "36 GB",
+      freeMemory: "12 GB",
+      diskSpace: { available: "200 GB", total: "500 GB" },
+      dbLatencyMs: 2,
+      uptime: "3600 seconds",
+      hardware: {
+        platform: "apple-silicon",
+        unifiedMemoryMb: 36864,
+      },
+    } as any);
   });
 
   it("renders all section headers", async () => {

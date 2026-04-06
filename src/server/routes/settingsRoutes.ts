@@ -1343,17 +1343,38 @@ export function registerSettingsRoutes(deps: SettingsRouteDeps) {
       /* ignore */
     }
 
+    // Hardware profile detection
+    const platform = os.arch() === "arm64" && os.type() === "Darwin" ? "apple-silicon"
+      : safeExec("nvidia-smi --query-gpu=name --format=csv,noheader") !== "unknown" ? "nvidia-cuda"
+      : "generic-cpu";
+    const unifiedMemoryMb = platform === "apple-silicon" ? Math.round(os.totalmem() / (1024 * 1024)) : undefined;
+    let vramMb: number | undefined;
+    let computeCapability: string | undefined;
+    if (platform === "nvidia-cuda") {
+      const vramStr = safeExec("nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits");
+      vramMb = vramStr !== "unknown" ? parseInt(vramStr, 10) : undefined;
+      computeCapability = safeExec("nvidia-smi --query-gpu=compute_cap --format=csv,noheader");
+      if (computeCapability === "unknown") computeCapability = undefined;
+    }
+
     return {
       gitVersion,
       nodeVersion,
       osVersion: `${os.type()} ${os.release()}`,
       arch: os.arch(),
       cpuCount: os.cpus().length,
+      cpuModel: os.cpus()[0]?.model || "Unknown",
       totalMemory: `${Math.round(os.totalmem() / (1024 * 1024 * 1024))} GB`,
       freeMemory: `${Math.round(os.freemem() / (1024 * 1024 * 1024))} GB`,
       diskSpace: diskInfo,
       dbLatencyMs,
       uptime: `${Math.round(process.uptime())} seconds`,
+      hardware: {
+        platform,
+        vramMb,
+        unifiedMemoryMb,
+        computeCapability,
+      },
     };
   });
 }

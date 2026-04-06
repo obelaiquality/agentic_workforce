@@ -763,50 +763,6 @@ describe("apiClient", () => {
     });
   });
 
-  describe("Chat APIs", () => {
-    beforeEach(() => {
-      vi.mocked(getDesktopBridge).mockReturnValue(mockDesktopBridge);
-      mockDesktopBridge.apiRequest.mockResolvedValue({
-        ok: true,
-        status: 200,
-        body: { items: [] },
-      });
-    });
-
-    it("createChatSession sends POST with title and repoId", async () => {
-      await apiClient.createChatSession("New chat", "repo-1");
-
-      expect(mockDesktopBridge.apiRequest).toHaveBeenCalledWith({
-        method: "POST",
-        path: "/api/v1/chat/sessions",
-        body: { title: "New chat", repoId: "repo-1" },
-        headers: undefined,
-      });
-    });
-
-    it("sendMessage sends POST with content", async () => {
-      await apiClient.sendMessage("session-1", "Hello");
-
-      expect(mockDesktopBridge.apiRequest).toHaveBeenCalledWith({
-        method: "POST",
-        path: "/api/v1/chat/sessions/session-1/messages",
-        body: { content: "Hello" },
-        headers: undefined,
-      });
-    });
-
-    it("sendMessageWithRole sends POST with content and modelRole", async () => {
-      await apiClient.sendMessageWithRole("session-1", "Hello", "coder_default");
-
-      expect(mockDesktopBridge.apiRequest).toHaveBeenCalledWith({
-        method: "POST",
-        path: "/api/v1/chat/sessions/session-1/messages",
-        body: { content: "Hello", modelRole: "coder_default" },
-        headers: undefined,
-      });
-    });
-  });
-
   describe("V2 Command APIs", () => {
     beforeEach(() => {
       vi.mocked(getDesktopBridge).mockReturnValue(mockDesktopBridge);
