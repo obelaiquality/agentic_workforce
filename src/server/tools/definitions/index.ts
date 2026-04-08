@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../types";
 
 // Import all tool definitions
-import { readFile, editFile, writeFile, listFiles, grepSearch, globSearch } from "./fileOps";
+import { readFile, editFile, writeFile, listFiles, grepSearch, globSearch, fuzzyFileSearch } from "./fileOps";
 import { bash } from "./bash";
 import { gitStatus, gitDiff, gitCommit } from "./git";
 import { runTests, runLint } from "./verification";
@@ -16,10 +16,10 @@ import { taskDecompositionTools } from "./taskDecomposition";
 export { createToolSearchTool } from "./toolSearch";
 
 /**
- * Get all core tool definitions (16 base tools + 4 LSP tools + 3 team tools + 2 plan mode tools + 3 task decomposition tools = 28 tools total).
+ * Get all core tool definitions (17 base tools + 4 LSP tools + 3 team tools + 2 plan mode tools + 3 task decomposition tools = 29 tools total).
  *
  * Tools are organized by category:
- * - File Operations (6): read_file, edit_file, write_file, list_files, grep_search, glob_search
+ * - File Operations (7): read_file, edit_file, write_file, list_files, grep_search, glob_search, fuzzy_file_search
  * - Shell (1): bash
  * - Git (3): git_status, git_diff, git_commit
  * - Verification (2): run_tests, run_lint
@@ -31,13 +31,14 @@ export { createToolSearchTool } from "./toolSearch";
  */
 export function getAllCoreTools(): ToolDefinition[] {
   return [
-    // File operations (6)
+    // File operations (7)
     readFile,
     editFile,
     writeFile,
     listFiles,
     grepSearch,
     globSearch,
+    fuzzyFileSearch,
 
     // Shell execution (1)
     bash,
@@ -97,7 +98,7 @@ export function getDeferredCoreTools(): ToolDefinition[] {
  */
 export function getCoreToolsByCategory() {
   return {
-    fileOps: [readFile, editFile, writeFile, listFiles, grepSearch, globSearch],
+    fileOps: [readFile, editFile, writeFile, listFiles, grepSearch, globSearch, fuzzyFileSearch],
     shell: [bash],
     git: [gitStatus, gitDiff, gitCommit],
     verification: [runTests, runLint],
@@ -118,6 +119,7 @@ export {
   listFiles,
   grepSearch,
   globSearch,
+  fuzzyFileSearch,
 
   // Shell
   bash,

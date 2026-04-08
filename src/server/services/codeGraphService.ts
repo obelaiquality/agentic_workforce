@@ -5,20 +5,7 @@ import { prisma } from "../db";
 import { publishEvent } from "../eventBus";
 import type { CodeGraphEdge, CodeGraphNode, ContextPack, KnowledgeHit } from "../../shared/contracts";
 import { extractSymbolsTreeSitter, extractImportsTreeSitter } from "./treeSitterAnalyzer";
-
-const IGNORED_DIRS = new Set([
-  ".git",
-  "node_modules",
-  ".next",
-  "dist",
-  "build",
-  "coverage",
-  ".turbo",
-  ".cache",
-  ".venv",
-  "venv",
-  "target",
-]);
+import { getRipgrepPath, execRipgrep, COMMON_IGNORE_DIRS, commonExclusionArgs } from "./ripgrep";
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -28,7 +15,21 @@ function toRecord(value: unknown) {
   return (value ?? {}) as Record<string, unknown>;
 }
 
-function listFiles(root: string, limit = 4000) {
+/**
+ * List files in a directory, using ripgrep for speed when available.
+ * Falls back to a BFS walk with shared COMMON_IGNORE_DIRS.
+ */
+async function listFiles(root: string, limit = 4000): Promise<string[]> {
+  const rgAvailable = getRipgrepPath() !== null;
+
+  if (rgAvailable) {
+    const args = ["--files", "--sort=modified", ...commonExclusionArgs(), root];
+    const lines = await execRipgrep(args, { cwd: root });
+    return lines.slice(0, limit);
+  }
+
+  // Fallback: BFS walk (sync for backward compat within this service)
+  const ignoreDirs = new Set<string>(COMMON_IGNORE_DIRS);
   const output: string[] = [];
   const queue = [root];
 
@@ -42,7 +43,7 @@ function listFiles(root: string, limit = 4000) {
     }
 
     for (const entry of entries) {
-      if (IGNORED_DIRS.has(entry.name)) {
+      if (ignoreDirs.has(entry.name)) {
         continue;
       }
       const full = path.join(current, entry.name);
@@ -352,7 +353,7 @@ export class CodeGraphService {
     await this.updateRepoStatus(repoId, "indexing", { repo_root: repoRoot });
     publishEvent("global", "codegraph.index.started", { repoId });
 
-    const files = listFiles(repoRoot, 5000);
+    const files = await listFiles(repoRoot, 5000);
     const relativePaths = files.map((filePath) => normalizeRelative(repoRoot, filePath));
     const knownPaths = new Set(relativePaths);
 

@@ -1260,3 +1260,220 @@ model ModelArtifactRegistry {
   @@index([modelId, promoted, updatedAt])
   @@map("model_artifact_registry")
 }
+
+// ---------------------------------------------------------------------------
+// Interview Mode
+// ---------------------------------------------------------------------------
+
+model InterviewSession {
+  id                 String   @id @default(cuid())
+  runId              String   @unique @map("run_id")
+  repoId             String   @map("repo_id")
+  ticketId           String?  @map("ticket_id")
+  objective          String
+  isGreenfield       Boolean  @default(false) @map("is_greenfield")
+  currentRound       Int      @default(1) @map("current_round")
+  maxRounds          Int      @default(10) @map("max_rounds")
+  ambiguityThreshold Float    @default(0.2) @map("ambiguity_threshold")
+  status             String   @default("active")
+  finalSpec          String?  @map("final_spec")
+  actor              String
+  worktreePath       String   @map("worktree_path")
+  handoffMode        String?  @map("handoff_mode")
+  createdAt          DateTime @default(now()) @map("created_at")
+  completedAt        DateTime? @map("completed_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  questions          InterviewQuestion[]
+  ambiguityScores    InterviewAmbiguityScore[]
+
+  @@index([runId, status])
+  @@map("interview_session")
+}
+
+model InterviewQuestion {
+  id                String    @id @default(cuid())
+  sessionId         String    @map("session_id")
+  round             Int
+  question          String
+  answer            String?
+  challengeMode     String?   @map("challenge_mode")
+  targetDimension   String    @map("target_dimension")
+  askedAt           DateTime  @default(now()) @map("asked_at")
+  answeredAt        DateTime? @map("answered_at")
+
+  session           InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, round])
+  @@map("interview_question")
+}
+
+model InterviewAmbiguityScore {
+  id               String           @id @default(cuid())
+  sessionId        String           @map("session_id")
+  round            Int
+  overallAmbiguity Float            @map("overall_ambiguity")
+  intentScore      Float            @default(0) @map("intent_score")
+  outcomeScore     Float            @default(0) @map("outcome_score")
+  scopeScore       Float            @default(0) @map("scope_score")
+  constraintsScore Float            @default(0) @map("constraints_score")
+  successScore     Float            @default(0) @map("success_score")
+  contextScore     Float?           @map("context_score")
+  calculatedAt     DateTime         @default(now()) @map("calculated_at")
+
+  session          InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, round])
+  @@map("interview_ambiguity_score")
+}
+
+// ---------------------------------------------------------------------------
+// Ralph Mode
+// ---------------------------------------------------------------------------
+
+model RalphSession {
+  id                  String    @id @default(cuid())
+  runId               String    @unique @map("run_id")
+  repoId              String    @map("repo_id")
+  ticketId            String?   @map("ticket_id")
+  specContent         String    @map("spec_content")
+  currentPhase        String    @default("intake") @map("current_phase")
+  currentIteration    Int       @default(1) @map("current_iteration")
+  maxIterations       Int       @default(10) @map("max_iterations")
+  verificationTier    String    @default("STANDARD") @map("verification_tier")
+  progressLedger      Json      @default("{}") @map("progress_ledger")
+  sessionOwner        String    @map("session_owner")
+  actor               String
+  worktreePath        String    @map("worktree_path")
+  resumable           Boolean   @default(true)
+  status              String    @default("active")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  completedAt         DateTime? @map("completed_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  phases              RalphPhaseExecution[]
+  verifications       RalphVerification[]
+
+  @@index([runId, status])
+  @@map("ralph_session")
+}
+
+model RalphPhaseExecution {
+  id           String       @id @default(cuid())
+  sessionId    String       @map("session_id")
+  phase        String
+  iteration    Int
+  startedAt    DateTime     @default(now()) @map("started_at")
+  completedAt  DateTime?    @map("completed_at")
+  status       String       @default("in_progress")
+  output       String?
+  filesChanged Json         @default("[]") @map("files_changed")
+
+  session      RalphSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, iteration, phase])
+  @@map("ralph_phase_execution")
+}
+
+model RalphVerification {
+  id                String       @id @default(cuid())
+  sessionId         String       @map("session_id")
+  iteration         Int
+  verificationTier  String       @map("verification_tier")
+  testsPassed       Boolean      @default(false) @map("tests_passed")
+  lintsPassed       Boolean      @default(false) @map("lints_passed")
+  regressionsPassed Boolean      @default(false) @map("regressions_passed")
+  deslopPassed      Boolean      @default(false) @map("deslop_passed")
+  details           Json         @default("{}")
+  performedAt       DateTime     @default(now()) @map("performed_at")
+
+  session           RalphSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, iteration])
+  @@map("ralph_verification")
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced Team Mode
+// ---------------------------------------------------------------------------
+
+model TeamSession {
+  id             String     @id @default(cuid())
+  runId          String     @unique @map("run_id")
+  repoId         String     @map("repo_id")
+  ticketId       String?    @map("ticket_id")
+  objective      String
+  currentPhase   String     @default("team_plan") @map("current_phase")
+  maxWorkers     Int        @default(5) @map("max_workers")
+  maxConcurrent  Int        @default(3) @map("max_concurrent")
+  actor          String
+  worktreePath   String     @map("worktree_path")
+  status         String     @default("active")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  completedAt    DateTime?  @map("completed_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  workers        TeamWorker[]
+  messages       TeamMessage[]
+  tasks          TeamTask[]
+
+  @@index([runId, status])
+  @@map("team_session")
+}
+
+model TeamWorker {
+  id                String       @id @default(cuid())
+  sessionId         String       @map("session_id")
+  workerId          String       @map("worker_id")
+  role              String
+  objective         String
+  fileScope         Json         @default("[]") @map("file_scope")
+  status            String       @default("idle")
+  currentTaskId     String?      @map("current_task_id")
+  lastHeartbeatAt   DateTime?    @map("last_heartbeat_at")
+  leaseExpiresAt    DateTime?    @map("lease_expires_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  completedAt       DateTime?    @map("completed_at")
+
+  session           TeamSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, workerId])
+  @@index([sessionId, status])
+  @@map("team_worker")
+}
+
+model TeamTask {
+  id           String       @id @default(cuid())
+  sessionId    String       @map("session_id")
+  taskName     String       @map("task_name")
+  description  String
+  fileScope    Json         @default("[]") @map("file_scope")
+  assignedTo   String?      @map("assigned_to")
+  priority     Int          @default(0)
+  status       String       @default("pending")
+  claimedAt    DateTime?    @map("claimed_at")
+  leaseExpires DateTime?    @map("lease_expires")
+  completedAt  DateTime?    @map("completed_at")
+  result       Json?
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  session      TeamSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, status, priority])
+  @@map("team_task")
+}
+
+model TeamMessage {
+  id           String       @id @default(cuid())
+  sessionId    String       @map("session_id")
+  fromWorkerId String       @map("from_worker_id")
+  toWorkerId   String?      @map("to_worker_id")
+  content      String
+  read         Boolean      @default(false)
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  session      TeamSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, toWorkerId, read])
+  @@map("team_message")
+}

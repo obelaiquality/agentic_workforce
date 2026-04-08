@@ -412,7 +412,7 @@ describe("fileOps tools", () => {
 
       expect(result.type).toBe("success");
       if (result.type === "success") {
-        expect(result.content).toBe("");
+        expect(result.content).toBe("No matches found");
         expect(result.metadata?.totalMatches).toBe(0);
       }
     });

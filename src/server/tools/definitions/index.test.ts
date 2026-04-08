@@ -5,7 +5,7 @@ describe("Tool Definitions", () => {
   describe("getAllCoreTools", () => {
     it("should return all core tools (16 base + 4 LSP + 3 team + 2 plan mode + 3 task decomposition)", () => {
       const tools = getAllCoreTools();
-      expect(tools).toHaveLength(28);
+      expect(tools).toHaveLength(29);
     });
 
     it("should include all required file operation tools", () => {
@@ -121,7 +121,7 @@ describe("Tool Definitions", () => {
   describe("getCoreToolNames", () => {
     it("should return array of tool names", () => {
       const names = getCoreToolNames();
-      expect(names).toHaveLength(28);
+      expect(names).toHaveLength(29);
       expect(names.every(n => typeof n === "string")).toBe(true);
     });
 

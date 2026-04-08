@@ -23,6 +23,9 @@ import { registerTeamRoutes } from "./routes/teamRoutes";
 import { registerTelemetryRoutes } from "./routes/telemetryRoutes";
 import { registerSkillRoutes } from "./routes/skillRoutes";
 import { registerHookRoutes } from "./routes/hookRoutes";
+import { registerInterviewRoutes } from "./routes/interviewRoutes";
+import { registerRalphRoutes } from "./routes/ralphRoutes";
+import { registerEnhancedTeamRoutes } from "./routes/enhancedTeamRoutes";
 import {
   isAuthorizedLocalApiRequest,
   isAllowedCorsOrigin,
@@ -433,6 +436,9 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   registerSkillRoutes(app, skillService);
   registerHookRoutes(app, hookService);
   registerTeamRoutes({ app });
+  registerInterviewRoutes({ app, providerOrchestrator });
+  registerRalphRoutes({ app, providerOrchestrator, executionService });
+  registerEnhancedTeamRoutes({ app, providerOrchestrator });
   registerTelemetryRoutes(app);
   registerLearningsRoutes({ app, repoService });
 

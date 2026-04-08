@@ -6,7 +6,7 @@ export type LocalRuntimeRole = "utility_fast" | "coder_default" | "review_deep";
 export type ReasoningMode = "off" | "on" | "auto";
 export type ExecutionProfileStage = "scope" | "build" | "review" | "escalate";
 
-export type ExecutionMode = "single_agent" | "centralized_parallel" | "research_swarm";
+export type ExecutionMode = "single_agent" | "centralized_parallel" | "research_swarm" | "interview" | "ralph" | "team";
 
 export type ProjectSourceKind = "local_attached" | "github_app_bound" | "managed_demo_pack";
 
@@ -44,7 +44,29 @@ export type AgenticEvent =
   | { type: "subtask_created"; subtaskId: string; title: string }
   | { type: "subtask_updated"; subtaskId: string; status: string }
   | { type: "hook_executed"; hookId: string; hookName: string; eventType: string; success: boolean }
-  | { type: "memory_extracted"; memoryId: string; summary: string };
+  | { type: "memory_extracted"; memoryId: string; summary: string }
+  // Interview Mode events
+  | { type: "interview_started"; sessionId: string; maxRounds: number }
+  | { type: "interview_question"; questionId: string; question: string; round: number; challengeMode?: string; targetDimension: string }
+  | { type: "interview_answered"; questionId: string; answer: string }
+  | { type: "interview_scored"; round: number; overall: number; dimensions: Record<string, number> }
+  | { type: "interview_spec_crystallized"; specContent: string; finalAmbiguity: number }
+  | { type: "interview_handoff"; targetMode: "ralph" | "team" | "autopilot" }
+  // Ralph Mode events
+  | { type: "ralph_started"; sessionId: string; specSummary: string; maxIterations: number }
+  | { type: "ralph_phase_entered"; phase: string; iteration: number }
+  | { type: "ralph_phase_exited"; phase: string; iteration: number; result: string }
+  | { type: "ralph_verification"; tier: string; passed: boolean; details: Record<string, boolean> }
+  | { type: "ralph_checkpoint"; iteration: number; phase: string }
+  | { type: "ralph_resumed"; fromIteration: number; fromPhase: string }
+  // Enhanced Team Mode events
+  | { type: "team_session_started"; sessionId: string; workerCount: number; phase: string }
+  | { type: "team_phase_changed"; from: string; to: string }
+  | { type: "team_worker_status"; workerId: string; role: string; status: string; taskId?: string }
+  | { type: "team_task_dispatched"; taskId: string; workerId: string; description: string }
+  | { type: "team_task_result"; taskId: string; workerId: string; status: string }
+  | { type: "team_message"; from: string; to: string; content: string }
+  | { type: "team_heartbeat_timeout"; workerId: string; lastSeen: string };
 
 export interface AgenticRunEventRecord {
   id: string;
@@ -203,6 +225,90 @@ export interface AgenticExecutionInput {
     allowRespawn?: boolean;
     conflictResolution?: "first_wins" | "merge" | "integrator";
   };
+}
+
+// ---------------------------------------------------------------------------
+// Interview Mode Types
+// ---------------------------------------------------------------------------
+
+export type InterviewChallengeMode = "contrarian" | "simplifier" | "ontologist";
+
+export interface InterviewDimensions {
+  intent: number;
+  outcome: number;
+  scope: number;
+  constraints: number;
+  success: number;
+  context?: number;
+}
+
+export interface InterviewModeInput {
+  runId: string;
+  repoId: string;
+  ticketId?: string;
+  objective: string;
+  actor: string;
+  worktreePath: string;
+  isGreenfield?: boolean;
+  maxRounds?: number;
+  ambiguityThreshold?: number;
+  handoffMode?: "ralph" | "team" | "autopilot";
+}
+
+// ---------------------------------------------------------------------------
+// Ralph Mode Types
+// ---------------------------------------------------------------------------
+
+export type RalphPhase =
+  | "intake"
+  | "execute"
+  | "verify"
+  | "architect_review"
+  | "deslop"
+  | "regression"
+  | "complete";
+
+export type RalphVerificationTier = "STANDARD" | "THOROUGH";
+
+export interface RalphProgressLedger {
+  completedPhases: RalphPhase[];
+  currentObjective: string;
+  filesModified: string[];
+  testResults: Record<string, boolean>;
+  verificationsPassed: number;
+  deslopIssuesFound: number;
+  deslopIssuesFixed: number;
+}
+
+export interface RalphModeInput {
+  runId: string;
+  repoId: string;
+  ticketId?: string;
+  specContent: string;
+  actor: string;
+  worktreePath: string;
+  maxIterations?: number;
+  verificationTier?: RalphVerificationTier;
+  resumeFromCheckpoint?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced Team Mode Types
+// ---------------------------------------------------------------------------
+
+export type TeamPhase = "team_plan" | "team_exec" | "team_verify" | "team_fix" | "team_complete";
+
+export type TeamWorkerStatus = "idle" | "claimed" | "executing" | "completed" | "failed";
+
+export type TeamTaskStatus = "pending" | "claimed" | "executing" | "completed" | "failed" | "blocked";
+
+export interface EnhancedTeamInput extends AgenticExecutionInput {
+  teamPhase?: TeamPhase;
+  maxWorkers?: number;
+  maxConcurrentWorkers?: number;
+  enableHeartbeat?: boolean;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
 }
 
 export interface ProviderCapabilities {
