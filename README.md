@@ -265,7 +265,7 @@ Full architecture with C4 diagrams: [docs/architecture.md](docs/architecture.md)
 - **Auto-extraction** of learnings from successful execution runs
 - **Dream scheduler** — 24h background cycle for learning consolidation and skill synthesis
 - **Global knowledge pool** — cross-project learning aggregation with tech-fingerprint matching
-- **Distillation pipeline** — training data generation from successful runs
+- **Training pipeline** — automated dataset generation from successful execution runs
 
 ---
 
