@@ -1,0 +1,36 @@
+{
+  "name": "agentic-workforce-vscode",
+  "displayName": "Agentic Workforce",
+  "description": "VS Code extension for Agentic Workforce coding agent",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agenticWorkforce.connect",
+        "title": "Agentic Workforce: Connect"
+      },
+      {
+        "command": "agenticWorkforce.disconnect",
+        "title": "Agentic Workforce: Disconnect"
+      },
+      {
+        "command": "agenticWorkforce.showPanel",
+        "title": "Agentic Workforce: Show Panel"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./tsconfig.json",
+    "watch": "tsc -watch -p ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

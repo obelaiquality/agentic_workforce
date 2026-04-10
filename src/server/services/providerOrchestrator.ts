@@ -171,6 +171,10 @@ export interface StreamOptions {
   metadata?: Record<string, unknown>;
   querySource?: QuerySource;
   maxContextTokens?: number;
+  /** Limit output tokens for this individual turn. */
+  maxOutputTokens?: number;
+  /** Override reasoning mode for this call (overrides role binding default). */
+  reasoningMode?: "off" | "on";
   tools?: ProviderSendInput["tools"];
 }
 

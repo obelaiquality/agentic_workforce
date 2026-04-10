@@ -160,7 +160,7 @@ describe("LaneService", () => {
 
       const createCall = mockPrisma.agentLane.create.mock.calls[0][0];
       const leaseTime = createCall.data.leaseExpiresAt.getTime() - Date.now();
-      expect(leaseTime).toBeGreaterThanOrEqual(60 * 1000); // At least 1 minute
+      expect(leaseTime).toBeGreaterThanOrEqual(60 * 1000 - 50); // At least ~1 minute (allow small clock drift)
     });
 
     it("creates worktree lease with correct data", async () => {

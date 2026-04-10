@@ -18,6 +18,7 @@ import { LearningsView } from "./components/views/LearningsView";
 import { ProcessingIndicator } from "./components/ui/processing-indicator";
 import { Toaster } from "./components/ui/sonner";
 import { CommandPalette } from "./components/CommandPalette";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcut";
 
@@ -358,25 +359,33 @@ export default function App() {
                   </div>
 
                   {liveTab === "Execution" && (
-                    <CommandCenterView mission={mission} />
+                    <ErrorBoundary viewName="Execution">
+                      <CommandCenterView mission={mission} />
+                    </ErrorBoundary>
                   )}
 
                   {liveTab === "Telemetry" && (
-                    <TelemetryView />
+                    <ErrorBoundary viewName="Telemetry">
+                      <TelemetryView />
+                    </ErrorBoundary>
                   )}
 
                   {liveTab === "Agents" && (
-                    <AgentLanesView />
+                    <ErrorBoundary viewName="Agent Lanes">
+                      <AgentLanesView />
+                    </ErrorBoundary>
                   )}
 
                   {liveTab === "Patterns" && (
-                    <PatternsView />
+                    <ErrorBoundary viewName="Patterns">
+                      <PatternsView />
+                    </ErrorBoundary>
                   )}
                 </>
               )}
 
               {sidebarSection === "codebase" && (
-                <>
+                <ErrorBoundary viewName="Codebase">
                   <CodebaseView
                     repoId={mission.selectedRepo?.id || null}
                     contextPaths={workflowFocusedFiles}
@@ -385,11 +394,11 @@ export default function App() {
                     workflowTitle={codebaseWorkflowTitle}
                     requestedScope={codebaseScope}
                   />
-                </>
+                </ErrorBoundary>
               )}
 
               {sidebarSection === "console" && (
-                <>
+                <ErrorBoundary viewName="Console">
                   <ConsoleView
                     projectId={mission.selectedRepo?.id || null}
                     snapshotEvents={mission.consoleEvents}
@@ -397,11 +406,11 @@ export default function App() {
                     workflowTitle={selectedWorkflowTicket?.title || null}
                     workflowLogs={workflowConsoleLogs}
                   />
-                </>
+                </ErrorBoundary>
               )}
 
               {sidebarSection === "projects" && (
-                <>
+                <ErrorBoundary viewName="Projects">
                   <ProjectsWorkspaceView
                     activeRepo={mission.selectedRepo}
                     recentRepos={mission.recentRepos}
@@ -439,11 +448,16 @@ export default function App() {
                     isRefreshingBlueprint={mission.isRefreshingBlueprint}
                     labsMode={labsMode}
                   />
-                </>
+                </ErrorBoundary>
               )}
 
               {sidebarSection === "settings" && (
-                <>
+                <ErrorBoundary viewName={
+                  activeSection === "distillation" ? "Distillation"
+                    : activeSection === "benchmarks" ? "Benchmarks"
+                    : activeSection === "learnings" ? "Learnings"
+                    : "Settings"
+                }>
                   {activeSection === "distillation" ? (
                     <DistillationView />
                   ) : activeSection === "benchmarks" ? (
@@ -453,7 +467,7 @@ export default function App() {
                   ) : (
                     <SettingsControlView />
                   )}
-                </>
+                </ErrorBoundary>
               )}
             </div>
           </main>

@@ -1,5 +1,5 @@
-import type { TeamPhase } from "../../../../shared/contracts";
-import { cn, Panel, PanelHeader } from "../../UI";
+import type { TeamPhase } from "../../../shared/contracts";
+import { cn, Panel, PanelHeader } from "../UI";
 import { Users, AlertTriangle } from "lucide-react";
 import { useTeamSession, useTeamWorkers, useTeamTasks, useTeamMessages, useTeamStream } from "../../hooks/useTeamMode";
 import { PhaseIndicator } from "./PhaseIndicator";

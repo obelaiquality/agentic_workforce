@@ -13,7 +13,7 @@ import type { ContextService } from "../services/contextService";
 import type { MemoryService } from "../services/memoryService";
 import type { DoomLoopDetector } from "../services/doomLoopDetector";
 import type { V2EventService } from "../services/v2EventService";
-import { compactMessages, computePressure, type CompactionMessage } from "../services/contextCompactionService";
+import { compactMessages, computePressure, estimateTokens, type CompactionMessage } from "../services/contextCompactionService";
 import { StreamingToolExecutor } from "./streamingToolExecutor";
 import type { ContextCollapseService } from "./contextCollapse";
 import type { TaskBudgetTracker } from "./budgetTracker";
@@ -28,6 +28,7 @@ import type { LSPClient } from "../lsp/lspClient";
 import { createRootAbortController, type HierarchicalAbortController } from "../services/abortHierarchy";
 import { createLogger } from "../logger";
 import type { LearningsService } from "../services/learningsService";
+import { compactToolResultContent } from "./microCompactor";
 
 const log = createLogger("Orchestrator");
 import { prisma } from "../db";
@@ -144,6 +145,10 @@ interface IterationState {
   toolCallsTotal: number;
   recentlyReadFiles: RecentlyReadFile[];
   consecutiveCompactionFailures: number;
+  /** Number of consecutive format/parse errors from the provider. */
+  consecutiveFormatErrors: number;
+  /** Whether the model was recently escalated (for auto-reasoning). */
+  justEscalated: boolean;
   activeSkillConstraint: {
     skillName: string;
     allowedTools: string[] | null;
@@ -381,6 +386,8 @@ export class AgenticOrchestrator {
           toolCallsTotal: resumeFrom.toolCallsTotal,
           recentlyReadFiles: resumeFrom.recentlyReadFiles,
           consecutiveCompactionFailures: 0,
+          consecutiveFormatErrors: 0,
+          justEscalated: false,
           activeSkillConstraint: null,
         }
       : {
@@ -398,6 +405,8 @@ export class AgenticOrchestrator {
           toolCallsTotal: 0,
           recentlyReadFiles: [],
           consecutiveCompactionFailures: 0,
+          consecutiveFormatErrors: 0,
+          justEscalated: false,
           activeSkillConstraint: null,
         };
 
@@ -631,6 +640,33 @@ export class AgenticOrchestrator {
           skillConstraint: state.activeSkillConstraint,
         });
 
+        // Pre-call token estimation: if estimated input exceeds budget,
+        // trigger compaction before making the API call.
+        const estimatedInputTokens = providerMessages.reduce(
+          (sum, m) => sum + estimateTokens(typeof m.content === "string" ? m.content : JSON.stringify(m.content)),
+          0,
+        );
+        if (estimatedInputTokens > maxContextTokens * 0.9) {
+          const preCallCompaction = this.checkAndCompact(state, maxContextTokens, input.runId);
+          if (preCallCompaction !== null) {
+            yield preCallCompaction;
+          }
+        }
+
+        const perTurnMaxOutput = input.budget?.perTurnMaxOutputTokens;
+
+        // Resolve reasoning mode for this turn.
+        // "auto" activates on first iteration and after model escalation.
+        let resolvedReasoningMode: "off" | "on" | undefined;
+        if (input.reasoningMode === "on") {
+          resolvedReasoningMode = "on";
+        } else if (input.reasoningMode === "auto") {
+          resolvedReasoningMode = (state.iteration === 1 || state.justEscalated) ? "on" : undefined;
+          state.justEscalated = false; // Reset after consuming
+        } else if (input.reasoningMode === "off") {
+          resolvedReasoningMode = "off";
+        }
+
         const streamEvents = this.providerOrchestrator.streamChatWithRetryStreaming(
           input.runId,
           providerMessages,
@@ -643,6 +679,8 @@ export class AgenticOrchestrator {
             tools: activeToolSchemas,
             querySource: "execution",
             maxContextTokens,
+            ...(perTurnMaxOutput ? { maxOutputTokens: perTurnMaxOutput } : {}),
+            ...(resolvedReasoningMode ? { reasoningMode: resolvedReasoningMode } : {}),
           },
         );
 
@@ -717,6 +755,7 @@ export class AgenticOrchestrator {
             reason: "provider_error",
           };
           state.currentRole = "overseer_escalation";
+          state.justEscalated = true;
           continue;
         } else {
           // Overseer failed too — abort
@@ -850,13 +889,22 @@ export class AgenticOrchestrator {
       const toolResults = executor.getToolResults();
 
       // 7. Add tool results to conversation with role: "tool_result"
+      //    Apply micro-compaction to large results before they enter context.
       for (const toolResult of toolResults) {
+        const resultForContext = { ...toolResult.result };
+        if (resultForContext.type === "success" && resultForContext.content) {
+          resultForContext.content = compactToolResultContent(
+            toolResult.toolName,
+            resultForContext.content,
+          ) ?? resultForContext.content;
+        }
+
         state.conversation.push({
           role: "tool_result",
           content: JSON.stringify({
             tool_use_id: toolResult.toolUseId,
             tool_name: toolResult.toolName,
-            result: toolResult.result,
+            result: resultForContext,
             duration_ms: toolResult.durationMs,
           }),
           toolUseId: toolResult.toolUseId,
@@ -889,6 +937,23 @@ export class AgenticOrchestrator {
             state.recentlyReadFiles = state.recentlyReadFiles.slice(-5);
           }
         }
+      }
+
+      // 7c. Track consecutive format/tool errors for fallback switching.
+      //     If all tool results in this iteration are errors, increment.
+      //     After 3 consecutive all-error iterations, fall back to a simpler model.
+      const MAX_CONSECUTIVE_FORMAT_ERRORS = 3;
+      if (toolResults.length > 0 && toolResults.every((r) => r.result.type === "error")) {
+        state.consecutiveFormatErrors++;
+        if (state.consecutiveFormatErrors >= MAX_CONSECUTIVE_FORMAT_ERRORS) {
+          const escalation = this.tryEscalate(state);
+          if (escalation) {
+            yield escalation;
+            state.consecutiveFormatErrors = 0;
+          }
+        }
+      } else if (toolResults.length > 0) {
+        state.consecutiveFormatErrors = 0; // Reset on any success
       }
 
       // Post-tool compaction: large tool results may spike pressure
@@ -1417,6 +1482,7 @@ export class AgenticOrchestrator {
     const nextRole = escalationPath[currentIndex + 1];
     const fromRole = state.currentRole;
     state.currentRole = nextRole;
+    state.justEscalated = true;
 
     return {
       type: "escalating",

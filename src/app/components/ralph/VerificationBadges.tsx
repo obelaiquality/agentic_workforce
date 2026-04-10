@@ -1,5 +1,5 @@
 import { CheckCircle, XCircle } from "lucide-react";
-import { cn, Chip } from "../../UI";
+import { cn, Chip } from "../UI";
 
 interface Verification {
   tier: string;

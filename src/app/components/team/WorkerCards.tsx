@@ -1,4 +1,4 @@
-import { cn, Chip } from "../../UI";
+import { cn, Chip } from "../UI";
 import { Heart } from "lucide-react";
 
 interface WorkerDto {

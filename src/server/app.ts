@@ -74,6 +74,8 @@ import { setPlanService } from "./tools/definitions/planMode";
 import { setSubtaskService } from "./tools/definitions/taskDecomposition";
 import { DreamScheduler } from "./memory/dreamScheduler";
 import { registerLearningsRoutes } from "./routes/learningsRoutes";
+import { IdeSessionManager } from "./ide/ideSessionManager";
+import { IdeBridgeServer } from "./ide/ideBridgeServer";
 
 export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   await initDatabase();
@@ -441,6 +443,11 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   registerEnhancedTeamRoutes({ app, providerOrchestrator });
   registerTelemetryRoutes(app);
   registerLearningsRoutes({ app, repoService });
+
+  // ── IDE Bridge ─────────────────────────────────────────────────
+  const ideSessionManager = new IdeSessionManager();
+  const ideBridgeServer = new IdeBridgeServer(ideSessionManager);
+  ideBridgeServer.register(app);
 
   app.get("/health", async () => ({ ok: true }));
 

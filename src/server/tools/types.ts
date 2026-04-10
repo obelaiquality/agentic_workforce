@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ModelRole, ProviderId } from "../../shared/contracts";
+import type { ModelRole, ProviderId, ReasoningMode } from "../../shared/contracts";
 
 // ---------------------------------------------------------------------------
 // Tool Result Types
@@ -199,6 +199,8 @@ export interface AgenticExecutionInput {
     maxTokens?: number;
     maxCostUsd?: number;
     maxDurationMs?: number;
+    /** Max output tokens per individual turn (default: no limit) */
+    perTurnMaxOutputTokens?: number;
   };
   /** If true, use deferred tool loading */
   useDeferredTools?: boolean;
@@ -206,6 +208,13 @@ export interface AgenticExecutionInput {
   systemPromptSuffix?: string;
   /** If true, begin in planning mode and require plan approval before execution */
   planMode?: boolean;
+  /**
+   * Reasoning/extended-thinking mode.
+   * - "off": no extended thinking
+   * - "on": always use extended thinking
+   * - "auto": activate on first iteration and after model escalation
+   */
+  reasoningMode?: ReasoningMode;
 }
 
 // ---------------------------------------------------------------------------

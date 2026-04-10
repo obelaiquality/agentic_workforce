@@ -96,6 +96,7 @@
     "test:e2e:self-learning": "node scripts/playwright/run_self_learning_e2e.mjs",
     "test:e2e:skills-hooks": "node scripts/playwright/run_skills_hooks_e2e.mjs",
     "test:e2e:command-center-deep": "node scripts/playwright/run_command_center_deep_test.mjs",
+    "test:e2e:failure-injection": "node scripts/playwright/run_failure_injection_e2e.mjs",
     "test:e2e:followup:multi-file-feature": "node scripts/playwright/run_followup_scenario.mjs --scenario multi-file-feature",
     "demo:capture": "node scripts/playwright/run_demo_capture.mjs",
     "demo:render": "node scripts/playwright/render_demo_media.mjs",

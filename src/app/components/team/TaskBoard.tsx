@@ -1,4 +1,4 @@
-import { cn, Chip } from "../../UI";
+import { cn, Chip } from "../UI";
 import { Clock, Layers } from "lucide-react";
 
 interface TaskDto {

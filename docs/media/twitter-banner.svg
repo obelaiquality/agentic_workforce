@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0b1219"/>
+      <stop offset="45%" style="stop-color:#131f2e"/>
+      <stop offset="100%" style="stop-color:#0b1219"/>
+    </linearGradient>
+    <linearGradient id="accentLine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:rgba(255,255,255,0)"/>
+      <stop offset="30%" style="stop-color:rgba(255,255,255,0.7)"/>
+      <stop offset="70%" style="stop-color:rgba(255,255,255,0.7)"/>
+      <stop offset="100%" style="stop-color:rgba(255,255,255,0)"/>
+    </linearGradient>
+    <linearGradient id="accentLine2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:rgba(255,255,255,0)"/>
+      <stop offset="30%" style="stop-color:rgba(255,255,255,0.3)"/>
+      <stop offset="70%" style="stop-color:rgba(255,255,255,0.3)"/>
+      <stop offset="100%" style="stop-color:rgba(255,255,255,0)"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="72%" cy="40%" r="35%">
+      <stop offset="0%" style="stop-color:#1d4ed8;stop-opacity:0.18"/>
+      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="85%" cy="70%" r="20%">
+      <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:0.10"/>
+      <stop offset="100%" style="stop-color:#0ea5e9;stop-opacity:0"/>
+    </radialGradient>
+    <pattern id="grid" x="0" y="0" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- Base background -->
+  <rect width="1500" height="500" fill="url(#bg)"/>
+  <!-- Grid texture -->
+  <rect width="1500" height="500" fill="url(#grid)"/>
+  <!-- Blue glow accents -->
+  <rect width="1500" height="500" fill="url(#glow1)"/>
+  <rect width="1500" height="500" fill="url(#glow2)"/>
+
+  <!-- Subtle horizontal rule top -->
+  <line x1="0" y1="1" x2="1500" y2="1" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <!-- Subtle horizontal rule bottom -->
+  <line x1="0" y1="499" x2="1500" y2="499" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- || logomark — left side -->
+  <rect x="80" y="152" width="5" height="196" fill="url(#accentLine)" rx="2"/>
+  <rect x="96" y="172" width="5" height="156" fill="url(#accentLine2)" rx="2"/>
+
+  <!-- OBEL AI & QUALITY label -->
+  <text x="118" y="192" font-family="Arial, Helvetica, sans-serif" font-size="13" letter-spacing="5" fill="rgba(255,255,255,0.42)" font-weight="400">OBEL AI &amp; QUALITY</text>
+
+  <!-- Main product name -->
+  <text x="116" y="278" font-family="Arial, Helvetica, sans-serif" font-size="68" letter-spacing="3" fill="rgba(255,255,255,0.97)" font-weight="700">AGENTIC WORKFORCE</text>
+
+  <!-- Divider line under title -->
+  <line x1="118" y1="296" x2="900" y2="296" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+
+  <!-- Tagline -->
+  <text x="118" y="336" font-family="Arial, Helvetica, sans-serif" font-size="21" letter-spacing="0.5" fill="rgba(255,255,255,0.58)">Local-first coding agent — Qwen on MLX, no cloud, no API keys required</text>
+
+  <!-- Stats row -->
+  <text x="118" y="388" font-family="Arial, Helvetica, sans-serif" font-size="13" letter-spacing="3.5" fill="rgba(255,255,255,0.32)">918 TESTS  ·  MULTI-AGENT  ·  SELF-LEARNING  ·  MCP  ·  MIT LICENSED</text>
+
+  <!-- GitHub URL bottom-right -->
+  <text x="1475" y="468" font-family="Arial, Helvetica, sans-serif" font-size="13" letter-spacing="1.5" fill="rgba(255,255,255,0.22)" text-anchor="end">github.com/obelaiquality/agentic_workforce</text>
+
+  <!-- Right-side decorative node graph -->
+  <!-- Nodes -->
+  <circle cx="1150" cy="175" r="3.5" fill="rgba(255,255,255,0.22)"/>
+  <circle cx="1230" cy="140" r="2.5" fill="rgba(255,255,255,0.16)"/>
+  <circle cx="1310" cy="190" r="4.5" fill="rgba(255,255,255,0.18)"/>
+  <circle cx="1390" cy="155" r="2.5" fill="rgba(255,255,255,0.12)"/>
+  <circle cx="1450" cy="200" r="3" fill="rgba(255,255,255,0.10)"/>
+
+  <circle cx="1180" cy="265" r="4" fill="rgba(255,255,255,0.20)"/>
+  <circle cx="1260" cy="240" r="2.5" fill="rgba(255,255,255,0.14)"/>
+  <circle cx="1340" cy="280" r="3.5" fill="rgba(255,255,255,0.18)"/>
+  <circle cx="1420" cy="250" r="2" fill="rgba(255,255,255,0.10)"/>
+
+  <circle cx="1130" cy="345" r="3" fill="rgba(255,255,255,0.16)"/>
+  <circle cx="1210" cy="320" r="2" fill="rgba(255,255,255,0.12)"/>
+  <circle cx="1290" cy="360" r="4" fill="rgba(255,255,255,0.16)"/>
+  <circle cx="1370" cy="335" r="2.5" fill="rgba(255,255,255,0.10)"/>
+  <circle cx="1450" cy="360" r="3" fill="rgba(255,255,255,0.08)"/>
+
+  <!-- Edges top cluster -->
+  <line x1="1150" y1="175" x2="1230" y2="140" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+  <line x1="1230" y1="140" x2="1310" y2="190" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+  <line x1="1310" y1="190" x2="1390" y2="155" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <line x1="1390" y1="155" x2="1450" y2="200" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+  <!-- Edges middle cluster -->
+  <line x1="1180" y1="265" x2="1260" y2="240" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+  <line x1="1260" y1="240" x2="1340" y2="280" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+  <line x1="1340" y1="280" x2="1420" y2="250" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+  <!-- Edges bottom cluster -->
+  <line x1="1130" y1="345" x2="1210" y2="320" stroke="rgba(255,255,255,0.09)" stroke-width="1"/>
+  <line x1="1210" y1="320" x2="1290" y2="360" stroke="rgba(255,255,255,0.09)" stroke-width="1"/>
+  <line x1="1290" y1="360" x2="1370" y2="335" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="1370" y1="335" x2="1450" y2="360" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- Cross-cluster edges -->
+  <line x1="1150" y1="175" x2="1180" y2="265" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="1310" y1="190" x2="1340" y2="280" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="1180" y1="265" x2="1130" y2="345" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="1340" y1="280" x2="1290" y2="360" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="1450" y1="200" x2="1420" y2="250" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <line x1="1420" y1="250" x2="1450" y2="360" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+</svg>

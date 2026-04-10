@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { FileText, Bug, Code } from "lucide-react";
-import type { RalphProgressLedger } from "../../../../shared/contracts";
-import { cn, Chip } from "../../UI";
+import type { RalphProgressLedger } from "../../../shared/contracts";
+import { cn, Chip } from "../UI";
 
 interface PhaseExecution {
   phase: string;

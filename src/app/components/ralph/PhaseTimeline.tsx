@@ -1,5 +1,5 @@
-import type { RalphPhase } from "../../../../shared/contracts";
-import { cn } from "../../UI";
+import type { RalphPhase } from "../../../shared/contracts";
+import { cn } from "../UI";
 
 const PHASE_ORDER: RalphPhase[] = [
   "intake",

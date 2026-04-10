@@ -4,11 +4,13 @@ import { registerTelemetryRoutes } from "./telemetryRoutes";
 
 const mockExportPrometheus = vi.fn();
 const mockGetSpanSummary = vi.fn();
+const mockStartSpan = vi.fn();
 
 vi.mock("../telemetry/tracer", () => ({
   getTelemetry: () => ({
     exportPrometheus: mockExportPrometheus,
     getSpanSummary: mockGetSpanSummary,
+    startSpan: mockStartSpan,
   }),
 }));
 
@@ -91,6 +93,63 @@ describe("telemetryRoutes", () => {
     const res = await app.inject({ method: "GET", url: "/api/telemetry/spans" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([]);
+
+    await app.close();
+  });
+
+  it("POST /client-error records a telemetry span and returns ok", async () => {
+    const mockSpan = { setStatus: vi.fn(), end: vi.fn() };
+    mockStartSpan.mockReturnValue(mockSpan);
+    const app = createApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/telemetry/client-error",
+      payload: {
+        message: "render kaboom",
+        source: "error_boundary",
+        timestamp: "2026-04-10T00:00:00.000Z",
+        url: "http://localhost:5173/",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(mockStartSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "client.error",
+        attributes: expect.objectContaining({
+          "error.message": "render kaboom",
+          "error.source": "error_boundary",
+        }),
+      }),
+    );
+    expect(mockSpan.setStatus).toHaveBeenCalledWith("error", "render kaboom");
+    expect(mockSpan.end).toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("POST /client-error handles missing body fields gracefully", async () => {
+    const mockSpan = { setStatus: vi.fn(), end: vi.fn() };
+    mockStartSpan.mockReturnValue(mockSpan);
+    const app = createApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/telemetry/client-error",
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockStartSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: expect.objectContaining({
+          "error.message": "Unknown client error",
+          "error.source": "unknown",
+        }),
+      }),
+    );
 
     await app.close();
   });

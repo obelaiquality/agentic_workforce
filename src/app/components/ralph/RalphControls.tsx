@@ -1,5 +1,5 @@
 import { Play, Pause, Loader } from "lucide-react";
-import { cn, Button, Chip } from "../../UI";
+import { cn, Button, Chip } from "../UI";
 
 interface RalphControlsProps {
   sessionId: string;

@@ -1,7 +1,7 @@
 # Agentic Workforce
 
 <p align="center">
-  <img src="docs/media/hero-banner.svg" alt="Agentic Workforce — Desktop-first coding agent for real local repos" width="960"/>
+  <img src="docs/media/hero-banner.svg" alt="Agentic Workforce — Next-gen local-first coding agent" width="960"/>
 </p>
 
 <p align="center">
@@ -10,14 +10,15 @@
   <a href="https://github.com/obelaiquality/agentic_workforce/releases"><img src="https://img.shields.io/github/v/release/obelaiquality/agentic_workforce?display_name=tag&label=latest%20release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/obelaiquality/agentic_workforce" alt="License"></a>
   <a href="docs/install.md"><img src="https://img.shields.io/badge/desktop-1.0-0f766e" alt="Desktop 1.0"></a>
+  <a href="docs/testing.md"><img src="https://img.shields.io/badge/tests-3542%20passing-brightgreen" alt="3542 tests"></a>
   <a href="docs/testing.md"><img src="https://img.shields.io/badge/macOS-verified-success" alt="macOS"></a>
   <a href="docs/testing.md"><img src="https://img.shields.io/badge/Linux-CI%20verified-success" alt="Linux CI"></a>
   <a href="docs/testing.md"><img src="https://img.shields.io/badge/Windows-needs%20testing-yellow" alt="Windows"></a>
 </p>
 
 <p align="center">
-  Connect a repo, scope a bounded task, execute in a managed worktree, verify the result.<br>
-  Your code never leaves your machine unless you choose to.
+  A next-generation local-first coding agent with multi-mode execution, plugin architecture, IDE integration, and advanced multi-agent orchestration.<br>
+  Connect a repo, scope a task, execute in a managed worktree, verify the result. Your code never leaves your machine unless you choose to.
 </p>
 
 <p align="center">
@@ -145,28 +146,60 @@ More detail: [Install](docs/install.md) · [Support matrix](docs/support-matrix.
 ```mermaid
 graph TB
   subgraph Desktop["Electron Desktop App"]
-    UI["React Command Center<br/><i>13 views · ⌘K palette · Zustand</i>"]
-    API["Fastify API Server<br/><i>14 route groups · 58+ services</i>"]
+    UI["React Command Center<br/><i>7 decomposed panels · ⌘K palette · Zustand</i>"]
+    API["Fastify API Server<br/><i>16 route groups · 119+ services</i>"]
     Sidecar["Rust gRPC Sidecar<br/><i>Event sourcing · projections</i>"]
   end
 
-  DB[("PostgreSQL")]
+  subgraph Execution["Execution Engine"]
+    Orchestrator["Agentic Orchestrator<br/><i>Streaming tool-call loop · micro-compaction<br/>Per-turn budget · extended thinking</i>"]
+    Modes["6 Execution Modes<br/><i>Single · Team · Interview<br/>Ralph · Parallel · Swarm</i>"]
+    TaskGraph["Task Graph & Scheduler<br/><i>DAG scheduling · message bus<br/>7 agent specializations</i>"]
+  end
+
+  subgraph Extensions["Extensibility"]
+    Plugins["Plugin System<br/><i>Registry · loader · manifests</i>"]
+    Commands["Slash Commands<br/><i>6 built-in · alias support</i>"]
+    IDE["IDE Bridge<br/><i>VS Code extension · SSE events<br/>Permission delegation</i>"]
+    MCP["MCP Servers<br/><i>Tool/resource discovery</i>"]
+  end
+
+  subgraph Safety["Safety & Permissions"]
+    Perms["Permission Engine<br/><i>5 modes · multi-scope rules<br/>Bash validator · file sandbox</i>"]
+    Classifier["Safety Classifier<br/><i>Static + LLM classification</i>"]
+    Approvals["Approval Service<br/><i>IDE + desktop delegation</i>"]
+  end
+
+  DB[("PostgreSQL<br/><i>81 models</i>")]
   LLM["LLM Providers<br/><i>Local (MLX · Ollama · vLLM)<br/>Cloud (OpenAI)</i>"]
   Repos["Local Git Repos"]
+  Telemetry["Telemetry<br/><i>JSON + OTLP exporters<br/>Structured spans & metrics</i>"]
 
   UI -- "REST / SSE" --> API
+  IDE -- "HTTP / SSE" --> API
+  API --> Orchestrator
+  Orchestrator --> Modes
+  Orchestrator --> TaskGraph
   API -- "gRPC" --> Sidecar
   API -- "Prisma" --> DB
   Sidecar --> DB
-  API -- "inference" --> LLM
-  API -- "managed worktrees" --> Repos
+  Orchestrator -- "inference" --> LLM
+  Orchestrator -- "managed worktrees" --> Repos
+  API --> Plugins
+  API --> Commands
+  Orchestrator --> Perms
+  Perms --> Classifier
+  Perms --> Approvals
+  API --> Telemetry
 ```
 
 **Key data flows:**
-- **Execution pipeline** — objective → route → context → agentic loop → verification → report
+- **Execution pipeline** — objective → route → context → agentic loop (with micro-compaction + per-turn budgets) → verification → report
+- **Multi-agent orchestration** — coordinator → task graph (DAG) → scheduler → parallel agents with message bus → conflict resolution
 - **Self-learning** — execution insights → learnings → 24h dream cycle → consolidated principles → suggested skills
 - **Cross-project knowledge** — high-confidence learnings promoted to global pool → tech-fingerprint matched → injected into future runs across all projects
-- **Approval gating** — tool calls → permission policy → safety classifier → user approval → audit log
+- **Approval gating** — tool calls → permission engine (5 modes) → safety classifier → user/IDE approval → audit log
+- **Plugin pipeline** — manifest discovery → Zod validation → tool/command/hook registration → runtime integration
 
 Full architecture with C4 diagrams: [docs/architecture.md](docs/architecture.md)
 
@@ -174,30 +207,106 @@ Full architecture with C4 diagrams: [docs/architecture.md](docs/architecture.md)
 
 ## What Works Today
 
-- **Desktop app** with tab-based Projects, kanban Work surface, Codebase browser, Console event stream, and Settings with accordion-based Advanced configuration
-- **Managed-worktree execution** against real local repos with verification and rollback
+### Core Platform
+- **Desktop app** with decomposed Command Center (ChatPanel, WorkflowBoard, ToolCallTimeline, ApprovalInline, DiffViewer, AgentStatusSidebar), Codebase browser, Console event stream, and Settings
+- **Managed-worktree execution** against real local repos with shadow git snapshots and per-step rollback
+- **6 execution modes** — single agent, multi-agent team, interview (ambiguity crystallization), Ralph (phase-based verification), centralized parallel, and research swarm
 - **New project bootstrap** from an empty folder with TypeScript App starter
 - **Route review, execution, approvals, verification**, and report generation
+
+### Query Engine
+- **Streaming tool-call loop** with micro-compaction of large tool results before context entry
+- **Per-turn token budget enforcement** with pre-call estimation and automatic compaction triggers
+- **Extended thinking mode** (off/on/auto) — auto-activates on first iteration and after model escalation
+- **Format error fallback** — tracks consecutive tool errors and falls back to simpler models after 3 failures
+- **8-level edit matcher chain** — exact match through probabilistic best-effort for reliable code edits
+- **Doom loop detection** — MD5 fingerprint sliding window prevents stuck agent patterns
+
+### Plugin & Command System
+- **Plugin architecture** — `PluginRegistry` + `PluginLoader` with Zod-validated manifests, supports tools, commands, hooks, and system prompt contributions
+- **Slash commands** — `/commit`, `/debug`, `/plan`, `/verify`, `/status`, `/help` with alias support and extensible registry
+- **Custom agent definitions** — `.agentic-workforce/agents.json` for project-specific agent configurations
+- **MCP server integration** — Model Context Protocol support for external tool and resource discovery
+
+### IDE Integration
+- **VS Code extension** (`extensions/vscode/`) — connect, disconnect, and panel commands with status bar provider
+- **IDE bridge server** — 5 HTTP/SSE endpoints for session management, event streaming, and approval delegation
+- **Permission delegation** — approval requests can be routed to the IDE instead of the desktop UI with configurable timeouts
+
+### Permission & Safety System
+- **5 permission modes** — default (policy-based), plan (read-only allowed), bypass (trusted environments), acceptEdits (file ops auto-approved), auto (ML classifier)
+- **Multi-scope rule resolution** — session > project > user priority with cached policy sets
+- **Bash command validator** — tokenizes commands on pipes/semicolons/`&&`/`||`, validates each segment against 16 dangerous patterns
+- **File sandbox** — path normalization with allowed root directories and blocked patterns (`.env`, `.pem`, `.key`, `id_rsa`)
+- **Safety classifier** — static pattern matching + LLM-based classification with result caching
+
+### Advanced Orchestration
+- **Task dependency graph** — DAG with cycle detection, topological sort (Kahn's algorithm), and cascading readiness promotion
+- **Task scheduler** — concurrent batch scheduling with configurable parallelism limits and progress tracking
+- **Inter-agent message bus** — typed channels (FileUpdate, DiscoveryResult, BlockageReport, ReviewRequest), priority queuing, broadcast/subscribe with 100-message FIFO eviction
+- **7 agent specializations** — planner, implementer, tester, reviewer, debugger, refactorer, documenter — each with tailored system prompts, tool subsets, and model roles
+
+### Observability
+- **Structured telemetry** — spans and metrics with run/agent/tool/provider attributes
+- **JSON file exporter** — local-first telemetry persistence with automatic cleanup
+- **OTLP exporter** — optional OpenTelemetry Protocol export via native fetch (no SDK dependency)
+- **Dynamic system prompt builder** — priority-based section assembly with per-section token budgets and cache-first ordering for prompt caching
+- **Token estimator** — tiktoken integration with automatic fallback to heuristic estimation
+- **Health check endpoint** — `GET /api/telemetry/health` with uptime, memory, and timestamp
+
+### Model Providers
 - **Local model runtime** with MLX-LM (Apple Silicon), Ollama (cross-platform), vLLM, SGLang, llama.cpp, or TensorRT-LLM
 - **OpenAI escalation** for complex tasks with configurable model roles and budget controls
-- **CLI companion** for connect, plan, run, and report flows against the same local API
-- **918 unit/integration tests** and multi-tier E2E validation (stable desktop, follow-up scenarios, comprehensive lifecycle, packaged smoke)
+- **4 model roles** — `utility_fast` (quick tasks), `coder_default` (implementation), `review_deep` (analysis), `overseer_escalation` (complex decisions)
+- **Provider orchestrator** with full fallback chain, retry with backoff, and connection recovery
+
+### Self-Learning
+- **Episodic memory** with temporal decay and cosine similarity retrieval
+- **Auto-extraction** of learnings from successful execution runs
+- **Dream scheduler** — 24h background cycle for learning consolidation and skill synthesis
+- **Global knowledge pool** — cross-project learning aggregation with tech-fingerprint matching
+- **Distillation pipeline** — training data generation from successful runs
+
+---
 
 ## Testing
 
 ```bash
-npm run validate                          # 918 unit tests, lint, typecheck, builds
-npm run test:e2e:desktop-stable           # Stable desktop acceptance (UI + execution)
-npm run test:e2e:followup:status-badge    # Follow-up scenario
+npx vitest run                            # 3542 unit/integration tests
+npm run validate                          # Tests + lint + typecheck + builds
+npm run test:e2e:desktop-acceptance       # Full desktop acceptance (UI + execution)
+npm run test:e2e:desktop-stable           # Stable desktop E2E subset
+npm run test:e2e:followup:status-badge    # Follow-up scenario: component creation
+npm run test:e2e:followup:progress-bar    # Follow-up scenario: progress widget
+npm run test:e2e:followup:utility-module  # Follow-up scenario: backend function
+npm run test:e2e:followup:api-stop        # Follow-up scenario: execution stop
+npm run test:e2e:followup:rename-component # Follow-up scenario: refactoring
+npm run test:e2e:failure-injection        # Failure injection: API errors, stream disconnect, error boundary
 npm run test:e2e:nightly                  # Broader regression coverage
 npm run demo:capture && npm run demo:render  # Regenerate README GIF
 ```
+
+### Test Coverage by Area
+
+| Area | Test files | Tests | Key coverage |
+| --- | --- | --- | --- |
+| Server services | 95+ | ~1800 | Execution, context, memory, providers, tools |
+| Server routes | 16 | ~200 | All API endpoints with error cases |
+| Execution engine | 20+ | ~350 | Orchestrator, coordinator, Ralph, interview, team modes |
+| Permissions | 6 | 243 | 5 modes, bash validator, file sandbox, scope resolution |
+| Plugins & commands | 5 | 67 | Registry, loader, slash commands, agent definitions |
+| IDE bridge | 3 | 45 | Session management, approval delegation, event streaming |
+| Telemetry & observability | 4 | 53 | JSON/OTLP exporters, system prompt builder, token estimator |
+| Advanced orchestration | 3 | 84 | Task graph (DAG), scheduler, message bus |
+| Frontend components | 40+ | ~400 | Views, interview/ralph/team panels, hooks, error boundaries |
+| Error path integration | 3 | 42 | Doom loop recovery, budget exhaustion, compaction cascade, provider fallback |
+| E2E (Playwright) | 28 scripts | - | Desktop acceptance, follow-up scenarios, failure injection, nightly |
 
 ### Platform Status
 
 | Platform | Unit tests | Desktop E2E | Status |
 | --- | --- | --- | --- |
-| macOS (Apple Silicon) | 918/918 | Full pass (local + OpenAI) | Primary platform |
+| macOS (Apple Silicon) | 3542/3542 | Full pass (local + OpenAI) | Primary platform |
 | Ubuntu/Debian | CI pass | CI pass (xvfb) | CI-validated |
 | macOS (Intel) | Expected pass | Not yet verified | **Help wanted** |
 | Windows | Expected pass | Not yet verified | **Help wanted** |
@@ -205,11 +314,60 @@ npm run demo:capture && npm run demo:render  # Regenerate README GIF
 
 Full testing documentation: [docs/testing.md](docs/testing.md)
 
+---
+
+## Project Structure
+
+```
+src/
+  server/
+    execution/        # Orchestrator, coordinator, task graph, scheduler, message bus, modes
+    permissions/       # Policy engine (5 modes), bash validator, file sandbox, scope resolver
+    plugins/           # Plugin registry, loader, agent definition loader
+    commands/          # Slash command registry, 6 built-in commands
+    ide/               # IDE bridge server, session manager, permission delegate
+    telemetry/         # Tracer, metrics, JSON/OTLP exporters
+    providers/         # Provider factory, orchestrator, 4 adapters
+    services/          # 119+ services (context, memory, tools, learning, etc.)
+    routes/            # 16 route groups for the Fastify API
+    tools/             # 40+ tool definitions with registry and deferred loading
+    hooks/             # Lifecycle hook service
+    skills/            # Skill service with built-in skill definitions
+    memory/            # Auto-extractor, episodic/working memory
+    lsp/               # Language server protocol client
+    mcp/               # Model Context Protocol client and registry
+    plans/             # Plan-first execution mode
+  app/
+    components/
+      command-center/  # Decomposed Command Center (7 panels + composition root)
+      views/           # 13 full-page views
+      interview/       # Interview mode UI (5 components)
+      ralph/           # Ralph mode UI (5 components)
+      team/            # Team mode UI (5 components)
+      ui/              # 46 Radix-based primitive components
+    hooks/             # React hooks (mission control, keyboard, interview/ralph/team modes)
+    lib/               # API client, desktop bridge, utilities
+    store/             # Zustand UI store
+  shared/
+    contracts.ts       # Domain types shared between server and client
+extensions/
+  vscode/              # VS Code extension (connect, disconnect, panel, status bar)
+scripts/
+  playwright/          # 28 E2E test scripts
+electron/              # Electron main process (main.mjs, preload.mjs)
+prisma/
+  schema.prisma        # 81 models
+```
+
+---
+
 ## Contributing
 
 We welcome contributions of all kinds. Some areas where help is especially valuable:
 
 - **Windows and Linux testing** — Run `npm run validate` and `npm run test:e2e:desktop-stable` on your platform and report results. Even a "it passed on Windows 11" is helpful.
+- **Plugin development** — Create plugins with custom tools, commands, or skills. See the plugin manifest format in `src/server/plugins/pluginTypes.ts`.
+- **VS Code extension** — The extension scaffold in `extensions/vscode/` is ready for feature development (WebView panels, inline diffs, diagnostic integration).
 - **Local runtime backends** — Test with Ollama, vLLM, SGLang, or llama.cpp on different hardware configurations.
 - **Bug reports** — File issues with OS, install path, and logs attached.
 - **Documentation** — Improve guides for platforms and runtimes you use.
@@ -236,6 +394,7 @@ Run `npm run validate` before submitting a PR. See [CONTRIBUTING.md](CONTRIBUTIN
 - **Fully local runtime**: supported with MLX-LM (macOS), Ollama (cross-platform), vLLM/SGLang (NVIDIA), llama.cpp (portable)
 - **Benchmarks, Labs, training workflows, and channels**: supported as specialized workflows with dedicated runbooks
 - **Packaged desktop releases**: ship through GitHub Releases with per-platform notes, signatures, and checksums
+- **IDE bridge**: connect VS Code (or other editors) to the running desktop app for inline approvals and event streaming
 
 Read this before filing a bug about missing functionality: [Known limitations](docs/known-limitations.md)
 
@@ -268,11 +427,14 @@ Read this before filing a bug about missing functionality: [Known limitations](d
 
 ## Security
 
-- Local API auth is header-only with `x-local-api-token`.
-- Provider keys are handled as write-only settings and stored outside normal settings JSON.
-- Standalone `npm run dev:api` requires a non-empty `API_TOKEN`.
-- Browser preview requires a matching `VITE_API_TOKEN` because the local API no longer accepts query-string tokens.
-- Channel integrations and autonomy surfaces are opt-in and not part of the default launch path.
+- **Desktop API auth** — header-only with `x-local-api-token`. No query-string tokens.
+- **IDE bridge auth** — per-session JWT-style tokens via `crypto.randomBytes(32)`. Localhost-only binding (`127.0.0.1`). All endpoints validate the session token.
+- **Provider keys** — handled as write-only settings and stored outside normal settings JSON.
+- **Permission engine** — 5 modes with multi-scope rule resolution. Bash commands tokenized and validated per-segment against dangerous patterns. File writes sandboxed to allowed root directories.
+- **File sandbox** — blocks writes to sensitive files (`.env`, `.pem`, `.key`, `id_rsa`) and paths outside the managed worktree.
+- **Standalone API** — `npm run dev:api` requires a non-empty `API_TOKEN`.
+- **Browser preview** — requires a matching `VITE_API_TOKEN`.
+- **Channel integrations and autonomy surfaces** — opt-in, not part of the default launch path.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 

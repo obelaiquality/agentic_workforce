@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { cn, Button } from "../../UI";
+import { cn, Button } from "../UI";
 import { Send } from "lucide-react";
 
 interface MessageDto {

@@ -2,6 +2,17 @@ import type { ToolPermission } from "../tools/types";
 import type { ToolContext } from "../tools/types";
 
 /**
+ * Permission modes that control how the engine evaluates tool permissions.
+ *
+ * - "default"     — existing policy-based evaluation
+ * - "plan"        — all mutating tools require approval; read-only tools auto-approved
+ * - "bypass"      — all tools auto-approved (trusted environments)
+ * - "acceptEdits" — file-edit tools auto-approved; bash still requires approval
+ * - "auto"        — delegate to SafetyClassifier for dynamic classification
+ */
+export type PermissionMode = "default" | "plan" | "bypass" | "acceptEdits" | "auto";
+
+/**
  * Permission decision result types
  */
 export type PermissionDecisionResult = "allow" | "deny" | "approval_required";

@@ -1,5 +1,5 @@
-import type { RalphPhase } from "../../../../shared/contracts";
-import { Panel, PanelHeader } from "../../UI";
+import type { RalphPhase } from "../../../shared/contracts";
+import { Panel, PanelHeader } from "../UI";
 import {
   useRalphSession,
   useRalphLedger,

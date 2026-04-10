@@ -1,5 +1,5 @@
-import type { TeamPhase } from "../../../../shared/contracts";
-import { cn, Chip } from "../../UI";
+import type { TeamPhase } from "../../../shared/contracts";
+import { cn, Chip } from "../UI";
 
 const PHASE_CONFIG: Record<TeamPhase, { label: string; color: string }> = {
   team_plan: {
