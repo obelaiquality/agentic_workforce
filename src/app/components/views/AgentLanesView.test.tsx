@@ -157,4 +157,113 @@ describe("AgentLanesView", () => {
       expect(screen.getByText("verifier")).toBeInTheDocument();
     });
   });
+
+  it("should show lane without runId", async () => {
+    const mockLane = createMockLane({
+      id: "lane-no-run",
+      runId: null,
+      ticketId: "ticket-no-run",
+    });
+
+    vi.mocked(apiClient.listAgentLanesV3).mockResolvedValue({ items: [mockLane] });
+    renderWithQueryClient(<AgentLanesView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("ticket-no-run")).toBeInTheDocument();
+    });
+
+    // runId should not be displayed
+    expect(screen.queryByText(/Run:/)).not.toBeInTheDocument();
+  });
+
+  it("should show lease expiring soon badge for running lane with near expiry", async () => {
+    const mockLane = createMockLane({
+      id: "lane-expiring-soon",
+      state: "running",
+      leaseExpiresAt: new Date(Date.now() + 2 * 60 * 1000).toISOString(), // 2 minutes from now
+    });
+
+    vi.mocked(apiClient.listAgentLanesV3).mockResolvedValue({ items: [mockLane] });
+    renderWithQueryClient(<AgentLanesView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("lease expiring soon")).toBeInTheDocument();
+    });
+  });
+
+  it("should not show lease expiring soon badge for non-running lane", async () => {
+    const mockLane = createMockLane({
+      id: "lane-blocked-expiring",
+      state: "blocked",
+      leaseExpiresAt: new Date(Date.now() + 2 * 60 * 1000).toISOString(), // 2 minutes from now
+    });
+
+    vi.mocked(apiClient.listAgentLanesV3).mockResolvedValue({ items: [mockLane] });
+    renderWithQueryClient(<AgentLanesView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("blocked")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("lease expiring soon")).not.toBeInTheDocument();
+  });
+
+  it("should show lane without lastHeartbeatAt", async () => {
+    const mockLane = createMockLane({
+      id: "lane-no-heartbeat",
+      lastHeartbeatAt: null,
+    });
+
+    vi.mocked(apiClient.listAgentLanesV3).mockResolvedValue({ items: [mockLane] });
+    renderWithQueryClient(<AgentLanesView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("running")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/Last heartbeat:/)).not.toBeInTheDocument();
+  });
+
+  it("should show lane without metadata summary", async () => {
+    const mockLane = createMockLane({
+      id: "lane-no-summary",
+      metadata: {},
+    });
+
+    vi.mocked(apiClient.listAgentLanesV3).mockResolvedValue({ items: [mockLane] });
+    renderWithQueryClient(<AgentLanesView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("running")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Implementing feature X")).not.toBeInTheDocument();
+  });
+
+  it("should cancel spawn form and reset draft", async () => {
+    vi.mocked(apiClient.listAgentLanesV3).mockResolvedValue({ items: [] });
+    renderWithQueryClient(<AgentLanesView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Spawn agent")).toBeInTheDocument();
+    });
+
+    // Open form
+    fireEvent.click(screen.getByRole("button", { name: /spawn agent/i }));
+    expect(screen.getByLabelText("Ticket ID")).toBeInTheDocument();
+
+    // Fill in a field
+    fireEvent.change(screen.getByLabelText("Ticket ID"), { target: { value: "ticket-temp" } });
+    expect(screen.getByLabelText("Ticket ID")).toHaveValue("ticket-temp");
+
+    // Cancel
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    // Form should be hidden
+    expect(screen.queryByLabelText("Ticket ID")).not.toBeInTheDocument();
+
+    // Reopen and verify draft was reset
+    fireEvent.click(screen.getByRole("button", { name: /spawn agent/i }));
+    expect(screen.getByLabelText("Ticket ID")).toHaveValue("");
+  });
 });

@@ -13,4 +13,14 @@ describe("OnPrem Qwen model plugins", () => {
     const plugin = resolveOnPremQwenModelPlugin("unknown");
     expect(plugin.id).toBe("qwen3.5-4b");
   });
+
+  it("returns default plugin when no pluginId is provided", () => {
+    const plugin = resolveOnPremQwenModelPlugin();
+    expect(plugin.id).toBe("qwen3.5-4b");
+  });
+
+  it("returns default plugin when pluginId is undefined", () => {
+    const plugin = resolveOnPremQwenModelPlugin(undefined);
+    expect(plugin.id).toBe("qwen3.5-4b");
+  });
 });

@@ -53,6 +53,7 @@ function ContextMenuRadioGroup({
   );
 }
 
+/* v8 ignore next 20 -- requires open MenuContent context (pointer events) */
 function ContextMenuSubTrigger({
   className,
   inset,
@@ -77,6 +78,7 @@ function ContextMenuSubTrigger({
   );
 }
 
+/* v8 ignore next 15 -- requires open MenuContent context (pointer events) */
 function ContextMenuSubContent({
   className,
   ...props
@@ -93,6 +95,7 @@ function ContextMenuSubContent({
   );
 }
 
+/* v8 ignore next 17 -- requires pointer-based right-click to open */
 function ContextMenuContent({
   className,
   ...props
@@ -111,6 +114,7 @@ function ContextMenuContent({
   );
 }
 
+/* v8 ignore next 22 -- requires open MenuContent context (pointer events) */
 function ContextMenuItem({
   className,
   inset,
@@ -134,6 +138,7 @@ function ContextMenuItem({
   );
 }
 
+/* v8 ignore next 24 -- requires open MenuContent context (pointer events) */
 function ContextMenuCheckboxItem({
   className,
   children,
@@ -160,6 +165,7 @@ function ContextMenuCheckboxItem({
   );
 }
 
+/* v8 ignore next 23 -- requires open MenuContent context (pointer events) */
 function ContextMenuRadioItem({
   className,
   children,

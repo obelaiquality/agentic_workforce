@@ -88,4 +88,12 @@ describe("reportClientError", () => {
     expect(calledUrl).toContain("/api/telemetry/client-error");
     vi.unstubAllGlobals();
   });
+
+  it("never throws when getDesktopBridge itself throws", () => {
+    mockGetDesktopBridge.mockImplementation(() => {
+      throw new Error("bridge init failure");
+    });
+
+    expect(() => reportClientError(makeReport())).not.toThrow();
+  });
 });

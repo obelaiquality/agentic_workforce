@@ -96,6 +96,15 @@ describe("bash tool", () => {
     }
   });
 
+  it("returns error when cwd path is outside worktree", async () => {
+    const result = await bash.execute({ command: "echo hello", cwd: "/etc/passwd" }, ctx);
+
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.error).toBeTruthy();
+    }
+  });
+
   // ── Exit code handling ──────────────────────────────────────────────────────
 
   it("returns error for non-zero exit code", async () => {

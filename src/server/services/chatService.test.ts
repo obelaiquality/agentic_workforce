@@ -656,6 +656,49 @@ describe("ChatService", () => {
       );
     });
 
+    it("passes previousResponseId from session metadata to streamChatWithRetry", async () => {
+      const userMsg = makeMessage({ role: "user", content: "Follow up" });
+      const session = makeSession({
+        metadata: {
+          providerSession: { sessionId: "ext-123" },
+          previousResponseId: "resp-prev-42",
+        },
+      });
+      mocks.prisma.chatMessage.create
+        .mockResolvedValueOnce(userMsg)
+        .mockResolvedValueOnce(makeMessage({ role: "assistant", content: "OK" }));
+      mocks.prisma.chatSession.findUnique.mockResolvedValue(session);
+      mocks.prisma.chatMessage.findMany.mockResolvedValue([userMsg]);
+
+      const orchestrator = buildMockOrchestrator();
+      orchestrator.streamChatWithRetry.mockImplementation((_sid, _msgs, onToken) => {
+        onToken("OK");
+        return Promise.resolve({
+          accountId: "acct-1",
+          providerId: "openai",
+          usage: {},
+          session: {},
+        });
+      });
+
+      const service = new ChatService(orchestrator as any);
+      await service.createUserMessage("session-1", "Follow up");
+
+      // Wait for async assistant turn
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(orchestrator.streamChatWithRetry).toHaveBeenCalledWith(
+        "session-1",
+        expect.any(Array),
+        expect.any(Function),
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            previousResponseId: "resp-prev-42",
+          }),
+        }),
+      );
+    });
+
     it("triggers assistant turn asynchronously", async () => {
       const userMsg = makeMessage({ role: "user", content: "Question" });
       const session = makeSession();

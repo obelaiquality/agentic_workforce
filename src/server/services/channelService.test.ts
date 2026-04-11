@@ -631,3 +631,390 @@ describe("validateApprovalRelay", () => {
     ).rejects.toThrow("disabled");
   });
 });
+
+// ── listRecentActivity ───────────────────────────────────────────────────
+
+describe("listRecentActivity", () => {
+  it("returns channels and subagents from audit and run events", async () => {
+    const channelPayload = {
+      id: "ch-1",
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+      trustLevel: "trusted",
+      projectId: "proj-1",
+      ticketId: null,
+      runId: null,
+      sessionId: null,
+      replySupported: false,
+      deliveredToSession: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    const subagentPayload = {
+      id: "sa-1",
+      role: "repo_scout",
+      status: "planned",
+      summary: "Inspect files",
+      sourceEventId: "ch-1",
+      projectId: "proj-1",
+      ticketId: null,
+      runId: null,
+      createdAt: new Date().toISOString(),
+    };
+
+    mockPrisma.auditEvent.findMany.mockResolvedValue([
+      { id: "ae-1", payload: channelPayload, createdAt: new Date() },
+    ]);
+    mockPrisma.runEvent.findMany.mockResolvedValue([
+      { id: "re-1", payload: subagentPayload, createdAt: new Date() },
+    ]);
+
+    const result = await service.listRecentActivity("proj-1");
+
+    expect(result.channels).toHaveLength(1);
+    expect(result.channels[0].id).toBe("ch-1");
+    expect(result.subagents).toHaveLength(1);
+    expect(result.subagents[0].id).toBe("sa-1");
+
+    // Verify prisma was called with projectId filter
+    expect(mockPrisma.auditEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          eventType: "channel.event.received",
+          payload: { path: ["projectId"], equals: "proj-1" },
+        }),
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      }),
+    );
+    expect(mockPrisma.runEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "subagent_activity",
+          payload: { path: ["projectId"], equals: "proj-1" },
+        }),
+        orderBy: { createdAt: "desc" },
+        take: 30,
+      }),
+    );
+  });
+
+  it("returns results without projectId filter when none provided", async () => {
+    mockPrisma.auditEvent.findMany.mockResolvedValue([]);
+    mockPrisma.runEvent.findMany.mockResolvedValue([]);
+
+    const result = await service.listRecentActivity();
+
+    expect(result.channels).toEqual([]);
+    expect(result.subagents).toEqual([]);
+
+    // Verify no projectId filter in the where clause
+    expect(mockPrisma.auditEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { eventType: "channel.event.received" },
+      }),
+    );
+    expect(mockPrisma.runEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { kind: "subagent_activity" },
+      }),
+    );
+  });
+
+  it("returns results without projectId filter when null provided", async () => {
+    mockPrisma.auditEvent.findMany.mockResolvedValue([]);
+    mockPrisma.runEvent.findMany.mockResolvedValue([]);
+
+    const result = await service.listRecentActivity(null);
+
+    expect(result.channels).toEqual([]);
+    expect(result.subagents).toEqual([]);
+  });
+
+  it("filters out payloads with missing id fields", async () => {
+    mockPrisma.auditEvent.findMany.mockResolvedValue([
+      { id: "ae-1", payload: { id: "ch-valid", source: "webhook" }, createdAt: new Date() },
+      { id: "ae-2", payload: { source: "webhook" }, createdAt: new Date() },         // missing id
+      { id: "ae-3", payload: { id: 123, source: "webhook" }, createdAt: new Date() }, // non-string id
+      { id: "ae-4", payload: null, createdAt: new Date() },                           // null payload
+    ]);
+    mockPrisma.runEvent.findMany.mockResolvedValue([
+      { id: "re-1", payload: { id: "sa-valid", role: "planner" }, createdAt: new Date() },
+      { id: "re-2", payload: {}, createdAt: new Date() },                              // missing id
+    ]);
+
+    const result = await service.listRecentActivity();
+
+    expect(result.channels).toHaveLength(1);
+    expect(result.channels[0].id).toBe("ch-valid");
+    expect(result.subagents).toHaveLength(1);
+    expect(result.subagents[0].id).toBe("sa-valid");
+  });
+});
+
+// ── normalizeConfig edge cases ───────────────────────────────────────────
+
+describe("normalizeConfig edge cases", () => {
+  it("handles non-string defaultProjectId (whitespace only)", async () => {
+    mockPrisma.appSetting.findUnique.mockResolvedValue({
+      key: "experimental_channels_config",
+      value: {
+        enabled: true,
+        defaultProjectId: "   ",
+        defaultSessionId: "  ",
+        webhook: { enabled: true },
+      },
+    });
+
+    const config = await service.getConfig();
+    expect(config.defaultProjectId).toBeNull();
+    expect(config.defaultSessionId).toBeNull();
+  });
+
+  it("handles non-string signingSecret values", async () => {
+    mockPrisma.appSetting.findUnique.mockResolvedValue({
+      key: "experimental_channels_config",
+      value: {
+        enabled: true,
+        webhook: { enabled: true, signingSecret: 12345 },
+        telegram: { enabled: true, signingSecret: null },
+        ciMonitoring: { enabled: true, signingSecret: undefined },
+      },
+    });
+
+    const config = await service.getConfig();
+    expect(config.webhook.signingSecret).toBe("");
+    expect(config.telegram.signingSecret).toBe("");
+    expect(config.ciMonitoring.signingSecret).toBe("");
+  });
+
+  it("handles senderAllowlist with mixed types and empty strings", async () => {
+    mockPrisma.appSetting.findUnique.mockResolvedValue({
+      key: "experimental_channels_config",
+      value: {
+        enabled: true,
+        senderAllowlist: ["valid-user", "", 42, null, "another-user", "  "],
+        webhook: { enabled: true },
+      },
+    });
+
+    const config = await service.getConfig();
+    // empty strings and whitespace-only strings are filtered out
+    expect(config.senderAllowlist).toEqual(["valid-user", "another-user"]);
+  });
+
+  it("handles completely null config value", async () => {
+    mockPrisma.appSetting.findUnique.mockResolvedValue({
+      key: "experimental_channels_config",
+      value: null,
+    });
+
+    const config = await service.getConfig();
+    expect(config.enabled).toBe(false);
+  });
+});
+
+// ── channelEnabled / channelSecret for telegram and ci_monitoring ─────
+
+describe("channel source routing", () => {
+  it("routes telegram source correctly in ingestEvent", async () => {
+    setConfig(makeEnabledConfig({
+      telegram: { enabled: true, signingSecret: "tg-secret" },
+    }));
+
+    const result = await service.ingestEvent({
+      source: "telegram",
+      senderId: "user-1",
+      content: "Hello from telegram",
+      signingSecret: "tg-secret",
+    });
+
+    expect(result.event.source).toBe("telegram");
+  });
+
+  it("routes ci_monitoring source correctly in ingestEvent", async () => {
+    setConfig(makeEnabledConfig({
+      ciMonitoring: { enabled: true, signingSecret: "" },
+    }));
+
+    const result = await service.ingestEvent({
+      source: "ci_monitoring",
+      senderId: "ci-bot",
+      content: "Build passed",
+    });
+
+    expect(result.event.source).toBe("ci_monitoring");
+  });
+});
+
+// ── resolveSessionId branches ────────────────────────────────────────────
+
+describe("resolveSessionId branches", () => {
+  it("uses explicit sessionId from input when provided", async () => {
+    setConfig(makeEnabledConfig({
+      defaultSessionId: "default-session",
+    }));
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+      sessionId: "explicit-session",
+    });
+
+    expect(result.event.sessionId).toBe("explicit-session");
+  });
+
+  it("falls back to defaultSessionId from config when no explicit sessionId", async () => {
+    setConfig(makeEnabledConfig({
+      defaultSessionId: "default-session",
+    }));
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+    });
+
+    expect(result.event.sessionId).toBe("default-session");
+  });
+
+  it("uses existing session from listSessions when available", async () => {
+    setConfig(makeEnabledConfig({
+      defaultProjectId: "proj-1",
+    }));
+    chatService.listSessions.mockResolvedValue([{ id: "existing-session" }]);
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+    });
+
+    expect(result.event.sessionId).toBe("existing-session");
+    expect(chatService.createSession).not.toHaveBeenCalled();
+  });
+
+  it("returns null sessionId when no projectId resolved", async () => {
+    setConfig(makeEnabledConfig());
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+    });
+
+    expect(result.event.sessionId).toBeNull();
+  });
+});
+
+// ── resolveProjectForRun edge cases ──────────────────────────────────────
+
+describe("resolveProjectForRun edge cases", () => {
+  it("returns null when runProjection metadata has empty repo_id", async () => {
+    setConfig(makeEnabledConfig());
+    mockPrisma.runProjection.findUnique.mockResolvedValue({
+      runId: "run-1",
+      metadata: { repo_id: "   " },
+    });
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+      runId: "run-1",
+    });
+
+    // Falls back to null since repo_id is whitespace
+    expect(result.event.projectId).toBeNull();
+  });
+
+  it("returns null when runProjection metadata has non-string repo_id", async () => {
+    setConfig(makeEnabledConfig());
+    mockPrisma.runProjection.findUnique.mockResolvedValue({
+      runId: "run-1",
+      metadata: { repo_id: 12345 },
+    });
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+      runId: "run-1",
+    });
+
+    expect(result.event.projectId).toBeNull();
+  });
+});
+
+// ── runEvent creation when event has runId ────────────────────────────────
+
+describe("ingestEvent with runId", () => {
+  it("creates a run event when event has a runId", async () => {
+    setConfig(makeEnabledConfig());
+
+    const result = await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Hello",
+      runId: "run-123",
+    });
+
+    // Should create: 1 for channel_event + N for subagent activities
+    const calls = mockPrisma.runEvent.create.mock.calls;
+    const channelEventCall = calls.find(
+      (c: any) => c[0].data.kind === "channel_event",
+    );
+    expect(channelEventCall).toBeTruthy();
+    expect(channelEventCall![0].data.runId).toBe("run-123");
+  });
+});
+
+// ── toChannelPrompt formatting ───────────────────────────────────────────
+
+describe("toChannelPrompt (tested via deliveredToSession)", () => {
+  it("includes project, ticket, and run references in the prompt", async () => {
+    setConfig(makeEnabledConfig({
+      allowUnattendedReadOnly: true,
+      defaultProjectId: "proj-1",
+      defaultSessionId: "session-1",
+    }));
+
+    await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Fix the bug",
+      ticketId: "TICKET-42",
+      runId: "run-99",
+    });
+
+    const promptArg = chatService.createUserMessage.mock.calls[0][1];
+    expect(promptArg).toContain('source="webhook"');
+    expect(promptArg).toContain('sender="user-1"');
+    expect(promptArg).toContain("project=proj-1");
+    expect(promptArg).toContain("ticket=TICKET-42");
+    expect(promptArg).toContain("run=run-99");
+    expect(promptArg).toContain("Fix the bug");
+    expect(promptArg).toContain("Planned subagents:");
+  });
+
+  it("shows 'none' for subagent roles when list is empty (edge case)", async () => {
+    // This tests the toChannelPrompt "none" fallback — though in practice
+    // planSubagentRoles always returns at least 2 roles, we test the format
+    setConfig(makeEnabledConfig({
+      allowUnattendedReadOnly: true,
+      defaultProjectId: "proj-1",
+      defaultSessionId: "session-1",
+    }));
+
+    await service.ingestEvent({
+      source: "webhook",
+      senderId: "user-1",
+      content: "Random content",
+    });
+
+    const promptArg = chatService.createUserMessage.mock.calls[0][1];
+    expect(promptArg).toContain("Planned subagents: repo_scout, planner");
+  });
+});

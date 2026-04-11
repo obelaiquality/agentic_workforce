@@ -394,4 +394,111 @@ describe("app module", () => {
 
     await app.close();
   });
+
+  it("returns 401 for unauthorized requests", async () => {
+    // Import the mock to change its behavior
+    const { isAuthorizedLocalApiRequest } = await import("./routes/shared/http");
+    const mockFn = isAuthorizedLocalApiRequest as ReturnType<typeof vi.fn>;
+
+    const app = await createServer("test-token");
+
+    // Make the auth check fail
+    mockFn.mockReturnValueOnce(false);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: {},
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(JSON.parse(response.body)).toEqual({ error: "Unauthorized local API request" });
+
+    await app.close();
+  });
+
+  it("passes through OPTIONS requests without auth", async () => {
+    const app = await createServer("test-token");
+
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/health",
+    });
+
+    // OPTIONS should not get 401
+    expect(response.statusCode).not.toBe(401);
+
+    await app.close();
+  });
+
+  it("error handler returns 500 with error message", async () => {
+    const app = await createServer("test-token");
+
+    // Register a route that throws an error to trigger the error handler
+    app.get("/test-error", async () => {
+      throw new Error("Test error message");
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/test-error",
+      headers: { "x-local-api-token": "test-token" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(JSON.parse(response.body)).toEqual({ error: "Test error message" });
+
+    await app.close();
+  });
+
+  it("createServer can be called with default empty token", async () => {
+    const app = await createServer();
+    expect(app).toBeDefined();
+    await app.close();
+  });
+
+  it("onClose hook executes without error", async () => {
+    const app = await createServer("test-token");
+
+    // Calling close triggers the onClose hook
+    await expect(app.close()).resolves.toBeUndefined();
+  });
+
+  it("CORS allows requests with no origin", async () => {
+    const app = await createServer("test-token");
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: { "x-local-api-token": "test-token" },
+    });
+
+    // No origin header → should be allowed
+    expect(response.statusCode).toBe(200);
+
+    await app.close();
+  });
+
+  it("CORS calls isAllowedCorsOrigin for requests with origin", async () => {
+    const { isAllowedCorsOrigin } = await import("./routes/shared/http");
+    const mockCorsFn = isAllowedCorsOrigin as ReturnType<typeof vi.fn>;
+
+    const app = await createServer("test-token");
+
+    mockCorsFn.mockReturnValueOnce(true);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: {
+        "x-local-api-token": "test-token",
+        origin: "http://localhost:3000",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockCorsFn).toHaveBeenCalledWith("http://localhost:3000");
+
+    await app.close();
+  });
 });

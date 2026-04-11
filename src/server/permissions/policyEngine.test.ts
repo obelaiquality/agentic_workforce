@@ -464,5 +464,199 @@ describe("PermissionPolicyEngine", () => {
         expect(engine.getMode()).toBe("default");
       });
     });
+
+    describe("auto mode — cmd field extraction", () => {
+      it("extracts command from input.cmd field", async () => {
+        engine.setMode("auto");
+        const classifier = new SafetyClassifier();
+        engine.setSafetyClassifier(classifier);
+
+        const result = await engine.check(bashTool, { cmd: "ls -la" }, mockContext);
+        expect(result.decision).toBe("allow");
+        expect(result.reasons[0]).toContain("Auto mode");
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // getDefaultDecision — uncovered branches
+  // -----------------------------------------------------------------------
+
+  describe("getDefaultDecision branches", () => {
+    it("requires approval for tools with requiresApproval flag", async () => {
+      const approvalTool: ToolDefinition = {
+        name: "deploy",
+        description: "Deploy to production",
+        inputSchema: z.object({}),
+        execute: async () => ({ type: "success", content: "ok" }),
+        permission: {
+          scope: "repo.edit",
+          requiresApproval: true,
+        },
+      };
+
+      const result = await engine.check(approvalTool, {}, mockContext);
+      expect(result.decision).toBe("approval_required");
+      expect(result.requiresApproval).toBe(true);
+      expect(result.reasons[0]).toContain("static approval");
+      expect(result.source).toBe("default");
+    });
+
+    it("requires approval when dynamic checkApproval returns true", async () => {
+      const dynamicTool: ToolDefinition = {
+        name: "dynamic_tool",
+        description: "Dynamic approval tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ type: "success", content: "ok" }),
+        permission: {
+          scope: "repo.edit",
+          checkApproval: () => true,
+        },
+      };
+
+      const result = await engine.check(dynamicTool, {}, mockContext);
+      expect(result.decision).toBe("approval_required");
+      expect(result.requiresApproval).toBe(true);
+      expect(result.reasons[0]).toContain("dynamic approval");
+      expect(result.source).toBe("default");
+    });
+
+    it("requires approval for destructive tools", async () => {
+      const destructiveTool: ToolDefinition = {
+        name: "destructive_tool",
+        description: "Destructive tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ type: "success", content: "ok" }),
+        permission: {
+          scope: "repo.edit",
+          destructive: true,
+        },
+      };
+
+      const result = await engine.check(destructiveTool, {}, mockContext);
+      expect(result.decision).toBe("approval_required");
+      expect(result.requiresApproval).toBe(true);
+      expect(result.reasons[0]).toContain("destructive");
+      expect(result.source).toBe("default");
+    });
+
+    it("allows non-destructive non-readOnly tools by default", async () => {
+      const normalTool: ToolDefinition = {
+        name: "normal_tool",
+        description: "Normal tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ type: "success", content: "ok" }),
+        permission: {
+          scope: "repo.edit",
+        },
+      };
+
+      const result = await engine.check(normalTool, {}, mockContext);
+      expect(result.decision).toBe("allow");
+      expect(result.requiresApproval).toBe(false);
+      expect(result.reasons[0]).toContain("Default allow");
+      expect(result.source).toBe("default");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // getPolicies and getHooks inspection methods
+  // -----------------------------------------------------------------------
+
+  describe("inspection methods", () => {
+    it("getPolicies returns registered policies", () => {
+      expect(engine.getPolicies()).toEqual([]);
+      engine.addPolicy(autoApproveReadOnly);
+      engine.addPolicy(denyDangerousCommands);
+      const policies = engine.getPolicies();
+      expect(policies).toHaveLength(2);
+      // Sorted by priority — denyDangerousCommands (priority 1) first
+      expect(policies[0].name).toBe(denyDangerousCommands.name);
+      expect(policies[1].name).toBe(autoApproveReadOnly.name);
+    });
+
+    it("getHooks returns registered hooks", () => {
+      expect(engine.getHooks()).toEqual([]);
+      const hook = {
+        name: "test-hook",
+        phase: "pre" as const,
+        execute: async () => ({ override: false }),
+      };
+      engine.addHook(hook);
+      const hooks = engine.getHooks();
+      expect(hooks).toHaveLength(1);
+      expect(hooks[0].name).toBe("test-hook");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Hook non-override paths
+  // -----------------------------------------------------------------------
+
+  describe("hook non-override paths", () => {
+    it("pre-hook that does not override continues to policy evaluation", async () => {
+      engine.addHook({
+        name: "non-overriding-pre",
+        phase: "pre",
+        execute: async () => ({ override: false }),
+      });
+      engine.addPolicy(autoApproveReadOnly);
+
+      const readOnlyTool: ToolDefinition = {
+        name: "test_read",
+        description: "Test tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ type: "success", content: "ok" }),
+        permission: { scope: "repo.read", readOnly: true },
+      };
+
+      const result = await engine.check(readOnlyTool, {}, mockContext);
+      expect(result.decision).toBe("allow");
+      expect(result.source).toBe("policy");
+    });
+
+    it("post-hook that does not override preserves policy decision", async () => {
+      engine.addPolicy(autoApproveReadOnly);
+      engine.addHook({
+        name: "non-overriding-post",
+        phase: "post",
+        execute: async () => ({ override: false }),
+      });
+
+      const readOnlyTool: ToolDefinition = {
+        name: "test_read",
+        description: "Test tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ type: "success", content: "ok" }),
+        permission: { scope: "repo.read", readOnly: true },
+      };
+
+      const result = await engine.check(readOnlyTool, {}, mockContext);
+      expect(result.decision).toBe("allow");
+      expect(result.source).toBe("policy");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // reset clears safety classifier
+  // -----------------------------------------------------------------------
+
+  describe("reset clears classifier", () => {
+    it("reset clears safety classifier, policies, hooks", () => {
+      engine.addPolicy(autoApproveReadOnly);
+      engine.addHook({
+        name: "h",
+        phase: "pre",
+        execute: async () => ({ override: false }),
+      });
+      engine.setSafetyClassifier(new SafetyClassifier());
+      engine.setMode("bypass");
+
+      engine.reset();
+
+      expect(engine.getMode()).toBe("default");
+      expect(engine.getPolicies()).toHaveLength(0);
+      expect(engine.getHooks()).toHaveLength(0);
+    });
   });
 });

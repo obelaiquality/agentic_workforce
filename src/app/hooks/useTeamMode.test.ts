@@ -367,4 +367,14 @@ describe("useTeamStream", () => {
     expect(result.current.connected).toBe(false);
     expect(result.current.events).toHaveLength(0);
   });
+
+  it("ignores malformed non-JSON messages", () => {
+    const { result } = renderHook(() => useTeamStream("t-1"));
+
+    act(() => {
+      mockEventSource.onmessage?.({ data: "not valid json{{{" });
+    });
+
+    expect(result.current.events).toHaveLength(0);
+  });
 });

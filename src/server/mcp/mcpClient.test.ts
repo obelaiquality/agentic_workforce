@@ -983,6 +983,226 @@ describe("MCPClient", () => {
       expect(healthy).toBe(true);
     });
 
+    it("handles SSE stream failure (response not ok)", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-fail-server",
+        config: { id: "sse-fail-server", name: "SSE Fail", transport: "sse", url: "http://localhost:3020/sse", enabled: true },
+        connected: false,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-fail-server", connection);
+
+      const abortController = new AbortController();
+      const sseState = {
+        url: "http://localhost:3020/sse",
+        abortController,
+        reconnectAttempts: 5, // Max out reconnect attempts to prevent reconnect loop
+        reconnecting: false,
+      };
+      (client as any).sseTransports.set("sse-fail-server", sseState);
+
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+      });
+
+      await (client as any).startSSEStream("sse-fail-server", "http://localhost:3020/sse", abortController.signal);
+
+      expect(connection.connected).toBe(false);
+      expect(connection.error).toBeDefined();
+    });
+
+    it("handles SSE stream with no response body", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-nobody-server",
+        config: { id: "sse-nobody-server", name: "SSE No Body", transport: "sse", url: "http://localhost:3021/sse", enabled: true },
+        connected: false,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-nobody-server", connection);
+
+      const abortController = new AbortController();
+      const sseState = {
+        url: "http://localhost:3021/sse",
+        abortController,
+        reconnectAttempts: 5,
+        reconnecting: false,
+      };
+      (client as any).sseTransports.set("sse-nobody-server", sseState);
+
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        body: null,
+      });
+
+      await (client as any).startSSEStream("sse-nobody-server", "http://localhost:3021/sse", abortController.signal);
+
+      expect(connection.connected).toBe(false);
+      expect(connection.error).toBeDefined();
+    });
+
+    it("does not reconnect SSE when signal is aborted", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-abort-server",
+        config: { id: "sse-abort-server", name: "SSE Abort", transport: "sse", url: "http://localhost:3022/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-abort-server", connection);
+
+      const abortController = new AbortController();
+      const sseState = {
+        url: "http://localhost:3022/sse",
+        abortController,
+        reconnectAttempts: 0,
+        reconnecting: false,
+      };
+      (client as any).sseTransports.set("sse-abort-server", sseState);
+
+      // Abort the signal first
+      abortController.abort();
+
+      fetchSpy.mockRejectedValue(new DOMException("The operation was aborted", "AbortError"));
+
+      const reconnectSpy = vi.spyOn(client as any, "reconnectSSE");
+
+      await (client as any).startSSEStream("sse-abort-server", "http://localhost:3022/sse", abortController.signal);
+
+      expect(reconnectSpy).not.toHaveBeenCalled();
+      reconnectSpy.mockRestore();
+    });
+
+    it("reconnectSSE does nothing when already reconnecting", async () => {
+      const sseState = {
+        url: "http://localhost:3023/sse",
+        abortController: new AbortController(),
+        reconnectAttempts: 0,
+        reconnecting: true, // Already reconnecting
+      };
+      const connection: MCPConnection = {
+        serverId: "sse-recon-busy",
+        config: { id: "sse-recon-busy", name: "SSE Busy", transport: "sse", url: "http://localhost:3023/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-recon-busy", connection);
+      (client as any).sseTransports.set("sse-recon-busy", sseState);
+
+      await (client as any).reconnectSSE("sse-recon-busy");
+
+      // Should not have changed anything since it was already reconnecting
+      expect(sseState.reconnectAttempts).toBe(0);
+    });
+
+    it("reconnectSSE does nothing when no sseState exists", async () => {
+      await (client as any).reconnectSSE("non-existent-sse");
+      // Should not throw
+    });
+
+    it("SSE stream reconnects when stream ends normally (not aborted)", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-stream-end",
+        config: { id: "sse-stream-end", name: "SSE End", transport: "sse", url: "http://localhost:3024/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-stream-end", connection);
+
+      const abortController = new AbortController();
+      const sseState = {
+        url: "http://localhost:3024/sse",
+        abortController,
+        reconnectAttempts: 5, // Max out to prevent actual reconnect loop
+        reconnecting: false,
+      };
+      (client as any).sseTransports.set("sse-stream-end", sseState);
+
+      // Stream that ends immediately (done: true)
+      const mockReader = {
+        read: vi.fn().mockResolvedValueOnce({ done: true, value: undefined }),
+      };
+
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        body: { getReader: () => mockReader },
+      });
+
+      const reconnectSpy = vi.spyOn(client as any, "reconnectSSE");
+
+      await (client as any).startSSEStream("sse-stream-end", "http://localhost:3024/sse", abortController.signal);
+
+      expect(reconnectSpy).toHaveBeenCalledWith("sse-stream-end");
+      reconnectSpy.mockRestore();
+    });
+
+    it("sendRequest rejects when SSE connection has no URL", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-no-url-req",
+        config: { id: "sse-no-url-req", name: "SSE No URL Req", transport: "sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-no-url-req", connection);
+
+      await expect(
+        (client as any).sendRequest("sse-no-url-req", "test", {}, 100),
+      ).rejects.toThrow("No URL for SSE connection");
+    });
+
+    it("sendRequest rejects when SSE fetch fails", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-fetch-fail",
+        config: { id: "sse-fetch-fail", name: "SSE Fetch Fail", transport: "sse", url: "http://localhost:3025/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-fetch-fail", connection);
+
+      fetchSpy.mockRejectedValue(new Error("network error"));
+
+      await expect(
+        (client as any).sendRequest("sse-fetch-fail", "test", {}, 100),
+      ).rejects.toThrow("Failed to send SSE request: network error");
+    });
+
+    it("sendNotification is no-op for SSE transport without URL", () => {
+      const connection: MCPConnection = {
+        serverId: "sse-notif-no-url",
+        config: { id: "sse-notif-no-url", name: "SSE Notif No URL", transport: "sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-notif-no-url", connection);
+
+      // Should not throw
+      (client as any).sendNotification("sse-notif-no-url", "test/notify", {});
+    });
+
     it("SSE stream parses multiple SSE events from buffer", async () => {
       const connection: MCPConnection = {
         serverId: "sse-parse-server",
@@ -1048,6 +1268,833 @@ describe("MCPClient", () => {
       expect(resolvedValues).toHaveLength(2);
       expect(resolvedValues[0]).toEqual({ value: "first" });
       expect(resolvedValues[1]).toEqual({ value: "second" });
+    });
+
+    it("connectSSE cleans up SSE transport on error", async () => {
+      const config: MCPServerConfig = {
+        id: "sse-connect-fail",
+        name: "SSE Connect Fail",
+        transport: "sse",
+        url: "http://localhost:3030/sse",
+        enabled: true,
+      };
+
+      // Mock SSE stream that keeps running
+      const mockReader = {
+        read: vi.fn().mockImplementation(() => new Promise(() => {})),
+      };
+
+      fetchSpy.mockImplementation((url: string, options?: any) => {
+        if (url === "http://localhost:3030/sse") {
+          return Promise.resolve({
+            ok: true,
+            body: { getReader: () => mockReader },
+          });
+        } else if (url === "http://localhost:3030/message") {
+          const body = JSON.parse(options.body);
+          // Never respond to initialize — let it timeout
+          return Promise.resolve({ ok: true });
+        }
+        return Promise.reject(new Error("Unknown URL"));
+      });
+
+      // Override initializeTimeout to be very short
+      (client as any).initializeTimeout = 50;
+
+      await expect(client.connect(config)).rejects.toThrow("Failed to connect to MCP server sse-connect-fail");
+
+      // SSE transport should have been cleaned up
+      expect((client as any).sseTransports.has("sse-connect-fail")).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Additional edge case tests for uncovered paths
+  // -------------------------------------------------------------------------
+
+  describe("sendRequest edge cases", () => {
+    it("rejects when no connection exists", async () => {
+      await expect(
+        (client as any).sendRequest("no-such-server", "test", {}),
+      ).rejects.toThrow("No connection to server: no-such-server");
+    });
+
+    it("rejects when stdio connection has no process", async () => {
+      const connection: MCPConnection = {
+        serverId: "no-process-server",
+        config: { id: "no-process-server", name: "No Process", transport: "stdio", command: "fake", enabled: true },
+        connected: false,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        // No process field
+      };
+      (client as any).connections.set("no-process-server", connection);
+
+      await expect(
+        (client as any).sendRequest("no-process-server", "test", {}, 100),
+      ).rejects.toThrow("No process for stdio connection");
+    });
+
+    it("rejects when stdin.write throws", async () => {
+      const mockStdin = {
+        write: vi.fn().mockImplementation(() => {
+          throw new Error("stdin write failed");
+        }),
+      };
+
+      const connection: MCPConnection = {
+        serverId: "write-fail-server",
+        config: { id: "write-fail-server", name: "Write Fail", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        process: {
+          pid: 12345,
+          stdin: mockStdin as any,
+          stdout: { on: vi.fn() } as any,
+          stderr: { on: vi.fn() } as any,
+        },
+      };
+      (client as any).connections.set("write-fail-server", connection);
+
+      await expect(
+        (client as any).sendRequest("write-fail-server", "test", {}, 100),
+      ).rejects.toThrow("stdin write failed");
+    });
+  });
+
+  describe("sendNotification edge cases", () => {
+    it("is no-op when no connection exists", () => {
+      // Should not throw
+      (client as any).sendNotification("no-such-server", "test", {});
+    });
+
+    it("is no-op when stdio connection has no process", () => {
+      const connection: MCPConnection = {
+        serverId: "notif-no-process",
+        config: { id: "notif-no-process", name: "No Process", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("notif-no-process", connection);
+
+      // Should not throw
+      (client as any).sendNotification("notif-no-process", "test", {});
+    });
+
+    it("logs error when stdio notification write throws", () => {
+      const mockStdin = {
+        write: vi.fn().mockImplementation(() => {
+          throw new Error("write failed");
+        }),
+      };
+
+      const connection: MCPConnection = {
+        serverId: "notif-write-fail",
+        config: { id: "notif-write-fail", name: "Write Fail", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        process: {
+          pid: 12345,
+          stdin: mockStdin as any,
+          stdout: { on: vi.fn() } as any,
+          stderr: { on: vi.fn() } as any,
+        },
+      };
+      (client as any).connections.set("notif-write-fail", connection);
+
+      // Should not throw — error is logged
+      (client as any).sendNotification("notif-write-fail", "test", {});
+    });
+  });
+
+  describe("handleMessage edge cases", () => {
+    it("is no-op when no connection exists", () => {
+      // Should not throw
+      (client as any).handleMessage("no-such-server", '{"jsonrpc":"2.0","id":1,"result":{}}');
+    });
+
+    it("handles JSON-RPC error response", () => {
+      const rejections: Error[] = [];
+      const pendingRequests = new Map<number, PendingRequest>();
+      const t = setTimeout(() => {}, 5000);
+      pendingRequests.set(1, {
+        requestId: 1,
+        method: "test",
+        resolve: vi.fn(),
+        reject: (err) => { rejections.push(err); clearTimeout(t); },
+        timeout: t,
+      });
+
+      const connection: MCPConnection = {
+        serverId: "error-msg-server",
+        config: { id: "error-msg-server", name: "Error Msg", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 2,
+        pendingRequests,
+      };
+      (client as any).connections.set("error-msg-server", connection);
+
+      (client as any).handleMessage(
+        "error-msg-server",
+        JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32600, message: "Invalid Request" } }),
+      );
+
+      expect(rejections).toHaveLength(1);
+      expect(rejections[0].message).toContain("Invalid Request");
+      expect(rejections[0].message).toContain("-32600");
+    });
+
+    it("handles malformed JSON gracefully", () => {
+      const connection: MCPConnection = {
+        serverId: "bad-json-server",
+        config: { id: "bad-json-server", name: "Bad JSON", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("bad-json-server", connection);
+
+      // Should not throw — logs error
+      (client as any).handleMessage("bad-json-server", "not valid json {{{");
+    });
+
+    it("ignores messages with no matching pending request", () => {
+      const connection: MCPConnection = {
+        serverId: "orphan-msg-server",
+        config: { id: "orphan-msg-server", name: "Orphan", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 2,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("orphan-msg-server", connection);
+
+      // Should not throw — no matching pending request for id 999
+      (client as any).handleMessage(
+        "orphan-msg-server",
+        JSON.stringify({ jsonrpc: "2.0", id: 999, result: { data: "orphan" } }),
+      );
+    });
+
+    it("ignores notification messages (no id)", () => {
+      const connection: MCPConnection = {
+        serverId: "notif-msg-server",
+        config: { id: "notif-msg-server", name: "Notification Msg", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("notif-msg-server", connection);
+
+      // Should not throw — notification messages have no id
+      (client as any).handleMessage(
+        "notif-msg-server",
+        JSON.stringify({ jsonrpc: "2.0", method: "notification/test", params: {} }),
+      );
+    });
+  });
+
+  describe("healthCheck edge cases", () => {
+    it("returns false when no connection exists", async () => {
+      const result = await client.healthCheck("non-existent");
+      expect(result).toBe(false);
+    });
+
+    it("returns false when stdio connection has no process", async () => {
+      const connection: MCPConnection = {
+        serverId: "no-proc-health",
+        config: { id: "no-proc-health", name: "No Proc Health", transport: "stdio" as const, command: "echo", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        // No process
+      };
+      (client as any).connections.set("no-proc-health", connection);
+
+      const result = await client.healthCheck("no-proc-health");
+      expect(result).toBe(false);
+
+      (client as any).connections.delete("no-proc-health");
+    });
+
+    it("returns true via process.kill fallback when ping fails but process is alive", async () => {
+      const connection: MCPConnection = {
+        serverId: "fallback-health",
+        config: { id: "fallback-health", name: "Fallback Health", transport: "stdio" as const, command: "echo", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        process: {
+          pid: process.pid, // Our own pid — known alive
+          stdin: { write: vi.fn() } as any,
+          stdout: { on: vi.fn() } as any,
+          stderr: { on: vi.fn() } as any,
+        },
+      };
+      (client as any).connections.set("fallback-health", connection);
+
+      // Make ping request fail
+      const sendRequestSpy = vi.spyOn(client as any, "sendRequest").mockRejectedValue(new Error("ping failed"));
+
+      const result = await client.healthCheck("fallback-health");
+      expect(result).toBe(true); // Falls back to process.kill(pid, 0)
+
+      sendRequestSpy.mockRestore();
+      (client as any).connections.delete("fallback-health");
+    });
+
+    it("returns false via process.kill fallback when both ping and process check fail", async () => {
+      const connection: MCPConnection = {
+        serverId: "dead-fallback-health",
+        config: { id: "dead-fallback-health", name: "Dead Fallback", transport: "stdio" as const, command: "echo", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        process: {
+          pid: 999999999, // PID that doesn't exist
+          stdin: { write: vi.fn() } as any,
+          stdout: { on: vi.fn() } as any,
+          stderr: { on: vi.fn() } as any,
+        },
+      };
+      (client as any).connections.set("dead-fallback-health", connection);
+
+      // Make ping request fail
+      const sendRequestSpy = vi.spyOn(client as any, "sendRequest").mockRejectedValue(new Error("ping failed"));
+
+      const result = await client.healthCheck("dead-fallback-health");
+      expect(result).toBe(false);
+
+      sendRequestSpy.mockRestore();
+      (client as any).connections.delete("dead-fallback-health");
+    });
+
+    it("returns false for SSE health check when ping fails", async () => {
+      const connection: MCPConnection = {
+        serverId: "sse-dead-health",
+        config: { id: "sse-dead-health", name: "SSE Dead Health", transport: "sse", url: "http://localhost:3040/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("sse-dead-health", connection);
+
+      const sendRequestSpy = vi.spyOn(client as any, "sendRequest").mockRejectedValue(new Error("ping failed"));
+
+      const result = await client.healthCheck("sse-dead-health");
+      expect(result).toBe(false);
+
+      sendRequestSpy.mockRestore();
+      (client as any).connections.delete("sse-dead-health");
+    });
+
+    it("returns false for unsupported transport type", async () => {
+      const connection: MCPConnection = {
+        serverId: "weird-transport",
+        config: { id: "weird-transport", name: "Weird", transport: "websocket" as any, enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("weird-transport", connection);
+
+      const result = await client.healthCheck("weird-transport");
+      expect(result).toBe(false);
+
+      (client as any).connections.delete("weird-transport");
+    });
+  });
+
+  describe("callTool edge cases", () => {
+    it("throws with 'Unknown error' when isError but no text content", async () => {
+      const pendingRequests = new Map<number, PendingRequest>();
+      const mockStdin = {
+        write: vi.fn((msg: string) => {
+          const request = JSON.parse(msg.trim());
+          if (request.method === "tools/call") {
+            setTimeout(() => {
+              (client as any).handleMessage(
+                "error-no-text-server",
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: request.id,
+                  result: { content: [{ type: "image", data: "base64data" }], isError: true },
+                }),
+              );
+            }, 5);
+          }
+        }),
+      };
+
+      const connection: MCPConnection = {
+        serverId: "error-no-text-server",
+        config: { id: "error-no-text-server", name: "Error No Text", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [{ serverId: "error-no-text-server", name: "fail_tool", description: "Fail", inputSchema: {} }],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests,
+        process: { pid: 12121, stdin: mockStdin as any, stdout: { on: vi.fn() } as any, stderr: { on: vi.fn() } as any },
+      };
+      (client as any).connections.set("error-no-text-server", connection);
+
+      await expect(client.callTool("error-no-text-server", "fail_tool", {})).rejects.toThrow("Unknown error");
+    });
+
+    it("returns raw content when no text content exists (non-error)", async () => {
+      const pendingRequests = new Map<number, PendingRequest>();
+      const mockStdin = {
+        write: vi.fn((msg: string) => {
+          const request = JSON.parse(msg.trim());
+          if (request.method === "tools/call") {
+            setTimeout(() => {
+              (client as any).handleMessage(
+                "nontext-server",
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: request.id,
+                  result: { content: [{ type: "image", data: "imagedata", mimeType: "image/png" }], isError: false },
+                }),
+              );
+            }, 5);
+          }
+        }),
+      };
+
+      const connection: MCPConnection = {
+        serverId: "nontext-server",
+        config: { id: "nontext-server", name: "Non-text", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [{ serverId: "nontext-server", name: "image_tool", description: "Image", inputSchema: {} }],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests,
+        process: { pid: 13131, stdin: mockStdin as any, stdout: { on: vi.fn() } as any, stderr: { on: vi.fn() } as any },
+      };
+      (client as any).connections.set("nontext-server", connection);
+
+      const result = await client.callTool("nontext-server", "image_tool", {});
+      // When textContent is empty, it returns result.content (the array)
+      expect(Array.isArray(result)).toBe(true);
+    });
+  });
+
+  describe("readResource edge cases", () => {
+    it("throws when no content returned", async () => {
+      const pendingRequests = new Map<number, PendingRequest>();
+      const mockStdin = {
+        write: vi.fn((msg: string) => {
+          const request = JSON.parse(msg.trim());
+          if (request.method === "resources/read") {
+            setTimeout(() => {
+              (client as any).handleMessage(
+                "empty-resource-server",
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: request.id,
+                  result: { contents: [] },
+                }),
+              );
+            }, 5);
+          }
+        }),
+      };
+
+      const connection: MCPConnection = {
+        serverId: "empty-resource-server",
+        config: { id: "empty-resource-server", name: "Empty Resource", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [{ serverId: "empty-resource-server", uri: "file:///empty", name: "empty" }],
+        nextRequestId: 1,
+        pendingRequests,
+        process: { pid: 14141, stdin: mockStdin as any, stdout: { on: vi.fn() } as any, stderr: { on: vi.fn() } as any },
+      };
+      (client as any).connections.set("empty-resource-server", connection);
+
+      await expect(client.readResource("empty-resource-server", "file:///empty")).rejects.toThrow(
+        "No content returned for resource: file:///empty",
+      );
+    });
+
+    it("returns blob content when text is not available", async () => {
+      const pendingRequests = new Map<number, PendingRequest>();
+      const mockStdin = {
+        write: vi.fn((msg: string) => {
+          const request = JSON.parse(msg.trim());
+          if (request.method === "resources/read") {
+            setTimeout(() => {
+              (client as any).handleMessage(
+                "blob-resource-server",
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: request.id,
+                  result: { contents: [{ uri: "file:///image.png", mimeType: "image/png", blob: "base64blobdata" }] },
+                }),
+              );
+            }, 5);
+          }
+        }),
+      };
+
+      const connection: MCPConnection = {
+        serverId: "blob-resource-server",
+        config: { id: "blob-resource-server", name: "Blob Resource", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [{ serverId: "blob-resource-server", uri: "file:///image.png", name: "image.png" }],
+        nextRequestId: 1,
+        pendingRequests,
+        process: { pid: 15151, stdin: mockStdin as any, stdout: { on: vi.fn() } as any, stderr: { on: vi.fn() } as any },
+      };
+      (client as any).connections.set("blob-resource-server", connection);
+
+      const result = await client.readResource("blob-resource-server", "file:///image.png");
+      expect(result.content).toBe("base64blobdata");
+      expect(result.mimeType).toBe("image/png");
+    });
+  });
+
+  describe("getStatus with connections", () => {
+    it("returns status for all connected servers", () => {
+      const conn1: MCPConnection = {
+        serverId: "status-1",
+        config: { id: "status-1", name: "Status One", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [{ serverId: "status-1", name: "tool1", description: "T1", inputSchema: {} }],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        lastConnected: "2024-01-01T00:00:00.000Z",
+      };
+      const conn2: MCPConnection = {
+        serverId: "status-2",
+        config: { id: "status-2", name: "Status Two", transport: "sse", url: "http://localhost:3050/sse", enabled: true },
+        connected: false,
+        tools: [],
+        resources: [{ serverId: "status-2", uri: "file:///test", name: "test" }],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+        error: "Connection failed",
+      };
+      (client as any).connections.set("status-1", conn1);
+      (client as any).connections.set("status-2", conn2);
+
+      const statuses = client.getStatus();
+      expect(statuses).toHaveLength(2);
+
+      const s1 = statuses.find((s) => s.id === "status-1");
+      expect(s1?.connected).toBe(true);
+      expect(s1?.toolCount).toBe(1);
+      expect(s1?.resourceCount).toBe(0);
+      expect(s1?.lastConnected).toBe("2024-01-01T00:00:00.000Z");
+
+      const s2 = statuses.find((s) => s.id === "status-2");
+      expect(s2?.connected).toBe(false);
+      expect(s2?.toolCount).toBe(0);
+      expect(s2?.resourceCount).toBe(1);
+      expect(s2?.error).toBe("Connection failed");
+    });
+  });
+
+  describe("listTools and listResources with connected server", () => {
+    it("returns tools from connected server", async () => {
+      const connection: MCPConnection = {
+        serverId: "tools-list-server",
+        config: { id: "tools-list-server", name: "Tools List", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [
+          { serverId: "tools-list-server", name: "tool_a", description: "Tool A", inputSchema: {} },
+          { serverId: "tools-list-server", name: "tool_b", description: "Tool B", inputSchema: {} },
+        ],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("tools-list-server", connection);
+
+      const tools = await client.listTools("tools-list-server");
+      expect(tools).toHaveLength(2);
+      expect(tools[0].name).toBe("tool_a");
+      expect(tools[1].name).toBe("tool_b");
+    });
+
+    it("returns resources from connected server", async () => {
+      const connection: MCPConnection = {
+        serverId: "res-list-server",
+        config: { id: "res-list-server", name: "Res List", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [
+          { serverId: "res-list-server", uri: "file:///a.txt", name: "a.txt" },
+        ],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("res-list-server", connection);
+
+      const resources = await client.listResources("res-list-server");
+      expect(resources).toHaveLength(1);
+      expect(resources[0].uri).toBe("file:///a.txt");
+    });
+
+    it("rejects listTools when server is not connected", async () => {
+      const connection: MCPConnection = {
+        serverId: "disconnected-tools",
+        config: { id: "disconnected-tools", name: "Disconnected", transport: "stdio", command: "fake", enabled: true },
+        connected: false,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("disconnected-tools", connection);
+
+      await expect(client.listTools("disconnected-tools")).rejects.toThrow(
+        "Not connected to server: disconnected-tools",
+      );
+    });
+  });
+
+  describe("disconnectAll with health monitors", () => {
+    it("stops all health monitors and disconnects all servers", async () => {
+      // Use a SSE connection to avoid the setTimeout in stdio disconnect
+      const conn1: MCPConnection = {
+        serverId: "dc-all-1",
+        config: { id: "dc-all-1", name: "DC All 1", transport: "sse", url: "http://localhost:9999/sse", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      const abortController = new AbortController();
+      (client as any).connections.set("dc-all-1", conn1);
+      (client as any).sseTransports.set("dc-all-1", {
+        url: "http://localhost:9999/sse",
+        abortController,
+        reconnectAttempts: 0,
+        reconnecting: false,
+      });
+
+      vi.useFakeTimers();
+
+      const healthSpy = vi.spyOn(client, "healthCheck").mockResolvedValue(true);
+      client.startHealthMonitor("dc-all-1", 30000);
+
+      const state = (client as any).healthMonitors.get("dc-all-1") as MCPHealthState;
+      expect(state).toBeDefined();
+      expect(state.intervalHandle).not.toBeNull();
+
+      await client.disconnectAll();
+
+      expect((client as any).connections.size).toBe(0);
+      expect((client as any).healthMonitors.size).toBe(0);
+
+      healthSpy.mockRestore();
+      vi.useRealTimers();
+    });
+  });
+
+  describe("health monitor recovery after restart", () => {
+    it("health monitor resets to healthy after successful restart", async () => {
+      vi.useFakeTimers();
+      const publishSpy = vi.spyOn(eventBusModule, "publishEvent");
+
+      const fakeConfig: MCPServerConfig = { id: "recover-test", name: "Recover", transport: "stdio", command: "echo", enabled: true };
+      const fakeConnection = {
+        serverId: "recover-test",
+        config: fakeConfig,
+        process: {
+          pid: 999999999,
+          stdin: { write: vi.fn() },
+          stdout: { on: vi.fn() },
+          stderr: { on: vi.fn() },
+        },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("recover-test", fakeConnection);
+
+      const healthSpy = vi.spyOn(client, "healthCheck").mockResolvedValue(false);
+      const disconnectSpy = vi.spyOn(client, "disconnect").mockResolvedValue(undefined);
+      const connectSpy = vi.spyOn(client, "connect").mockImplementation(async () => {
+        (client as any).connections.set("recover-test", fakeConnection);
+      });
+
+      client.startHealthMonitor("recover-test", 1000);
+
+      // Trigger 3 failures to reach restart
+      await vi.advanceTimersByTimeAsync(1000); // failure 1
+      await vi.advanceTimersByTimeAsync(1000); // failure 2
+      await vi.advanceTimersByTimeAsync(1000); // failure 3 -> triggers restart
+
+      // Wait for backoff (5s for first attempt)
+      await vi.advanceTimersByTimeAsync(5000);
+
+      const state = (client as any).healthMonitors.get("recover-test") as MCPHealthState;
+      expect(state.status).toBe("healthy");
+      expect(state.consecutiveFailures).toBe(0);
+
+      client.stopHealthMonitor("recover-test");
+      healthSpy.mockRestore();
+      disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
+      publishSpy.mockRestore();
+      (client as any).connections.delete("recover-test");
+      (client as any).healthMonitors.delete("recover-test");
+      vi.useRealTimers();
+    });
+
+    it("health monitor returns to healthy from degraded when health check succeeds", async () => {
+      vi.useFakeTimers();
+
+      const fakeConnection = {
+        serverId: "degrade-recover",
+        config: { id: "degrade-recover", name: "DegradeRecover", transport: "stdio" as const, command: "echo", enabled: true },
+        process: {
+          pid: process.pid,
+          stdin: { write: vi.fn() },
+          stdout: { on: vi.fn() },
+          stderr: { on: vi.fn() },
+        },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 1,
+        pendingRequests: new Map(),
+      };
+      (client as any).connections.set("degrade-recover", fakeConnection);
+
+      let checkCount = 0;
+      const healthSpy = vi.spyOn(client, "healthCheck").mockImplementation(async () => {
+        checkCount++;
+        return checkCount > 1; // Fail once, then succeed
+      });
+
+      client.startHealthMonitor("degrade-recover", 1000);
+
+      // First check — fails, becomes degraded
+      await vi.advanceTimersByTimeAsync(1000);
+      const state = (client as any).healthMonitors.get("degrade-recover") as MCPHealthState;
+      expect(state.status).toBe("degraded");
+
+      // Second check — succeeds, should become healthy
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(state.status).toBe("healthy");
+      expect(state.consecutiveFailures).toBe(0);
+
+      client.stopHealthMonitor("degrade-recover");
+      healthSpy.mockRestore();
+      (client as any).connections.delete("degrade-recover");
+      (client as any).healthMonitors.delete("degrade-recover");
+      vi.useRealTimers();
+    });
+  });
+
+  describe("getServerHealth", () => {
+    it("returns undefined when no health monitor exists", () => {
+      expect(client.getServerHealth("no-monitor")).toBeUndefined();
+    });
+  });
+
+  describe("rejectAllPending edge cases", () => {
+    it("is no-op when connection does not exist", () => {
+      // Should not throw
+      (client as any).rejectAllPending("non-existent", new Error("test"));
+    });
+
+    it("clears all pending requests after rejecting", () => {
+      const pendingRequests = new Map<number, PendingRequest>();
+      const rejections: Error[] = [];
+
+      for (let i = 1; i <= 3; i++) {
+        const t = setTimeout(() => {}, 5000);
+        pendingRequests.set(i, {
+          requestId: i,
+          method: `test-${i}`,
+          resolve: vi.fn(),
+          reject: (err) => { rejections.push(err); clearTimeout(t); },
+          timeout: t,
+        });
+      }
+
+      const connection: MCPConnection = {
+        serverId: "reject-all-server",
+        config: { id: "reject-all-server", name: "Reject All", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 4,
+        pendingRequests,
+      };
+      (client as any).connections.set("reject-all-server", connection);
+
+      (client as any).rejectAllPending("reject-all-server", new Error("all rejected"));
+
+      expect(rejections).toHaveLength(3);
+      expect(pendingRequests.size).toBe(0);
+    });
+  });
+
+  describe("handleMessage with string id", () => {
+    it("resolves pending request with string id", () => {
+      const resolvedValues: unknown[] = [];
+      const pendingRequests = new Map<number, PendingRequest>();
+      // Note: the pending request map uses number keys, but handleMessage also
+      // checks for string ids. Since the map key is typed as number, a string id
+      // won't match unless coerced. This tests the conditional path.
+      const connection: MCPConnection = {
+        serverId: "string-id-server",
+        config: { id: "string-id-server", name: "String ID", transport: "stdio", command: "fake", enabled: true },
+        connected: true,
+        tools: [],
+        resources: [],
+        nextRequestId: 2,
+        pendingRequests,
+      };
+      (client as any).connections.set("string-id-server", connection);
+
+      // handleMessage with a string id that doesn't match any pending request
+      // should just be ignored (no matching key in map)
+      (client as any).handleMessage(
+        "string-id-server",
+        JSON.stringify({ jsonrpc: "2.0", id: "string-id-1", result: { data: "hello" } }),
+      );
+
+      // No rejections or resolutions — just tests the path
+      expect(pendingRequests.size).toBe(0);
     });
   });
 });

@@ -257,6 +257,121 @@ describe("MemoryBrowserPanel", () => {
     });
   });
 
+  it("renders all memory kinds with correct labels and colors", async () => {
+    const allKindMemories: MemoryRecord[] = [
+      {
+        id: "mem-scratchpad",
+        kind: "scratchpad",
+        repoId: "repo-1",
+        aggregateId: "run-1",
+        content: "Scratchpad note",
+        citations: [],
+        confidence: 0.7,
+        staleAfter: null,
+        createdAt: "2024-01-15T10:00:00Z",
+        updatedAt: "2024-01-15T10:00:00Z",
+      },
+      {
+        id: "mem-procedural",
+        kind: "procedural",
+        repoId: "repo-1",
+        aggregateId: "run-1",
+        content: "Procedural step",
+        citations: [],
+        confidence: 0.8,
+        staleAfter: null,
+        createdAt: "2024-01-15T10:00:00Z",
+        updatedAt: "2024-01-15T10:00:00Z",
+      },
+      {
+        id: "mem-user",
+        kind: "user",
+        repoId: "repo-1",
+        aggregateId: "run-1",
+        content: "User preference",
+        citations: [],
+        confidence: 0.9,
+        staleAfter: null,
+        createdAt: "2024-01-15T10:00:00Z",
+        updatedAt: "2024-01-15T10:00:00Z",
+      },
+      {
+        id: "mem-reflection",
+        kind: "reflection",
+        repoId: "repo-1",
+        aggregateId: "run-1",
+        content: "Reflection insight",
+        citations: [],
+        confidence: 0.6,
+        staleAfter: null,
+        createdAt: "2024-01-15T10:00:00Z",
+        updatedAt: "2024-01-15T10:00:00Z",
+      },
+    ];
+
+    vi.mocked(apiClient.searchMemoryV3).mockResolvedValue({ items: allKindMemories });
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByText("Scratchpad")).toBeInTheDocument();
+      expect(screen.getByText("Procedural")).toBeInTheDocument();
+      expect(screen.getByText("User")).toBeInTheDocument();
+      expect(screen.getByText("Reflection")).toBeInTheDocument();
+    });
+  });
+
+  it("renders memory without citations (empty citations array)", async () => {
+    const noCitationMemories: MemoryRecord[] = [
+      {
+        id: "mem-no-cit",
+        kind: "fact",
+        repoId: "repo-1",
+        aggregateId: "run-1",
+        content: "No citations here",
+        citations: [],
+        confidence: 0.8,
+        staleAfter: null,
+        createdAt: "2024-01-15T10:00:00Z",
+        updatedAt: "2024-01-15T10:00:00Z",
+      },
+    ];
+
+    vi.mocked(apiClient.searchMemoryV3).mockResolvedValue({ items: noCitationMemories });
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByText("No citations here")).toBeInTheDocument();
+    });
+    // No citation spans should be rendered
+    expect(screen.queryByText("src/auth.ts")).not.toBeInTheDocument();
+  });
+
+  it("renders memory with metadata and shows aggregate id", async () => {
+    const metadataMemories: MemoryRecord[] = [
+      {
+        id: "mem-meta",
+        kind: "episodic",
+        repoId: "repo-1",
+        aggregateId: "agg-42",
+        content: "Memory with metadata",
+        citations: ["file.ts"],
+        confidence: 0.9,
+        staleAfter: null,
+        metadata: { source: "dream-cycle", version: 2 },
+        createdAt: "2024-01-15T10:00:00Z",
+        updatedAt: "2024-01-15T10:00:00Z",
+      },
+    ];
+
+    vi.mocked(apiClient.searchMemoryV3).mockResolvedValue({ items: metadataMemories });
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByText("Memory with metadata")).toBeInTheDocument();
+      expect(screen.getByText("Aggregate: agg-42")).toBeInTheDocument();
+    });
+  });
+
   describe("Knowledge Tab", () => {
     it("renders both Memories and Knowledge tabs", () => {
       vi.mocked(apiClient.searchMemoryV3).mockResolvedValue({ items: [] });

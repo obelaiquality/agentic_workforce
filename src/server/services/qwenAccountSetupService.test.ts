@@ -507,5 +507,105 @@ describe("QwenAccountSetupService", () => {
 
       vi.useRealTimers();
     });
+
+    it("appends stdout output to session log via append function", async () => {
+      const mockAccount = {
+        id: "account-stdout",
+        providerId: "qwen-cli",
+        profilePath: "/test/profile",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrisma.providerAccount.findUniqueOrThrow.mockResolvedValue(mockAccount);
+      mockPrisma.providerAccount.findMany.mockResolvedValue([mockAccount]);
+
+      await service.startAuth("account-stdout");
+
+      // Emit stdout data — exercises the append function (lines 196-204)
+      mockSpawnChild.stdout.emit("data", "line1\nline2\nline3\n");
+
+      // Check the session log by listing sessions
+      const sessions = await service.listAuthSessions();
+      const session = sessions.find((s) => s.accountId === "account-stdout");
+      expect(session).toBeDefined();
+      expect(session!.log.length).toBeGreaterThan(0);
+      expect(session!.log.some((l) => l.includes("line1"))).toBe(true);
+    });
+
+    it("appends stderr output to session log via append function", async () => {
+      const mockAccount = {
+        id: "account-stderr",
+        providerId: "qwen-cli",
+        profilePath: "/test/profile",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrisma.providerAccount.findUniqueOrThrow.mockResolvedValue(mockAccount);
+      mockPrisma.providerAccount.findMany.mockResolvedValue([mockAccount]);
+
+      await service.startAuth("account-stderr");
+
+      // Emit stderr data
+      mockSpawnChild.stderr.emit("data", "warning: something happened\n");
+
+      const sessions = await service.listAuthSessions();
+      const session = sessions.find((s) => s.accountId === "account-stderr");
+      expect(session).toBeDefined();
+      expect(session!.log.length).toBeGreaterThan(0);
+    });
+
+    it("filters empty lines and trims whitespace in append function", async () => {
+      const mockAccount = {
+        id: "account-filter",
+        providerId: "qwen-cli",
+        profilePath: "/test/profile",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrisma.providerAccount.findUniqueOrThrow.mockResolvedValue(mockAccount);
+      mockPrisma.providerAccount.findMany.mockResolvedValue([mockAccount]);
+
+      await service.startAuth("account-filter");
+
+      // Emit data with empty lines and whitespace
+      mockSpawnChild.stdout.emit("data", "  \n\n  valid line  \n\n");
+
+      const sessions = await service.listAuthSessions();
+      const session = sessions.find((s) => s.accountId === "account-filter");
+      expect(session).toBeDefined();
+      // Empty/whitespace-only lines should be filtered out
+      expect(session!.log.every((l) => l.trim().length > 0)).toBe(true);
+    });
+
+    it("handles process exit with null code (unexpected exit)", async () => {
+      const profilePath = path.join(tmpDir, "profile-null-exit");
+
+      const mockAccount = {
+        id: "account-null-exit",
+        providerId: "qwen-cli",
+        profilePath,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrisma.providerAccount.findUniqueOrThrow.mockResolvedValue(mockAccount);
+      mockPrisma.providerAccount.findMany.mockResolvedValue([mockAccount]);
+
+      await service.startAuth("account-null-exit");
+
+      // Simulate process exit with null code (e.g., killed by signal)
+      mockSpawnChild.emit("close", null);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const sessions = await service.listAuthSessions();
+      const session = sessions.find((s) => s.accountId === "account-null-exit");
+      expect(session).toBeDefined();
+      expect(session!.status).toBe("failed");
+      expect(session!.log.some((l) => l.includes("process exited unexpectedly"))).toBe(true);
+    });
   });
 });

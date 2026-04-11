@@ -303,4 +303,15 @@ describe("useInterviewStream", () => {
     expect(result.current.latestScores).toHaveLength(0);
     expect(result.current.events).toHaveLength(0);
   });
+
+  it("ignores malformed non-JSON messages", () => {
+    const { result } = renderHook(() => useInterviewStream("s-1"));
+
+    act(() => {
+      mockEventSource.onmessage?.({ data: "not valid json{{{" });
+    });
+
+    expect(result.current.events).toHaveLength(0);
+    expect(result.current.latestScores).toHaveLength(0);
+  });
 });

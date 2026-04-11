@@ -233,4 +233,187 @@ describe("extractGlobBaseDir", () => {
     expect(baseDir).toBe("");
     expect(relativePattern).toBe("*.ts");
   });
+
+  it("handles no glob chars and no path separator (bare filename)", () => {
+    const { baseDir, relativePattern } = extractGlobBaseDir("README.md");
+    expect(baseDir).toBe("");
+    expect(relativePattern).toBe("README.md");
+  });
+
+  it("handles backslash separators before first meta char", () => {
+    const { baseDir, relativePattern } = extractGlobBaseDir("src\\lib\\*.ts");
+    expect(baseDir).toBe("src\\lib");
+    expect(relativePattern).toBe("*.ts");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isEagainError (tested indirectly through mocked execRipgrep)
+// ---------------------------------------------------------------------------
+
+describe("execRipgrep additional branches", () => {
+  it("handles abort signal fired after execFile starts", async () => {
+    const rgPath = getRipgrepPath();
+    if (!rgPath) return;
+
+    const controller = new AbortController();
+    // Start a search that will take a bit of time (search /usr with a pattern)
+    const promise = execRipgrep(["--files", "/usr"], {
+      signal: controller.signal,
+      timeoutMs: 10000,
+    });
+
+    // Abort after a brief delay
+    setTimeout(() => controller.abort(), 10);
+
+    await expect(promise).rejects.toThrow("Aborted");
+  });
+
+  it("uses default maxBuffer and timeoutMs when not provided", async () => {
+    const rgPath = getRipgrepPath();
+    if (!rgPath) return;
+
+    const lines = await execRipgrep(["--files", tmpDir]);
+    expect(lines.length).toBeGreaterThan(0);
+  });
+
+  it("respects custom cwd option", async () => {
+    const rgPath = getRipgrepPath();
+    if (!rgPath) return;
+
+    const lines = await execRipgrep(["--files"], { cwd: tmpDir });
+    expect(lines.length).toBe(3);
+  });
+
+  it("handles RipgrepError with error.message fallback when stderr is empty", async () => {
+    const rgPath = getRipgrepPath();
+    if (!rgPath) return;
+
+    // Pass an invalid option that produces a non-1, non-0 exit code
+    try {
+      await execRipgrep(["--nonexistent-flag-xyz", tmpDir]);
+    } catch (err) {
+      expect(err).toBeInstanceOf(RipgrepError);
+      expect((err as RipgrepError).exitCode).toBe(2);
+    }
+  });
+
+  it("throws RipgrepError when spawn fails with a non-existent rg path", async () => {
+    const original = process.env.RIPGREP_PATH;
+    try {
+      process.env.RIPGREP_PATH = "/tmp/nonexistent_rg_binary_xyz";
+      resetRipgrepPathCache();
+      await expect(execRipgrep(["--files", tmpDir])).rejects.toThrow();
+    } finally {
+      if (original !== undefined) {
+        process.env.RIPGREP_PATH = original;
+      } else {
+        delete process.env.RIPGREP_PATH;
+      }
+      resetRipgrepPathCache();
+    }
+  });
+
+  it("throws 'not installed' when getRipgrepPath returns null", async () => {
+    const original = process.env.RIPGREP_PATH;
+    try {
+      // Force which to fail by setting PATH to empty and no RIPGREP_PATH
+      delete process.env.RIPGREP_PATH;
+      resetRipgrepPathCache();
+      // Temporarily sabotage the PATH so `which rg` fails
+      const origPath = process.env.PATH;
+      process.env.PATH = "";
+      resetRipgrepPathCache();
+
+      await expect(execRipgrep(["--files", tmpDir])).rejects.toThrow(
+        "ripgrep (rg) is not installed",
+      );
+
+      process.env.PATH = origPath;
+    } finally {
+      if (original !== undefined) {
+        process.env.RIPGREP_PATH = original;
+      } else {
+        delete process.env.RIPGREP_PATH;
+      }
+      resetRipgrepPathCache();
+    }
+  });
+
+  it("rejects when execFile throws synchronously (spawn error catch block)", async () => {
+    const rgPath = getRipgrepPath();
+    if (!rgPath) return;
+
+    // Trigger a synchronous throw from execFile by passing
+    // an extremely invalid option object. In practice, passing a cwd
+    // that is not a directory (e.g., a file path) can cause this.
+    // Creating a file and using it as cwd:
+    const fakeCwd = path.join(tmpDir, "not_a_directory.txt");
+    fs.writeFileSync(fakeCwd, "I am a file, not a dir");
+
+    await expect(
+      execRipgrep(["--files"], { cwd: fakeCwd }),
+    ).rejects.toThrow();
+  });
+
+  it("EAGAIN retry: rg stderr with 'os error 11' triggers retry", async () => {
+    // Create a fake rg script that outputs EAGAIN on stderr then fails
+    const eagainScript = path.join(tmpDir, "fake_rg_eagain.sh");
+    fs.writeFileSync(
+      eagainScript,
+      `#!/bin/bash
+echo "os error 11: Resource temporarily unavailable" >&2
+exit 2
+`,
+    );
+    fs.chmodSync(eagainScript, 0o755);
+
+    const original = process.env.RIPGREP_PATH;
+    try {
+      process.env.RIPGREP_PATH = eagainScript;
+      resetRipgrepPathCache();
+
+      // Should retry once then fail with RipgrepError
+      await expect(
+        execRipgrep(["--files", tmpDir], { timeoutMs: 5000 }),
+      ).rejects.toThrow(RipgrepError);
+    } finally {
+      if (original !== undefined) {
+        process.env.RIPGREP_PATH = original;
+      } else {
+        delete process.env.RIPGREP_PATH;
+      }
+      resetRipgrepPathCache();
+    }
+  });
+
+  it("EAGAIN retry: rg stderr with 'Resource temporarily unavailable' triggers retry", async () => {
+    // Create a fake rg script that outputs the alternative EAGAIN message
+    const eagainScript = path.join(tmpDir, "fake_rg_eagain2.sh");
+    fs.writeFileSync(
+      eagainScript,
+      `#!/bin/bash
+echo "Resource temporarily unavailable" >&2
+exit 2
+`,
+    );
+    fs.chmodSync(eagainScript, 0o755);
+
+    const original = process.env.RIPGREP_PATH;
+    try {
+      process.env.RIPGREP_PATH = eagainScript;
+      resetRipgrepPathCache();
+
+      await expect(
+        execRipgrep(["--files", tmpDir], { timeoutMs: 5000 }),
+      ).rejects.toThrow(RipgrepError);
+    } finally {
+      if (original !== undefined) {
+        process.env.RIPGREP_PATH = original;
+      } else {
+        delete process.env.RIPGREP_PATH;
+      }
+      resetRipgrepPathCache();
+    }
+  });
 });

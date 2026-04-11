@@ -5,6 +5,8 @@ import {
   listSubtasksTool,
   _clearSubtasks,
   _getSubtasks,
+  setSubtaskService,
+  getSubtaskService,
 } from "./taskDecomposition";
 import type { ToolContext } from "../types";
 
@@ -389,6 +391,23 @@ describe("taskDecomposition tools", () => {
         expect(result.content).toContain("No active subtasks found");
         expect(result.metadata?.count).toBe(0);
       }
+    });
+
+    it("should return 'No subtasks found' message when include_completed is true and no subtasks exist", async () => {
+      const result = await listSubtasksTool.execute({ include_completed: true }, mockContext);
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toBe("No subtasks found for this ticket.");
+        expect(result.metadata?.count).toBe(0);
+      }
+    });
+
+    it("should allow overriding subtask service via setSubtaskService", async () => {
+      const { SubtaskService } = await import("../../services/subtaskService");
+      const customService = new SubtaskService();
+      setSubtaskService(customService);
+      expect(getSubtaskService()).toBe(customService);
     });
 
     it("should filter subtasks by parent ticket", async () => {

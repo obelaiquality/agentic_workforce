@@ -482,4 +482,297 @@ describe("InterviewModeOrchestrator", () => {
     expect(callData.constraintsScore).toBeCloseTo(0.2);
     expect(callData.successScore).toBeCloseTo(0.1);
   });
+
+  it("execute() crystallizes immediately when initial ambiguity is below threshold", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: LOW_AMBIGUITY_SCORES }) // scoring — low ambiguity
+        .mockResolvedValueOnce({ text: "## Goal\nBuild a CLI tool" }), // crystallization
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(orch.execute(baseInput));
+
+    const types = events.map((e) => e.type);
+    expect(types).toEqual([
+      "interview_started",
+      "interview_scored",
+      "interview_spec_crystallized",
+    ]);
+    expect(types).not.toContain("interview_question");
+  });
+
+  it("execute() uses default values for optional input fields", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: HIGH_AMBIGUITY_SCORES })
+        .mockResolvedValueOnce({ text: "What do you want?" }),
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const minimalInput = {
+      runId: "run-2",
+      repoId: "repo-2",
+      objective: "Build something",
+      actor: "user-2",
+      worktreePath: "/tmp/w",
+      // No maxRounds, ambiguityThreshold, isGreenfield, ticketId, handoffMode
+    };
+    const events = await collectEvents(orch.execute(minimalInput as any));
+    expect(events[0].type).toBe("interview_started");
+  });
+
+  it("scoreDimensions falls back to defaults on LLM error", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockRejectedValueOnce(new Error("LLM timeout")) // scoring fails
+        .mockResolvedValueOnce({ text: "What is your goal?" }), // question succeeds
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(orch.execute(baseInput));
+
+    const scored = events.find((e) => e.type === "interview_scored") as any;
+    // Defaults: all 0.5. Greenfield ambiguity = 1 - 0.5*(0.30+0.25+0.20+0.15+0.10) = 1 - 0.5 = 0.5
+    expect(scored.dimensions.intent).toBeCloseTo(0.5);
+    expect(scored.dimensions.outcome).toBeCloseTo(0.5);
+    expect(scored.overall).toBeCloseTo(0.5);
+  });
+
+  it("scoreDimensions returns brownfield defaults with context on error", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockRejectedValueOnce(new Error("LLM error")) // scoring fails
+        .mockResolvedValueOnce({ text: "Clarify scope?" }), // question
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const brownfieldInput = { ...baseInput, isGreenfield: false };
+    const events = await collectEvents(orch.execute(brownfieldInput));
+
+    const scored = events.find((e) => e.type === "interview_scored") as any;
+    expect(scored.dimensions.context).toBeCloseTo(0.5);
+  });
+
+  it("generateQuestion falls back to default question on LLM error", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: HIGH_AMBIGUITY_SCORES }) // scoring works
+        .mockRejectedValueOnce(new Error("LLM question failure")), // question fails
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(orch.execute(baseInput));
+
+    const question = events.find((e) => e.type === "interview_question") as any;
+    // The weakest dimension from HIGH_AMBIGUITY_SCORES is scope or success (both 0.1)
+    expect(question.question).toMatch(/Can you clarify the \w+ aspect of your objective\?/);
+  });
+
+  it("crystallize falls back to raw objective on LLM error", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: LOW_AMBIGUITY_SCORES }) // scoring — low ambiguity
+        .mockRejectedValueOnce(new Error("crystallization failed")), // crystallization fails
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(orch.execute(baseInput));
+
+    const crystallized = events.find((e) => e.type === "interview_spec_crystallized") as any;
+    expect(crystallized.specContent).toContain("## Goal");
+    expect(crystallized.specContent).toContain("Build a CLI tool");
+    expect(crystallized.specContent).toContain("Crystallization failed");
+  });
+
+  it("crystallize emits handoff event when handoffMode is set", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: LOW_AMBIGUITY_SCORES }) // scoring
+        .mockResolvedValueOnce({ text: "## Goal\nBuild a CLI" }), // crystallization
+    };
+
+    (prisma.interviewSession.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "session-hm",
+      objective: "Build a CLI tool",
+      isGreenfield: true,
+      currentRound: 2,
+      maxRounds: 10,
+      ambiguityThreshold: 0.15,
+      handoffMode: "ralph",
+      questions: [
+        { question: "Q1?", answer: "A1", round: 1 },
+        { question: "Q2?", answer: "A2", round: 2 },
+      ],
+    });
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(
+      orch.submitAnswer("session-hm", "q-hm", "A2"),
+    );
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("interview_spec_crystallized");
+    expect(types).toContain("interview_handoff");
+    const handoff = events.find((e) => e.type === "interview_handoff") as any;
+    expect(handoff.targetMode).toBe("ralph");
+  });
+
+  it("submitAnswer triggers pressure pass on round divisible by 3", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: HIGH_AMBIGUITY_SCORES }) // scoring
+        .mockResolvedValueOnce({ text: "Follow-up question?" }), // question
+    };
+
+    (prisma.interviewSession.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "session-pp",
+      objective: "Build a CLI tool",
+      isGreenfield: true,
+      currentRound: 2, // nextRound will be 3, which triggers pressure pass
+      maxRounds: 10,
+      ambiguityThreshold: 0.15,
+      handoffMode: null,
+      questions: [
+        { question: "What is the goal?", answer: "A fast CLI", round: 1 },
+        { question: "Who uses it?", answer: "Developers", round: 2 },
+      ],
+    });
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(
+      orch.submitAnswer("session-pp", "q-2", "Developers"),
+    );
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("interview_question");
+
+    // Verify the question prompt was called (the pressure pass is internal to the prompt)
+    expect(mockProviderOrchestrator.streamChatWithRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it("brownfield scoring includes context from parsed LLM result", async () => {
+    const brownfieldScores = JSON.stringify({
+      intent: 0.9,
+      outcome: 0.8,
+      scope: 0.7,
+      constraints: 0.6,
+      success: 0.5,
+      context: 0.4,
+    });
+
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: brownfieldScores })
+        .mockResolvedValueOnce({ text: "What about the existing code?" }),
+    };
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const brownfieldInput = { ...baseInput, isGreenfield: false };
+    const events = await collectEvents(orch.execute(brownfieldInput));
+
+    const scored = events.find((e) => e.type === "interview_scored") as any;
+    expect(scored.dimensions.context).toBeCloseTo(0.4);
+  });
+
+  it("brownfield without context in dimensions still identifies weakest correctly", () => {
+    const dims: InterviewDimensions = {
+      intent: 0.8,
+      outcome: 0.6,
+      scope: 0.5,
+      constraints: 0.5,
+      success: 0.9,
+      // context is undefined
+    };
+    // For brownfield without context provided, should not include context
+    expect(pickWeakestDimension(dims, false)).toBe("scope");
+  });
+
+  it("brownfield calculateAmbiguity without context dimension provided", () => {
+    const dims: InterviewDimensions = {
+      intent: 0.8,
+      outcome: 0.6,
+      scope: 0.4,
+      constraints: 0.2,
+      success: 0.1,
+      // context is undefined (null-ish)
+    };
+    // Brownfield weights without context: intent*0.25 + outcome*0.20 + scope*0.20 + constraints*0.15 + success*0.10
+    const clarity =
+      0.8 * 0.25 + 0.6 * 0.20 + 0.4 * 0.20 + 0.2 * 0.15 + 0.1 * 0.10;
+    const expected = 1 - clarity;
+    const result = calculateAmbiguity(dims, false);
+    expect(result).toBeCloseTo(expected, 5);
+  });
+
+  it("selectChallengeMode returns null for round 0", () => {
+    expect(selectChallengeMode(0)).toBeNull();
+  });
+
+  it("submitAnswer uses simplifier challenge mode at round 4", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: HIGH_AMBIGUITY_SCORES }) // scoring
+        .mockResolvedValueOnce({ text: "Can the scope be smaller?" }), // question with simplifier mode
+    };
+
+    (prisma.interviewSession.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "session-s4",
+      objective: "Build a CLI tool",
+      isGreenfield: true,
+      currentRound: 3, // nextRound = 4 -> simplifier
+      maxRounds: 10,
+      ambiguityThreshold: 0.15,
+      handoffMode: null,
+      questions: [
+        { question: "Q1?", answer: "A1", round: 1 },
+        { question: "Q2?", answer: "A2", round: 2 },
+        { question: "Q3?", answer: "A3", round: 3 },
+      ],
+    });
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(
+      orch.submitAnswer("session-s4", "q-3", "A3"),
+    );
+
+    const question = events.find((e) => e.type === "interview_question") as any;
+    expect(question).toBeDefined();
+    expect(question.challengeMode).toBe("simplifier");
+    expect(question.round).toBe(4);
+  });
+
+  it("submitAnswer uses ontologist challenge mode at round 5", async () => {
+    const mockProviderOrchestrator = {
+      streamChatWithRetry: vi.fn()
+        .mockResolvedValueOnce({ text: HIGH_AMBIGUITY_SCORES }) // scoring
+        .mockResolvedValueOnce({ text: "What is the essence of this problem?" }), // ontologist question
+    };
+
+    (prisma.interviewSession.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "session-s5",
+      objective: "Build a CLI tool",
+      isGreenfield: true,
+      currentRound: 4, // nextRound = 5 -> ontologist
+      maxRounds: 10,
+      ambiguityThreshold: 0.15,
+      handoffMode: null,
+      questions: [
+        { question: "Q1?", answer: "A1", round: 1 },
+        { question: "Q2?", answer: "A2", round: 2 },
+        { question: "Q3?", answer: "A3", round: 3 },
+        { question: "Q4?", answer: "A4", round: 4 },
+      ],
+    });
+
+    const orch = createOrchestrator(mockProviderOrchestrator);
+    const events = await collectEvents(
+      orch.submitAnswer("session-s5", "q-4", "A4"),
+    );
+
+    const question = events.find((e) => e.type === "interview_question") as any;
+    expect(question).toBeDefined();
+    expect(question.challengeMode).toBe("ontologist");
+    expect(question.round).toBe(5);
+  });
 });

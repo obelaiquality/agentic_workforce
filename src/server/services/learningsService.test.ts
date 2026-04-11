@@ -324,6 +324,23 @@ describe("LearningsService", () => {
       expect(under!.confidence).toBe(0);
     });
 
+    it("updates category field", () => {
+      const entry = svc.recordLearning({
+        projectId: PROJECT,
+        category: "pattern",
+        summary: "test category update",
+        detail: "detail",
+        source: "auto_extraction",
+      });
+
+      const updated = svc.updateLearning(entry.id, { category: "antipattern" });
+      expect(updated).not.toBeNull();
+      expect(updated!.category).toBe("antipattern");
+
+      const reloaded = svc.getLearning(entry.id);
+      expect(reloaded!.category).toBe("antipattern");
+    });
+
     it("returns null for unknown id", () => {
       expect(svc.updateLearning("nonexistent", { summary: "nope" })).toBeNull();
     });
@@ -456,6 +473,76 @@ describe("LearningsService", () => {
 
       const result = svc.consolidate(PROJECT);
       expect(result).toEqual([]);
+    });
+
+    it("merges into existing principle when a similar one already exists", () => {
+      // First, create some learnings and consolidate to create an initial principle
+      seedLearnings([
+        makeLearning({
+          id: "l1",
+          summary: "handle errors in database queries properly",
+          detail: "always wrap DB calls in try-catch",
+          confidence: 0.7,
+          relatedTools: ["prisma"],
+        }),
+        makeLearning({
+          id: "l2",
+          summary: "add error handling for database operations",
+          detail: "use proper error handling for Prisma calls",
+          confidence: 0.8,
+          relatedTools: ["prisma"],
+        }),
+        makeLearning({
+          id: "l3",
+          summary: "validate input to database queries",
+          detail: "sanitize user input before passing to DB",
+          confidence: 0.6,
+          relatedTools: ["prisma"],
+        }),
+      ]);
+
+      const firstPrinciples = svc.consolidate(PROJECT);
+      expect(firstPrinciples.length).toBeGreaterThanOrEqual(1);
+
+      const existingPrinciple = readPersistedPrinciples()[0];
+      const originalConfidence = existingPrinciple.confidence;
+      const originalDerivedCount = existingPrinciple.derivedFrom.length;
+
+      // Add more similar learnings and consolidate again — should merge into existing principle
+      seedLearnings([
+        makeLearning({
+          id: "l4",
+          summary: "handle errors in database queries with care",
+          detail: "DB error handling is critical",
+          confidence: 0.7,
+          relatedTools: ["prisma"],
+        }),
+        makeLearning({
+          id: "l5",
+          summary: "add error handling for all database calls",
+          detail: "every database interaction should be guarded",
+          confidence: 0.75,
+          relatedTools: ["prisma"],
+        }),
+        makeLearning({
+          id: "l6",
+          summary: "validate all inputs to database operations",
+          detail: "never trust user input directly",
+          confidence: 0.65,
+          relatedTools: ["prisma"],
+        }),
+      ]);
+
+      const secondPrinciples = svc.consolidate(PROJECT);
+      // Should return empty because the principle was merged, not created as new
+      expect(secondPrinciples).toEqual([]);
+
+      const updatedPrinciples = readPersistedPrinciples();
+      expect(updatedPrinciples).toHaveLength(1);
+      // Confidence should have been bumped
+      expect(updatedPrinciples[0].confidence).toBeGreaterThanOrEqual(originalConfidence);
+      // derivedFrom should include new learning IDs
+      expect(updatedPrinciples[0].derivedFrom.length).toBeGreaterThan(originalDerivedCount);
     });
 
     it("creates Avoid prefix for antipattern-only groups", () => {
@@ -705,6 +792,95 @@ describe("LearningsService", () => {
     it("handles corrupt JSON gracefully by returning fallback", () => {
       fileStore[LEARNINGS_PATH] = "not valid json!!!";
       expect(svc.getLearnings()).toEqual([]);
+    });
+
+    it("handles corrupt principles JSON gracefully by returning fallback", () => {
+      fileStore[PRINCIPLES_PATH] = "corrupted!!! {{{";
+      expect(svc.getPrinciples()).toEqual([]);
+    });
+  });
+
+  // ---- consolidate — MAX_PRINCIPLES cap ----
+
+  describe("consolidate — MAX_PRINCIPLES eviction", () => {
+    it("caps total principles at 50 and keeps highest confidence", () => {
+      // Create enough distinct learnings to generate many principles
+      const learnings: LearningEntry[] = [];
+      for (let i = 0; i < 100; i++) {
+        learnings.push(
+          makeLearning({
+            id: `l_a_${i}`,
+            summary: `unique pattern alpha group${i} about topic${i}`,
+            detail: `detail group${i}`,
+            confidence: 0.5 + (i % 50) * 0.01,
+            relatedTools: [`tool_${i}`, `shared_${Math.floor(i / 2)}`],
+          }),
+        );
+        learnings.push(
+          makeLearning({
+            id: `l_b_${i}`,
+            summary: `unique pattern beta group${i} about topic${i}`,
+            detail: `detail group${i} extra`,
+            confidence: 0.5 + (i % 50) * 0.01,
+            relatedTools: [`tool_${i}`, `shared_${Math.floor(i / 2)}`],
+          }),
+        );
+      }
+      seedLearnings(learnings);
+
+      // Seed 48 existing principles to push over the limit
+      const existingPrinciples: ConsolidatedPrinciple[] = [];
+      for (let i = 0; i < 48; i++) {
+        existingPrinciples.push({
+          id: `principle_existing_${i}`,
+          projectId: PROJECT,
+          principle: `Existing principle ${i} about totally unique concept ${i}`,
+          reasoning: "reason",
+          derivedFrom: [`l_existing_${i}`],
+          confidence: 0.4 + i * 0.005,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      seedPrinciples(existingPrinciples);
+
+      svc.consolidate(PROJECT);
+
+      const result = readPersistedPrinciples();
+      expect(result.length).toBeLessThanOrEqual(50);
+    });
+  });
+
+  // ---- consolidate — groups with single learnings are excluded ----
+
+  describe("consolidate — single-learning groups excluded", () => {
+    it("does not create a principle from groups with only one learning", () => {
+      seedLearnings([
+        makeLearning({
+          id: "l_solo1",
+          summary: "xyz qrs tuv",
+          detail: "d1",
+          confidence: 0.9,
+          relatedTools: ["quantum_tool_x"],
+        }),
+        makeLearning({
+          id: "l_solo2",
+          summary: "abc def ghi",
+          detail: "d2",
+          confidence: 0.9,
+          relatedTools: ["classical_tool_y"],
+        }),
+        makeLearning({
+          id: "l_solo3",
+          summary: "jkl mno pqr",
+          detail: "d3",
+          confidence: 0.9,
+          relatedTools: ["thermo_tool_z"],
+        }),
+      ]);
+
+      const result = svc.consolidate(PROJECT);
+      // Groups with only 1 learning each -> no principles created
+      expect(result).toEqual([]);
     });
   });
 });

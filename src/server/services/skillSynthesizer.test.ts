@@ -417,4 +417,91 @@ describe("SkillSynthesizer", () => {
     // No group should form because tools don't overlap, each group has < 2
     expect(results).toHaveLength(0);
   });
+
+  // ---- 13. loadSuggestedSkills handles corrupted JSON gracefully ----
+
+  it("returns empty array when suggested-skills.json contains invalid JSON", () => {
+    const skillsDir = path.join(tmpDir, ".agentic-workforce/learnings");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillsDir, "suggested-skills.json"),
+      "{ this is not valid JSON !!!",
+      "utf-8",
+    );
+
+    const freshSynth = new SkillSynthesizer(ls, tmpDir);
+    const skills = freshSynth.listSuggestedSkills();
+    expect(skills).toEqual([]);
+  });
+
+  // ---- 14. saveSuggestedSkills creates directory if it does not exist ----
+
+  it("creates the learnings directory when it does not exist yet", () => {
+    // Use a fresh tmpDir without the learnings subdirectory
+    const freshDir = makeTmpDir();
+    try {
+      const freshLs = new LearningsService(freshDir);
+      const freshSynth = new SkillSynthesizer(freshLs, freshDir);
+
+      seedPattern(freshLs, PROJECT, "write unit tests before pushing code", [
+        "vitest",
+        "shell",
+      ]);
+      seedPattern(freshLs, PROJECT, "run shell lint checks before deploying", [
+        "vitest",
+        "shell",
+      ]);
+
+      const results = freshSynth.synthesizeFromPatterns(PROJECT);
+      expect(results.length).toBeGreaterThanOrEqual(1);
+
+      // Verify the file was created even though directory didn't exist before
+      const filePath = path.join(
+        freshDir,
+        ".agentic-workforce/learnings/suggested-skills.json",
+      );
+      expect(fs.existsSync(filePath)).toBe(true);
+    } finally {
+      cleanUp(freshDir);
+    }
+  });
+
+  // ---- 15. dismissSkill returns null for non-existent id ----
+
+  it("returns null when dismissing a non-existent skill", () => {
+    expect(synth.dismissSkill("nonexistent-id")).toBeNull();
+  });
+
+  // ---- 16. getSuggestedSkill returns null for non-existent id ----
+
+  it("returns null for getSuggestedSkill with non-existent id", () => {
+    expect(synth.getSuggestedSkill("nonexistent-id")).toBeNull();
+  });
+
+  // ---- 17. buildSkillFromGroup returns null when no tools in group ----
+
+  it("returns no skills when all patterns have empty relatedTools", () => {
+    // Patterns with empty tool arrays — can still group by similarity
+    // but buildSkillFromGroup returns null because allTools.size === 0
+    seedPattern(ls, PROJECT, "do something interesting pattern alpha", []);
+    seedPattern(ls, PROJECT, "do something interesting pattern beta", []);
+
+    const results = synth.synthesizeFromPatterns(PROJECT);
+    // No skills created because patterns have no tools to group by
+    expect(results).toHaveLength(0);
+  });
+
+  // ---- 18. deriveSkillName handles empty summary words ----
+
+  it("derives skill name from tools and summary", () => {
+    seedPattern(ls, PROJECT, "ab", ["shell_exec", "read_file"]);
+    seedPattern(ls, PROJECT, "ab thing", ["shell_exec", "write_file"]);
+
+    const results = synth.synthesizeFromPatterns(PROJECT);
+    if (results.length > 0) {
+      // Name should be a non-empty string derived from tools and summary
+      expect(results[0].name.length).toBeGreaterThan(0);
+      expect(results[0].name.length).toBeLessThanOrEqual(40);
+    }
+  });
 });

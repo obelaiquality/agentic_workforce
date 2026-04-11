@@ -354,6 +354,46 @@ describe("teacherCliAdapter", () => {
       expect(result.errorClass).toBe("timeout");
     });
 
+    it("classifies error with 'timed out' string as timeout via is_error flag", async () => {
+      const mockStdout = JSON.stringify({
+        is_error: true,
+        result: "Request timed out waiting for response",
+      });
+
+      mockExecFileAsync.mockResolvedValue({ stdout: mockStdout, stderr: "" });
+
+      const result = await generateTeacherExample(mockSpec, [], mockOptions);
+
+      expect(result.errorClass).toBe("timeout");
+    });
+
+    it("uses fallback teacher text when result text is empty string", async () => {
+      const mockStdout = JSON.stringify({
+        result: "",
+      });
+
+      mockExecFileAsync.mockResolvedValue({ stdout: mockStdout, stderr: "" });
+
+      const result = await generateTeacherExample(mockSpec, [], mockOptions);
+
+      // normalizeTeacherText sees empty trimmed text and returns fallbackText
+      expect(result.teacherOutput).toContain("Execute");
+      expect(result.teacherOutput).toContain(mockSpec.intent);
+    });
+
+    it("uses fallback teacher text when result is whitespace only", async () => {
+      const mockStdout = JSON.stringify({
+        result: "   \n  ",
+      });
+
+      mockExecFileAsync.mockResolvedValue({ stdout: mockStdout, stderr: "" });
+
+      const result = await generateTeacherExample(mockSpec, [], mockOptions);
+
+      expect(result.teacherOutput).toContain("Execute");
+      expect(result.teacherOutput).toContain(mockSpec.intent);
+    });
+
     it("handles exit code 143 as timeout", async () => {
       const error = Object.assign(new Error("Process terminated"), { code: 143 });
       mockExecFileAsync.mockRejectedValue(error);

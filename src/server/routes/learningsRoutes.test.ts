@@ -32,6 +32,25 @@ vi.mock("../services/skillSynthesizer", () => ({
   SkillSynthesizer: vi.fn().mockImplementation(() => skillSynthesizerMocks),
 }));
 
+const globalKnowledgePoolMocks = {
+  queryRelevant: vi.fn().mockResolvedValue([]),
+  consolidateGlobal: vi.fn().mockResolvedValue([]),
+};
+
+vi.mock("../services/globalKnowledgePool", () => ({
+  GlobalKnowledgePool: vi.fn().mockImplementation(() => globalKnowledgePoolMocks),
+}));
+
+const mockPrismaForLearnings = {
+  globalPrinciple: {
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+};
+
+vi.mock("../db", () => ({
+  prisma: mockPrismaForLearnings,
+}));
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -109,6 +128,9 @@ describe("learnings routes", () => {
     skillSynthesizerMocks.listSuggestedSkills.mockReturnValue([]);
     skillSynthesizerMocks.approveSkill.mockReturnValue(null);
     skillSynthesizerMocks.dismissSkill.mockReturnValue(null);
+    globalKnowledgePoolMocks.queryRelevant.mockResolvedValue([]);
+    globalKnowledgePoolMocks.consolidateGlobal.mockResolvedValue([]);
+    mockPrismaForLearnings.globalPrinciple.findMany.mockResolvedValue([]);
   });
 
   // ---- GET /api/learnings ----
@@ -355,6 +377,84 @@ describe("learnings routes", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().item.status).toBe("dismissed");
     expect(skillSynthesizerMocks.dismissSkill).toHaveBeenCalledWith("suggested_sk001");
+    await app.close();
+  });
+
+  // ---- GET /api/learnings/global ----
+
+  it("GET /api/learnings/global returns relevant global learnings", async () => {
+    globalKnowledgePoolMocks.queryRelevant.mockResolvedValue([
+      { id: "gl-1", summary: "Always use strict mode", category: "pattern", confidence: 0.9 },
+    ]);
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/learnings/global?techFingerprint=react,typescript&limit=10&minConfidence=0.5",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].id).toBe("gl-1");
+    expect(globalKnowledgePoolMocks.queryRelevant).toHaveBeenCalledWith(
+      ["react", "typescript"],
+      { limit: 10, minConfidence: 0.5 },
+    );
+    await app.close();
+  });
+
+  it("GET /api/learnings/global uses empty fingerprint when not provided", async () => {
+    globalKnowledgePoolMocks.queryRelevant.mockResolvedValue([]);
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/learnings/global",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.items).toEqual([]);
+    expect(globalKnowledgePoolMocks.queryRelevant).toHaveBeenCalledWith(
+      [],
+      { limit: undefined, minConfidence: undefined },
+    );
+    await app.close();
+  });
+
+  // ---- GET /api/learnings/global/principles ----
+
+  it("GET /api/learnings/global/principles returns global principles", async () => {
+    globalKnowledgePoolMocks.consolidateGlobal.mockResolvedValue([]);
+    mockPrismaForLearnings.globalPrinciple.findMany.mockResolvedValue([
+      {
+        id: "gp-1",
+        principle: "Always handle errors",
+        confidence: 0.85,
+      },
+      {
+        id: "gp-2",
+        principle: "Prefer composition over inheritance",
+        confidence: 0.75,
+      },
+    ]);
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/learnings/global/principles",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.items).toHaveLength(2);
+    expect(body.items[0].id).toBe("gp-1");
+    expect(body.items[1].id).toBe("gp-2");
+    expect(globalKnowledgePoolMocks.consolidateGlobal).toHaveBeenCalled();
+    expect(mockPrismaForLearnings.globalPrinciple.findMany).toHaveBeenCalledWith({
+      orderBy: { confidence: "desc" },
+    });
     await app.close();
   });
 });

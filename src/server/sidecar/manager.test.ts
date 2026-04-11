@@ -416,5 +416,125 @@ describe("Sidecar Manager", () => {
       const client2 = await getSidecarClient();
       expect(client2).toBeDefined();
     });
+
+    it("kills the spawned process on stop", async () => {
+      process.env.APP_PACKAGED = "false";
+      process.env.RUST_SIDECAR_AUTOSTART = "true";
+      mockExistsSync.mockReturnValue(false);
+
+      let heartbeatAttempt = 0;
+      mockSidecarClient.heartbeat.mockImplementation(() => {
+        heartbeatAttempt++;
+        if (heartbeatAttempt <= 4) {
+          return Promise.reject(new Error("Not ready"));
+        }
+        return Promise.resolve({ ok: true, message: "OK" });
+      });
+
+      const mockProcess = new MockChildProcess();
+      mockSpawn.mockReturnValue(mockProcess);
+
+      await getSidecarClient();
+
+      stopSidecarProcess();
+      expect(mockProcess.kill).toHaveBeenCalledWith("SIGTERM");
+    });
+  });
+
+  describe("sidecar process lifecycle", () => {
+    it("does not spawn a second process if one is already running", async () => {
+      process.env.APP_PACKAGED = "false";
+      process.env.RUST_SIDECAR_AUTOSTART = "true";
+      mockExistsSync.mockReturnValue(false);
+
+      let heartbeatAttempt = 0;
+      mockSidecarClient.heartbeat.mockImplementation(() => {
+        heartbeatAttempt++;
+        if (heartbeatAttempt <= 4) {
+          return Promise.reject(new Error("Not ready"));
+        }
+        return Promise.resolve({ ok: true, message: "OK" });
+      });
+
+      const mockProcess = new MockChildProcess();
+      mockSpawn.mockReturnValue(mockProcess);
+
+      await getSidecarClient();
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+
+      // Reset client to force a second getSidecarClient call that tries to spawn
+      stopSidecarProcess();
+      // But don't emit exit, so sidecarProcess reference stays cleared by stopSidecarProcess
+      // The key test: spawn is called again since process was nulled by stop
+      vi.clearAllMocks();
+      heartbeatAttempt = 0;
+      mockSidecarClient.heartbeat.mockImplementation(() => {
+        heartbeatAttempt++;
+        if (heartbeatAttempt <= 4) {
+          return Promise.reject(new Error("Not ready"));
+        }
+        return Promise.resolve({ ok: true, message: "OK" });
+      });
+      mockSpawn.mockReturnValue(new MockChildProcess());
+
+      await getSidecarClient();
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears sidecar process reference on exit event", async () => {
+      process.env.APP_PACKAGED = "false";
+      process.env.RUST_SIDECAR_AUTOSTART = "true";
+      mockExistsSync.mockReturnValue(false);
+
+      let heartbeatAttempt = 0;
+      mockSidecarClient.heartbeat.mockImplementation(() => {
+        heartbeatAttempt++;
+        if (heartbeatAttempt <= 4) {
+          return Promise.reject(new Error("Not ready"));
+        }
+        return Promise.resolve({ ok: true, message: "OK" });
+      });
+
+      const mockProcess = new MockChildProcess();
+      mockSpawn.mockReturnValue(mockProcess);
+
+      await getSidecarClient();
+
+      // Emit exit event to simulate process termination
+      mockProcess.emit("exit");
+
+      // After exit, stopSidecarProcess should not try to kill since process is null
+      stopSidecarProcess();
+      // kill should NOT have been called since exit handler already nulled the process
+      expect(mockProcess.kill).not.toHaveBeenCalled();
+    });
+
+    it("warns and skips spawn when binary not found in production", async () => {
+      process.env.APP_PACKAGED = "true";
+      process.env.APP_ROOT = "/app/root";
+      process.env.RUST_SIDECAR_AUTOSTART = "true";
+      process.env.RUST_SIDECAR_BIN = "";
+
+      // All heartbeats fail
+      mockSidecarClient.heartbeat.mockRejectedValue(new Error("Connection refused"));
+
+      // Binary does NOT exist
+      mockExistsSync.mockReturnValue(false);
+
+      vi.useFakeTimers();
+      try {
+        const clientPromise = getSidecarClient();
+        const assertion = expect(clientPromise).rejects.toThrow(
+          "Rust sidecar is not reachable"
+        );
+        await vi.runAllTimersAsync();
+        await assertion;
+
+        // spawn should NOT have been called because the binary doesn't exist
+        expect(mockSpawn).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

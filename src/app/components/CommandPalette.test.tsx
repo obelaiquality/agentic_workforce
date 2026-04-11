@@ -21,12 +21,18 @@ vi.mock("cmdk", () => {
   return { Command };
 });
 
+const mockSetActiveSection = vi.fn();
+const mockSetSettingsFocusTarget = vi.fn();
+let mockLabsMode = false;
+
 vi.mock("../store/uiStore", () => ({
   useUiStore: vi.fn((selector: any) => {
     const store = {
-      setActiveSection: vi.fn(),
-      setSettingsFocusTarget: vi.fn(),
-      labsMode: false,
+      setActiveSection: mockSetActiveSection,
+      setSettingsFocusTarget: mockSetSettingsFocusTarget,
+      get labsMode() {
+        return mockLabsMode;
+      },
     };
     return selector(store);
   }),
@@ -35,6 +41,7 @@ vi.mock("../store/uiStore", () => ({
 describe("CommandPalette", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLabsMode = false;
   });
 
   it("renders nothing when closed", () => {
@@ -93,5 +100,73 @@ describe("CommandPalette", () => {
     render(<CommandPalette />);
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     expect(screen.getByText("ESC")).toBeTruthy();
+  });
+
+  it("opens on Ctrl+K", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(screen.getByTestId("cmdk-input")).toBeTruthy();
+  });
+
+  it("toggles closed when Cmd+K pressed while already open", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.getByTestId("cmdk-input")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.queryByTestId("cmdk-input")).toBeNull();
+  });
+
+  it("navigates to section when nav action is selected", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    const goToConsole = screen.getByText("Go to Console");
+    fireEvent.click(goToConsole);
+
+    expect(mockSetActiveSection).toHaveBeenCalledWith("console");
+    // Palette should close after selection
+    expect(screen.queryByTestId("cmdk-input")).toBeNull();
+  });
+
+  it("opens settings with providers focus when Open Essentials is selected", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    fireEvent.click(screen.getByText("Open Essentials"));
+
+    expect(mockSetActiveSection).toHaveBeenCalledWith("settings");
+    expect(mockSetSettingsFocusTarget).toHaveBeenCalledWith("providers");
+  });
+
+  it("opens settings with execution_profiles focus when Open Advanced Settings is selected", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    fireEvent.click(screen.getByText("Open Advanced Settings"));
+
+    expect(mockSetActiveSection).toHaveBeenCalledWith("settings");
+    expect(mockSetSettingsFocusTarget).toHaveBeenCalledWith("execution_profiles");
+  });
+
+  it("shows Labs group when labsMode is enabled", () => {
+    mockLabsMode = true;
+
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    expect(screen.getByText("Open Telemetry")).toBeTruthy();
+    expect(screen.getByText("Labs")).toBeTruthy();
+  });
+
+  it("does not show Labs group when labsMode is disabled", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.queryByText("Open Telemetry")).toBeNull();
+  });
+
+  it("does nothing on Escape when palette is closed", () => {
+    const { container } = render(<CommandPalette />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(container.innerHTML).toBe("");
   });
 });

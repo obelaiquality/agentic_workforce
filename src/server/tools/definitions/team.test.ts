@@ -247,4 +247,59 @@ describe("team tool definitions", () => {
       }
     });
   });
+
+  describe("send_message error handling", () => {
+    it("catches Error thrown by sendMessage and returns error result", async () => {
+      mockContext.teamContext = {
+        ...mockTeamContext,
+        sendMessage: vi.fn(() => {
+          throw new Error("Network timeout");
+        }),
+      };
+
+      const result = await sendMessageTool.execute(
+        { to_agent: "agent-impl", message: "Hello" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toBe("Failed to send message: Network timeout");
+      }
+    });
+
+    it("catches non-Error thrown by sendMessage and stringifies it", async () => {
+      mockContext.teamContext = {
+        ...mockTeamContext,
+        sendMessage: vi.fn(() => {
+          throw "raw string error";
+        }),
+      };
+
+      const result = await sendMessageTool.execute(
+        { to_agent: "agent-impl", message: "Hello" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toBe("Failed to send message: raw string error");
+      }
+    });
+  });
+
+  describe("isEnabled", () => {
+    it("returns true when teamContext is present", () => {
+      mockContext.teamContext = mockTeamContext;
+      expect(sendMessageTool.isEnabled!(mockContext)).toBe(true);
+      expect(listPeersTool.isEnabled!(mockContext)).toBe(true);
+      expect(spawnAgentTool.isEnabled!(mockContext)).toBe(true);
+    });
+
+    it("returns false when teamContext is undefined", () => {
+      expect(sendMessageTool.isEnabled!(mockContext)).toBe(false);
+      expect(listPeersTool.isEnabled!(mockContext)).toBe(false);
+      expect(spawnAgentTool.isEnabled!(mockContext)).toBe(false);
+    });
+  });
 });

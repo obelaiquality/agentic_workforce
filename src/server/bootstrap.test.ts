@@ -184,6 +184,47 @@ describe("seedV2ReadModels", () => {
     expect(fs.existsSync).not.toHaveBeenCalled();
     expect(prisma.knowledgeIndexMetadata.create).not.toHaveBeenCalled();
   });
+
+  it("seeds knowledge index from existing files when count is 0", async () => {
+    vi.mocked(prisma.taskProjection.count).mockResolvedValue(1);
+    vi.mocked(prisma.approvalRequest.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.knowledgeIndexMetadata.count).mockResolvedValue(0);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue("# README content\nSome documentation here.");
+    vi.mocked(prisma.knowledgeIndexMetadata.create).mockResolvedValue({} as never);
+
+    await seedV2ReadModels();
+
+    // Should check for candidate files
+    expect(fs.existsSync).toHaveBeenCalled();
+    // Should create knowledge index entries for found files
+    expect(prisma.knowledgeIndexMetadata.create).toHaveBeenCalled();
+    const createCall = vi.mocked(prisma.knowledgeIndexMetadata.create).mock.calls[0][0];
+    expect(createCall?.data).toEqual(
+      expect.objectContaining({
+        source: "bootstrap",
+        score: 0.8,
+      }),
+    );
+  });
+
+  it("skips non-existent candidate files during knowledge seeding", async () => {
+    vi.mocked(prisma.taskProjection.count).mockResolvedValue(1);
+    vi.mocked(prisma.approvalRequest.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.knowledgeIndexMetadata.count).mockResolvedValue(0);
+    // Only the first file exists
+    vi.mocked(fs.existsSync)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false);
+    vi.mocked(fs.readFileSync).mockReturnValue("content");
+    vi.mocked(prisma.knowledgeIndexMetadata.create).mockResolvedValue({} as never);
+
+    await seedV2ReadModels();
+
+    // Only one file found, so only one create call
+    expect(prisma.knowledgeIndexMetadata.create).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("seedModelPluginRegistry", () => {

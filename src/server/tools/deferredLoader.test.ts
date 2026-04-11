@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { z } from "zod";
 import { ToolRegistry } from "./registry";
-import { DeferredToolLoader } from "./deferredLoader";
+import { DeferredToolLoader, createDeferredToolLoader } from "./deferredLoader";
 import type { ToolDefinition } from "./types";
 
 describe("DeferredToolLoader", () => {
@@ -264,6 +264,19 @@ describe("DeferredToolLoader", () => {
 
       // Total = core tools + deferred tools in registry
       expect(stats.totalCount).toBe(6);
+    });
+  });
+
+  describe("createDeferredToolLoader", () => {
+    it("should create a functional DeferredToolLoader instance", () => {
+      const created = createDeferredToolLoader(registry);
+
+      expect(created).toBeInstanceOf(DeferredToolLoader);
+      // Verify it works — should return initial schemas from the registry
+      const schemas = created.getInitialToolSchemas();
+      const names = schemas.map((s) => s.name);
+      expect(names).toContain("read_file");
+      expect(names).toContain("edit_file");
     });
   });
 });

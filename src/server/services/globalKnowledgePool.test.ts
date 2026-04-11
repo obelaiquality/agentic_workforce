@@ -295,5 +295,256 @@ describe("GlobalKnowledgePool", () => {
       const custom = ranked.find((s) => s.name === "react-component");
       expect(custom!.relevanceScore).toBe(0.3);
     });
+
+    it("gives base relevance to untagged custom skills with non-empty fingerprint", () => {
+      const untaggedSkill: SkillRecord = {
+        id: "s4", name: "generic-skill", description: "Generic", builtIn: false,
+        techFingerprint: [], sourceProjectIds: [], tags: [], version: "1.0.0",
+        contextMode: "inline", allowedTools: [], maxIterations: null,
+        systemPrompt: "", referenceFiles: [], author: "user", createdAt: "", updatedAt: "",
+      };
+      const ranked = pool.rankSkillsForProject([untaggedSkill], ["typescript"]);
+      expect(ranked[0].relevanceScore).toBe(0.2);
+    });
+  });
+
+  describe("promoteLearning – duplicate projectId dedup", () => {
+    const baseLearning: LearningEntry = {
+      id: "l-dup",
+      projectId: "proj-b",
+      category: "pattern",
+      summary: "Always export utility functions with named exports",
+      detail: "Named exports improve tree-shaking",
+      source: "auto_extraction",
+      confidence: 0.7,
+      occurrences: 4,
+      relatedFiles: ["/src/utils/helpers.ts"],
+      relatedTools: ["edit_file"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+    };
+
+    it("does not duplicate projectId when merging from same project", async () => {
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([{
+        id: "gl-existing",
+        category: "pattern",
+        summary: "Always export utility functions using named exports",
+        confidence: 0.6,
+        occurrences: 2,
+        sourceProjectIds: ["proj-b"],
+        techFingerprint: ["typescript"],
+        detail: "",
+        lastSeenAt: new Date(),
+      }]);
+
+      await pool.promoteLearning(baseLearning, ["typescript", "node"], "proj-b");
+
+      const updateCall = mockPrisma.globalLearning.update.mock.calls[0][0];
+      expect(updateCall.data.sourceProjectIds).toEqual(["proj-b"]);
+    });
+  });
+
+  describe("consolidateGlobal", () => {
+    it("creates principles from groups of similar learnings", async () => {
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        {
+          id: "gl-1", category: "pattern", summary: "use named exports for utilities",
+          confidence: 0.8, sourceProjectIds: ["proj-a", "proj-b"],
+          techFingerprint: ["typescript"], detail: "",
+        },
+        {
+          id: "gl-2", category: "pattern", summary: "use named exports for utility functions",
+          confidence: 0.7, sourceProjectIds: ["proj-c"],
+          techFingerprint: ["typescript", "react"], detail: "",
+        },
+      ]);
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([]);
+      mockPrisma.globalPrinciple.count.mockResolvedValueOnce(0);
+      mockPrisma.globalPrinciple.create.mockResolvedValueOnce({
+        id: "gp-new", principle: "Prefer: use named exports for utilities",
+        reasoning: "", confidence: 0.7, sourceProjectCount: 3,
+        techFingerprint: ["typescript", "react"],
+        createdAt: new Date(), updatedAt: new Date(),
+      });
+
+      const result = await pool.consolidateGlobal();
+      expect(result.length).toBe(1);
+      expect(mockPrisma.globalPrinciple.create).toHaveBeenCalled();
+    });
+
+    it("updates existing principle when duplicate found", async () => {
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        {
+          id: "gl-1", category: "antipattern", summary: "avoid default exports",
+          confidence: 0.9, sourceProjectIds: ["proj-a"],
+          techFingerprint: ["typescript"], detail: "",
+        },
+        {
+          id: "gl-2", category: "antipattern", summary: "avoid default exports in modules",
+          confidence: 0.85, sourceProjectIds: ["proj-b"],
+          techFingerprint: ["typescript", "node"], detail: "",
+        },
+      ]);
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([
+        {
+          id: "gp-existing", principle: "Avoid: avoid default exports",
+          confidence: 0.8, sourceProjectCount: 1,
+          techFingerprint: ["typescript"],
+        },
+      ]);
+
+      const result = await pool.consolidateGlobal();
+
+      expect(mockPrisma.globalPrinciple.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "gp-existing" },
+          data: expect.objectContaining({
+            confidence: expect.any(Number),
+          }),
+        }),
+      );
+      // Updated principles are not returned
+      expect(result.length).toBe(0);
+    });
+
+    it("skips creating principle when at max capacity", async () => {
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        {
+          id: "gl-1", category: "pattern", summary: "always write tests first",
+          confidence: 0.8, sourceProjectIds: ["proj-a"],
+          techFingerprint: ["typescript"], detail: "",
+        },
+        {
+          id: "gl-2", category: "pattern", summary: "always write tests first for coverage",
+          confidence: 0.75, sourceProjectIds: ["proj-b"],
+          techFingerprint: ["typescript"], detail: "",
+        },
+      ]);
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([]);
+      mockPrisma.globalPrinciple.count.mockResolvedValueOnce(100); // at capacity
+
+      const result = await pool.consolidateGlobal();
+      expect(result.length).toBe(0);
+      expect(mockPrisma.globalPrinciple.create).not.toHaveBeenCalled();
+    });
+
+    it("does not create groups from singletons", async () => {
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        {
+          id: "gl-1", category: "pattern", summary: "totally unique learning about databases",
+          confidence: 0.8, sourceProjectIds: ["proj-a"],
+          techFingerprint: ["python"], detail: "",
+        },
+        {
+          id: "gl-2", category: "pattern", summary: "completely different topic about styling",
+          confidence: 0.8, sourceProjectIds: ["proj-b"],
+          techFingerprint: ["react"], detail: "",
+        },
+      ]);
+
+      const result = await pool.consolidateGlobal();
+      expect(result.length).toBe(0);
+      expect(mockPrisma.globalPrinciple.create).not.toHaveBeenCalled();
+    });
+
+    it("uses Avoid prefix for antipattern-dominant groups", async () => {
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        {
+          id: "gl-1", category: "antipattern", summary: "avoid inline styles in components",
+          confidence: 0.8, sourceProjectIds: ["proj-a"],
+          techFingerprint: ["react"], detail: "",
+        },
+        {
+          id: "gl-2", category: "antipattern", summary: "avoid inline styles in react components",
+          confidence: 0.7, sourceProjectIds: ["proj-b"],
+          techFingerprint: ["react"], detail: "",
+        },
+      ]);
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([]);
+      mockPrisma.globalPrinciple.count.mockResolvedValueOnce(0);
+      mockPrisma.globalPrinciple.create.mockResolvedValueOnce({
+        id: "gp-avoid", principle: "Avoid: avoid inline styles in components",
+        reasoning: "", confidence: 0.7, sourceProjectCount: 2,
+        techFingerprint: ["react"],
+        createdAt: new Date(), updatedAt: new Date(),
+      });
+
+      const result = await pool.consolidateGlobal();
+      expect(result.length).toBe(1);
+      const createCall = mockPrisma.globalPrinciple.create.mock.calls[0][0];
+      expect(createCall.data.principle).toMatch(/^Avoid:/);
+    });
+  });
+
+  describe("formatForSystemPrompt edge cases", () => {
+    it("returns empty string when all principles are filtered by overlap", async () => {
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([
+        { id: "1", principle: "Use Django ORM", confidence: 0.9, sourceProjectCount: 2, techFingerprint: ["python"] },
+      ]);
+      const result = await pool.formatForSystemPrompt(["typescript", "react"]);
+      expect(result).toBe("");
+    });
+
+    it("respects maxTokens limit", async () => {
+      const longPrinciples = Array.from({ length: 20 }, (_, i) => ({
+        id: `p-${i}`,
+        principle: `Very long principle number ${i} that takes up space: ${"x".repeat(100)}`,
+        confidence: 0.9,
+        sourceProjectCount: 5,
+        techFingerprint: ["typescript"],
+      }));
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce(longPrinciples);
+
+      const result = await pool.formatForSystemPrompt(["typescript"], 200);
+      // Should be truncated
+      expect(result.length).toBeLessThan(
+        longPrinciples.map((p) => p.principle).join("\n").length,
+      );
+    });
+
+    it("shows singular 'project' for sourceProjectCount of 1", async () => {
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([
+        { id: "1", principle: "Single project principle", confidence: 0.9, sourceProjectCount: 1, techFingerprint: ["typescript"] },
+      ]);
+      const result = await pool.formatForSystemPrompt(["typescript"]);
+      expect(result).toContain("1 project,");
+      expect(result).not.toContain("1 projects");
+    });
+
+    it("includes all principles when fingerprint is empty", async () => {
+      mockPrisma.globalPrinciple.findMany.mockResolvedValueOnce([
+        { id: "1", principle: "Universal principle", confidence: 0.9, sourceProjectCount: 3, techFingerprint: ["python"] },
+      ]);
+      const result = await pool.formatForSystemPrompt([]);
+      expect(result).toContain("Universal principle");
+    });
+  });
+
+  describe("recomputeUniversality edge cases", () => {
+    it("skips update when universality difference is negligible", async () => {
+      mockPrisma.repoRegistry.count.mockResolvedValueOnce(5);
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        { id: "1", sourceProjectIds: ["a", "b", "c"], universality: 0.601 },
+      ]);
+
+      await pool.recomputeUniversality();
+      // 3/5 = 0.6, difference from 0.601 is 0.001 < 0.01 threshold
+      expect(mockPrisma.globalLearning.update).not.toHaveBeenCalled();
+    });
+
+    it("handles learnings with missing sourceProjectIds", async () => {
+      mockPrisma.repoRegistry.count.mockResolvedValueOnce(5);
+      mockPrisma.globalLearning.findMany.mockResolvedValueOnce([
+        { id: "1", sourceProjectIds: null, universality: 0.5 },
+      ]);
+
+      await pool.recomputeUniversality();
+      // 0/5 = 0 vs 0.5 -> should update
+      expect(mockPrisma.globalLearning.update).toHaveBeenCalledWith({
+        where: { id: "1" },
+        data: { universality: 0 },
+      });
+    });
   });
 });

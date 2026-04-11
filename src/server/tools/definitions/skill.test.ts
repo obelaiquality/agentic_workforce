@@ -221,4 +221,161 @@ describe("skill tool definition", () => {
     const service = getSkillService();
     expect(service).toBeDefined();
   });
+
+  it("returns fork mode instructions for fork context mode", async () => {
+    const mockService = createMockSkillService({
+      getSkill: vi.fn(() => ({
+        id: "custom_deploy",
+        name: "deploy",
+        description: "Deploy the app",
+        version: "1.0.0",
+        contextMode: "fork" as const,
+        allowedTools: ["bash", "git_status"],
+        maxIterations: 3,
+        systemPrompt: "Run deploy pipeline",
+        referenceFiles: [],
+        author: "user",
+        tags: ["ops"],
+        builtIn: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      buildSkillPrompt: vi.fn(() => "Run deploy pipeline with args"),
+    });
+    setSkillService(mockService);
+
+    const result = await skillTool.execute({ skill: "deploy", args: "staging" }, mockContext);
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.content).toContain("[Skill: deploy (fork mode)]");
+      expect(result.content).toContain("Run deploy pipeline with args");
+      expect(result.content).toContain("bash, git_status");
+      expect(result.content).toContain("Max iterations: 3");
+      expect(result.metadata?.contextMode).toBe("fork");
+      expect(result.metadata?.skillName).toBe("deploy");
+      expect(result.metadata?.skillId).toBe("custom_deploy");
+      expect(result.metadata?.invocationId).toBe("inv_abc123");
+      expect(result.metadata?.maxIterations).toBe(3);
+    }
+
+    // Verify completeInvocation was called with "Fork skill prepared"
+    expect(mockService.completeInvocation).toHaveBeenCalledWith("inv_abc123", "Fork skill prepared");
+
+    // Verify skill_completed event was recorded
+    expect(mockRecordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "skill_completed",
+        payload: expect.objectContaining({
+          invocationId: "inv_abc123",
+          output: "Fork skill prepared",
+        }),
+      }),
+    );
+  });
+
+  it("returns fork mode instructions with empty allowedTools and null maxIterations", async () => {
+    const mockService = createMockSkillService({
+      getSkill: vi.fn(() => ({
+        id: "custom_minimal",
+        name: "minimal",
+        description: "Minimal fork skill",
+        version: "1.0.0",
+        contextMode: "fork" as const,
+        allowedTools: [],
+        maxIterations: null,
+        systemPrompt: "Do minimal work",
+        referenceFiles: [],
+        author: "user",
+        tags: [],
+        builtIn: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      buildSkillPrompt: vi.fn(() => "Do minimal work"),
+    });
+    setSkillService(mockService);
+
+    const result = await skillTool.execute({ skill: "minimal" }, mockContext);
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.content).toContain("all tools");
+      expect(result.content).toContain("Max iterations: default");
+    }
+  });
+
+  it("handles failure with a non-Error thrown value", async () => {
+    const mockService = createMockSkillService({
+      getSkill: vi.fn(() => ({
+        id: "builtin_fail",
+        name: "fail-skill",
+        description: "Fails with non-Error",
+        version: "1.0.0",
+        contextMode: "inline" as const,
+        allowedTools: [],
+        maxIterations: null,
+        systemPrompt: "Will fail",
+        referenceFiles: [],
+        author: "system",
+        tags: [],
+        builtIn: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      buildSkillPrompt: vi.fn(() => {
+        throw 42;
+      }),
+    });
+    setSkillService(mockService);
+
+    const result = await skillTool.execute({ skill: "fail-skill" }, mockContext);
+
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.error).toContain("fail-skill");
+      expect(result.error).toContain("42");
+    }
+
+    expect(mockService.failInvocation).toHaveBeenCalledWith("inv_abc123", "42");
+    expect(mockRecordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "skill_failed",
+        payload: expect.objectContaining({
+          error: "42",
+        }),
+      }),
+    );
+  });
+
+  it("returns inline mode instructions with empty allowedTools", async () => {
+    const mockService = createMockSkillService({
+      getSkill: vi.fn(() => ({
+        id: "builtin_plan",
+        name: "plan",
+        description: "Build a plan",
+        version: "1.0.0",
+        contextMode: "inline" as const,
+        allowedTools: [],
+        maxIterations: null,
+        systemPrompt: "Build a plan",
+        referenceFiles: [],
+        author: "system",
+        tags: [],
+        builtIn: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      buildSkillPrompt: vi.fn(() => "Build a plan"),
+    });
+    setSkillService(mockService);
+
+    const result = await skillTool.execute({ skill: "plan" }, mockContext);
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.content).toContain("all tools");
+      expect(result.metadata?.allowedTools).toEqual([]);
+    }
+  });
 });

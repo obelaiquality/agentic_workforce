@@ -235,4 +235,48 @@ describe("LearningsView", () => {
 
     expect(await screen.findByText("Dream Cycle")).toBeInTheDocument();
   });
+
+  it("deletes a learning and shows success toast", async () => {
+    renderView();
+
+    // Wait for learnings to render
+    await screen.findByText("Use barrel exports for modules");
+
+    // Find all delete buttons (trash icons) — they are hidden by CSS but still in the DOM
+    const deleteButtons = screen.getAllByRole("button").filter(
+      (btn) => btn.querySelector(".lucide-trash-2") || btn.querySelector("svg"),
+    );
+
+    // The delete buttons are in the learnings section; click the first one
+    const trashButtons = screen.getAllByRole("button");
+    const deleteBtn = trashButtons.find((btn) => {
+      const svg = btn.querySelector("svg");
+      return svg && btn.className.includes("hover:text-rose-400");
+    });
+    expect(deleteBtn).toBeDefined();
+    fireEvent.click(deleteBtn!);
+
+    await waitFor(() => {
+      expect(apiClientMock.deleteLearning).toHaveBeenCalledWith("l-1");
+    });
+  });
+
+  it("shows error toast when delete fails", async () => {
+    apiClientMock.deleteLearning.mockRejectedValue(new Error("Server error"));
+
+    renderView();
+
+    await screen.findByText("Use barrel exports for modules");
+
+    const trashButtons = screen.getAllByRole("button");
+    const deleteBtn = trashButtons.find((btn) => {
+      return btn.className.includes("hover:text-rose-400");
+    });
+    expect(deleteBtn).toBeDefined();
+    fireEvent.click(deleteBtn!);
+
+    await waitFor(() => {
+      expect(apiClientMock.deleteLearning).toHaveBeenCalledWith("l-1");
+    });
+  });
 });

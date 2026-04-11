@@ -353,6 +353,138 @@ describe("AgentTelemetry", () => {
     });
   });
 
+  describe("trace error handling", () => {
+    it("should handle non-Error thrown values in trace", async () => {
+      await expect(
+        telemetry.trace("string-throw", async () => {
+          throw "plain string error";
+        })
+      ).rejects.toBe("plain string error");
+
+      const spans = telemetry.getSpans();
+      const span = spans[spans.length - 1];
+      expect(span.status).toBe("error");
+      expect(span.statusMessage).toBe("plain string error");
+      // Should NOT have exception event (only Error instances get recordException)
+      expect(span.events).toHaveLength(0);
+    });
+  });
+
+  describe("setStatus with message", () => {
+    it("should record status message when provided", () => {
+      const span = telemetry.startSpan({ name: "with-message" });
+      span.setStatus("error", "something went wrong");
+      span.end();
+
+      const spans = telemetry.getSpans();
+      const last = spans[spans.length - 1];
+      expect(last.status).toBe("error");
+      expect(last.statusMessage).toBe("something went wrong");
+    });
+
+    it("should not set statusMessage when not provided", () => {
+      const span = telemetry.startSpan({ name: "no-message" });
+      span.setStatus("ok");
+      span.end();
+
+      const spans = telemetry.getSpans();
+      const last = spans[spans.length - 1];
+      expect(last.status).toBe("ok");
+      expect(last.statusMessage).toBeUndefined();
+    });
+  });
+
+  describe("exportSpans attribute formatting", () => {
+    it("should format number attributes as intValue", () => {
+      const span = telemetry.startSpan({ name: "attr-test", attributes: { count: 42 } });
+      span.end();
+
+      const exported = telemetry.exportSpans();
+      const attrs = (exported[exported.length - 1] as any).attributes;
+      const countAttr = attrs.find((a: any) => a.key === "count");
+      expect(countAttr.value).toEqual({ intValue: 42 });
+    });
+
+    it("should format boolean attributes as boolValue", () => {
+      const span = telemetry.startSpan({ name: "bool-test", attributes: { enabled: true } });
+      span.end();
+
+      const exported = telemetry.exportSpans();
+      const attrs = (exported[exported.length - 1] as any).attributes;
+      const boolAttr = attrs.find((a: any) => a.key === "enabled");
+      expect(boolAttr.value).toEqual({ boolValue: true });
+    });
+
+    it("should format string attributes as stringValue", () => {
+      const span = telemetry.startSpan({ name: "str-test", attributes: { name: "test" } });
+      span.end();
+
+      const exported = telemetry.exportSpans();
+      const attrs = (exported[exported.length - 1] as any).attributes;
+      const strAttr = attrs.find((a: any) => a.key === "name");
+      expect(strAttr.value).toEqual({ stringValue: "test" });
+    });
+
+    it("should export unset status as STATUS_CODE_UNSET", () => {
+      const span = telemetry.startSpan({ name: "unset-status" });
+      span.end();
+
+      const exported = telemetry.exportSpans();
+      const last = exported[exported.length - 1] as any;
+      expect(last.status.code).toBe("STATUS_CODE_UNSET");
+    });
+
+    it("should export error status as STATUS_CODE_ERROR", () => {
+      const span = telemetry.startSpan({ name: "error-status" });
+      span.setStatus("error", "boom");
+      span.end();
+
+      const exported = telemetry.exportSpans();
+      const last = exported[exported.length - 1] as any;
+      expect(last.status.code).toBe("STATUS_CODE_ERROR");
+      expect(last.status.message).toBe("boom");
+    });
+  });
+
+  describe("exportPrometheus edge cases", () => {
+    it("returns empty string when no metrics recorded", () => {
+      const output = telemetry.exportPrometheus();
+      expect(output).toBe("");
+    });
+
+    it("exports metrics without labels", () => {
+      telemetry.recordMetric("simple.counter", 5);
+
+      const output = telemetry.exportPrometheus();
+      expect(output).toContain("# HELP simple_counter");
+      expect(output).toContain("# TYPE simple_counter summary");
+      // Should not have label braces
+      expect(output).toContain("simple_counter count=1 sum=5 min=5 max=5");
+    });
+
+    it("groups same metric name with different labels under one HELP/TYPE", () => {
+      telemetry.recordMetric("http.requests", 1, { method: "GET" });
+      telemetry.recordMetric("http.requests", 1, { method: "POST" });
+
+      const output = telemetry.exportPrometheus();
+      // Should only have one HELP and TYPE line for http_requests
+      const helpCount = (output.match(/# HELP http_requests/g) || []).length;
+      expect(helpCount).toBe(1);
+    });
+  });
+
+  describe("getMetricSummary without labels filter", () => {
+    it("returns all values across label variants when no labels specified", () => {
+      telemetry.recordMetric("tool.duration", 100, { tool: "a" });
+      telemetry.recordMetric("tool.duration", 200, { tool: "b" });
+
+      const summary = telemetry.getMetricSummary("tool.duration");
+      expect(summary).not.toBeNull();
+      expect(summary!.count).toBe(2);
+      expect(summary!.sum).toBe(300);
+    });
+  });
+
   describe("Singleton", () => {
     it("should return the same instance", () => {
       const instance1 = getTelemetry();

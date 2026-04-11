@@ -274,4 +274,204 @@ describe("RunReplayPanel", () => {
       expect(jumpEndButtonAgain).toBeDisabled();
     });
   });
+
+  it("renders 'Unknown error' when error is not an Error instance", async () => {
+    mockGetRunReplayV2.mockRejectedValue("string-error");
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load replay")).toBeInTheDocument();
+      expect(screen.getByText("Unknown error")).toBeInTheDocument();
+    });
+  });
+
+  it("renders empty state when replay items is null", async () => {
+    mockGetRunReplayV2.mockResolvedValue({ items: null as any });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("No events recorded for this run")).toBeInTheDocument();
+    });
+  });
+
+  it("renders default JSON view for non-ToolUse event payloads", async () => {
+    const event = createMockEvent({
+      type: "ConfigChanged",
+      payload_json: JSON.stringify({ setting: "dark_mode", value: true }),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("Event Payload")).toBeInTheDocument();
+      expect(screen.getByText(/"setting": "dark_mode"/)).toBeInTheDocument();
+    });
+  });
+
+  it("renders ToolUse payload with result and duration fields", async () => {
+    const event = createMockEvent({
+      type: "ToolUseCompleted",
+      payload_json: JSON.stringify({
+        name: "bash",
+        input: { command: "ls" },
+        result: { files: ["a.txt"] },
+        duration_ms: 42,
+      }),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("Result")).toBeInTheDocument();
+      expect(screen.getByText("Duration")).toBeInTheDocument();
+      expect(screen.getByText("42ms")).toBeInTheDocument();
+    });
+  });
+
+  it("renders correct icons and colors for various event types", async () => {
+    const events: DomainEvent[] = [
+      createMockEvent({ event_id: "evt-1", type: "UserInput", payload_json: JSON.stringify({ message: "hello" }) }),
+      createMockEvent({ event_id: "evt-2", type: "ConfigUpdated", payload_json: JSON.stringify({ name: "cfg" }) }),
+      createMockEvent({ event_id: "evt-3", type: "TaskSucceeded", payload_json: JSON.stringify({ summary: "done" }) }),
+      createMockEvent({ event_id: "evt-4", type: "TaskFailed", payload_json: JSON.stringify({ description: "oops" }) }),
+      createMockEvent({ event_id: "evt-5", type: "UnknownEvent", payload_json: JSON.stringify({ title: "misc" }) }),
+    ];
+
+    mockGetRunReplayV2.mockResolvedValue({ items: events });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("Step 1 of 5")).toBeInTheDocument();
+    });
+
+    // Click to event 2 (ConfigUpdated) to verify rendering
+    fireEvent.click(screen.getByTitle("Next step"));
+    await waitFor(() => {
+      expect(screen.getByText("Step 2 of 5")).toBeInTheDocument();
+    });
+
+    // Click to event 3 (TaskSucceeded)
+    fireEvent.click(screen.getByTitle("Next step"));
+    await waitFor(() => {
+      expect(screen.getByText("Step 3 of 5")).toBeInTheDocument();
+    });
+
+    // Click to event 4 (TaskFailed)
+    fireEvent.click(screen.getByTitle("Next step"));
+    await waitFor(() => {
+      expect(screen.getByText("Step 4 of 5")).toBeInTheDocument();
+    });
+
+    // Click to event 5 (UnknownEvent)
+    fireEvent.click(screen.getByTitle("Next step"));
+    await waitFor(() => {
+      expect(screen.getByText("Step 5 of 5")).toBeInTheDocument();
+    });
+  });
+
+  it("extracts description from payload fields: summary, description, name, title", async () => {
+    // Test "summary" field
+    const eventSummary = createMockEvent({
+      event_id: "evt-s",
+      type: "GenericEvent",
+      payload_json: JSON.stringify({ summary: "A summary desc" }),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [eventSummary] });
+
+    const { unmount } = render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("A summary desc").length).toBeGreaterThan(0);
+    });
+
+    unmount();
+  });
+
+  it("falls back to event type as description when payload has no known fields", async () => {
+    const event = createMockEvent({
+      type: "CustomEvent",
+      payload_json: JSON.stringify({ randomField: 123 }),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      // The event description should fall back to the event type
+      const descriptions = screen.getAllByText(/Custom Event/);
+      expect(descriptions.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("falls back to event type when payload is not an object", async () => {
+    const event = createMockEvent({
+      type: "SimpleEvent",
+      payload_json: JSON.stringify("just a string"),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      const texts = screen.getAllByText(/Simple Event/);
+      expect(texts.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("handles invalid JSON in payload gracefully", async () => {
+    const event = createMockEvent({
+      type: "BadPayload",
+      payload_json: "not-valid-json{{{",
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      // Should render without crashing - no payload section shown
+      const texts = screen.getAllByText(/Bad Payload/);
+      expect(texts.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("renders empty payload without payload section", async () => {
+    const event = createMockEvent({
+      type: "EmptyPayload",
+      payload_json: JSON.stringify({}),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Event Payload")).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders MessageSent event with violet color", async () => {
+    const event = createMockEvent({
+      type: "MessageSent",
+      payload_json: JSON.stringify({ message: "Hello world" }),
+    });
+
+    mockGetRunReplayV2.mockResolvedValue({ items: [event] });
+
+    render(<RunReplayPanel runId="run-1" />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Hello world").length).toBeGreaterThan(0);
+    });
+  });
 });

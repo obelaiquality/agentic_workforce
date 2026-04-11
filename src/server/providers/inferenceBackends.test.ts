@@ -151,4 +151,133 @@ describe("On-prem inference backends", () => {
     expect(cmd).toContain("--port 8010");
     expect(cmd).toContain("--model \"mlx-community/Qwen3.5-4B-4bit\"");
   });
+
+  it("resolves default backend when backendId is null", () => {
+    const resolved = resolveOnPremInferenceBackend(null);
+    expect(resolved.id).toBe("mlx-lm");
+  });
+
+  it("resolves default backend when backendId is undefined", () => {
+    const resolved = resolveOnPremInferenceBackend(undefined);
+    expect(resolved.id).toBe("mlx-lm");
+  });
+
+  it("resolves default backend when backendId is empty string", () => {
+    const resolved = resolveOnPremInferenceBackend("");
+    expect(resolved.id).toBe("mlx-lm");
+  });
+
+  it("adds speculative decoding when vramMb is not provided (undefined)", () => {
+    const vllm = resolveOnPremInferenceBackend("vllm-openai");
+    const cmd = buildStartupCommand(vllm, "Qwen/Qwen3.5-4B", {
+      enableSpeculativeDecoding: true,
+      // vramMb intentionally omitted
+    });
+    expect(cmd).toContain("--speculative-model Qwen/Qwen3-0.6B");
+    expect(cmd).toContain("--num-speculative-tokens 5");
+  });
+
+  it("builds vllm startup command against a dedicated base URL", () => {
+    const vllm = resolveOnPremInferenceBackend("vllm-openai");
+    const cmd = buildStartupCommandForBaseUrl(
+      vllm,
+      "Qwen/Qwen3.5-4B",
+      "http://192.168.1.100:9000/v1"
+    );
+    expect(cmd).toContain("vllm serve");
+    expect(cmd).toContain("--host 192.168.1.100");
+    expect(cmd).toContain("--port 9000");
+    expect(cmd).toContain("--enable-prefix-caching");
+  });
+
+  it("builds sglang startup command against a dedicated base URL", () => {
+    const sglang = resolveOnPremInferenceBackend("sglang");
+    const cmd = buildStartupCommandForBaseUrl(
+      sglang,
+      "Qwen/Qwen3.5-4B",
+      "http://10.0.0.5:30000/v1"
+    );
+    expect(cmd).toContain("sglang.launch_server");
+    expect(cmd).toContain("--host 10.0.0.5");
+    expect(cmd).toContain("--port 30000");
+  });
+
+  it("builds trtllm startup command against a dedicated base URL", () => {
+    const trtllm = resolveOnPremInferenceBackend("trtllm-openai");
+    const cmd = buildStartupCommandForBaseUrl(
+      trtllm,
+      "Qwen/Qwen3.5-4B",
+      "http://127.0.0.1:7000/v1"
+    );
+    expect(cmd).toContain("trtllm-serve");
+    expect(cmd).toContain("--host 127.0.0.1");
+    expect(cmd).toContain("--port 7000");
+  });
+
+  it("builds llama-cpp startup command against a dedicated base URL", () => {
+    const llamaCpp = resolveOnPremInferenceBackend("llama-cpp-openai");
+    const cmd = buildStartupCommandForBaseUrl(
+      llamaCpp,
+      "test-model",
+      "http://127.0.0.1:8080/v1"
+    );
+    expect(cmd).toContain("llama-server");
+    expect(cmd).toContain("--host 127.0.0.1");
+    expect(cmd).toContain("--port 8080");
+    expect(cmd).toContain("--cache-prompt");
+  });
+
+  it("builds ollama startup command (always returns 'ollama serve')", () => {
+    const ollama = resolveOnPremInferenceBackend("ollama-openai");
+    const cmd = buildStartupCommandForBaseUrl(
+      ollama,
+      "llama3",
+      "http://127.0.0.1:11434/v1"
+    );
+    expect(cmd).toBe("ollama serve");
+  });
+
+  it("falls back to buildStartupCommand for unknown backend id in buildStartupCommandForBaseUrl", () => {
+    // Create a fake backend descriptor with unknown id
+    const fakeBackend = {
+      ...resolveOnPremInferenceBackend("mlx-lm"),
+      id: "unknown-backend" as any,
+      startupCommandTemplate: "custom-server --model {{model}}",
+    };
+    const cmd = buildStartupCommandForBaseUrl(
+      fakeBackend,
+      "test-model",
+      "http://127.0.0.1:5000/v1"
+    );
+    expect(cmd).toContain("custom-server --model test-model");
+  });
+
+  it("parseHostPort falls back to backend default when baseUrl is invalid", () => {
+    const mlx = resolveOnPremInferenceBackend("mlx-lm");
+    // Pass an invalid URL to trigger the catch branch in parseHostPort
+    const cmd = buildStartupCommandForBaseUrl(
+      mlx,
+      "test-model",
+      "not-a-valid-url"
+    );
+    // Should use the fallback host/port from mlx baseUrlDefault (127.0.0.1:8000)
+    expect(cmd).toContain("--host 127.0.0.1");
+    expect(cmd).toContain("--port 8000");
+  });
+
+  it("omits speculative decoding when enableSpeculativeDecoding is false", () => {
+    const vllm = resolveOnPremInferenceBackend("vllm-openai");
+    const cmd = buildStartupCommand(vllm, "Qwen/Qwen3.5-4B", {
+      enableSpeculativeDecoding: false,
+      vramMb: 16384,
+    });
+    expect(cmd).not.toContain("--speculative-model");
+  });
+
+  it("builds basic startup command without options", () => {
+    const mlx = resolveOnPremInferenceBackend("mlx-lm");
+    const cmd = buildStartupCommand(mlx, "Qwen/Qwen3.5-0.8B");
+    expect(cmd).toContain("mlx_lm.server");
+    expect(cmd).toContain("--model Qwen/Qwen3.5-0.8B");
+  });
 });

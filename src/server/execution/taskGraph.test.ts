@@ -461,4 +461,144 @@ describe("TaskGraph", () => {
       expect(graph.getAllTasks()).toHaveLength(0);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // addTask — edge case: task with dependencies and status already "ready"
+  // ---------------------------------------------------------------------------
+
+  describe("addTask edge cases", () => {
+    it("should preserve ready status for task with dependencies if status is already ready", () => {
+      graph.addTask({ id: "a", objective: "A", dependencies: [], status: "pending" });
+
+      // Adding a task with dependencies AND status "ready" should keep it "ready"
+      graph.addTask({
+        id: "b",
+        objective: "B",
+        dependencies: ["a"],
+        status: "ready",
+      });
+
+      const task = graph.getTask("b");
+      expect(task!.status).toBe("ready");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // validate — cycle detection
+  // ---------------------------------------------------------------------------
+
+  describe("validate with cycles", () => {
+    it("should detect a cycle when dependencies form a loop", () => {
+      // We need to bypass addTask validation to create a cycle.
+      // Manually inject nodes with circular dependencies.
+      const nodes = (graph as any).nodes as Map<string, TaskNode>;
+
+      nodes.set("a", {
+        id: "a",
+        objective: "A",
+        dependencies: ["c"], // a depends on c
+        status: "pending",
+      });
+      nodes.set("b", {
+        id: "b",
+        objective: "B",
+        dependencies: ["a"], // b depends on a
+        status: "pending",
+      });
+      nodes.set("c", {
+        id: "c",
+        objective: "C",
+        dependencies: ["b"], // c depends on b -> cycle: a->c->b->a
+        status: "pending",
+      });
+
+      const result = graph.validate();
+      expect(result.valid).toBe(false);
+      expect(result.cycles).toBeDefined();
+      expect(result.cycles!.length).toBeGreaterThan(0);
+    });
+
+    it("should detect a self-referencing cycle", () => {
+      const nodes = (graph as any).nodes as Map<string, TaskNode>;
+      nodes.set("a", {
+        id: "a",
+        objective: "A",
+        dependencies: ["a"], // self-referencing
+        status: "pending",
+      });
+
+      const result = graph.validate();
+      expect(result.valid).toBe(false);
+      expect(result.cycles).toBeDefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // topologicalSort — cycle detection
+  // ---------------------------------------------------------------------------
+
+  describe("topologicalSort with cycles", () => {
+    it("should throw when graph contains cycles", () => {
+      const nodes = (graph as any).nodes as Map<string, TaskNode>;
+
+      nodes.set("a", {
+        id: "a",
+        objective: "A",
+        dependencies: ["b"],
+        status: "pending",
+      });
+      nodes.set("b", {
+        id: "b",
+        objective: "B",
+        dependencies: ["a"],
+        status: "pending",
+      });
+
+      expect(() => graph.topologicalSort()).toThrow(
+        "Cannot topologically sort: graph contains cycles"
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // updateStatus — edge cases
+  // ---------------------------------------------------------------------------
+
+  describe("updateStatus edge cases", () => {
+    it("should not change status of dependent task that is already running", () => {
+      graph.addTask({ id: "a", objective: "A", dependencies: [], status: "pending" });
+      graph.addTask({ id: "b", objective: "B", dependencies: ["a"], status: "pending" });
+
+      // Manually set b to running
+      graph.updateStatus("b", "running");
+
+      // Complete a — b should stay running (not become ready again)
+      graph.updateStatus("a", "completed");
+      expect(graph.getTask("b")!.status).toBe("running");
+    });
+
+    it("should not change status of non-dependent tasks when a task completes", () => {
+      graph.addTask({ id: "a", objective: "A", dependencies: [], status: "pending" });
+      graph.addTask({ id: "b", objective: "B", dependencies: [], status: "pending" });
+
+      graph.updateStatus("a", "completed");
+      // b has no dependency on a, and it's already ready (no deps), so stays ready
+      expect(graph.getTask("b")!.status).toBe("ready");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getReadyTasks — tasks with deps referencing non-existent nodes
+  // ---------------------------------------------------------------------------
+
+  describe("getReadyTasks edge cases", () => {
+    it("should not return a task whose dependency is not completed", () => {
+      graph.addTask({ id: "a", objective: "A", dependencies: [], status: "pending" });
+      graph.addTask({ id: "b", objective: "B", dependencies: ["a"], status: "pending" });
+
+      // a is ready but not completed
+      const ready = graph.getReadyTasks();
+      expect(ready.map((t) => t.id)).toEqual(["a"]);
+    });
+  });
 });

@@ -244,6 +244,39 @@ describe("MemoryService", () => {
     expect(comp.stats.episodicCount).toBe(0);
   });
 
+  it("compose includes stale note for memories older than 7 days", () => {
+    const svc = new MemoryService(tmpDir);
+    const mem = svc.addEpisodicMemory({
+      taskDescription: "Old stale task",
+      summary: "Old stale summary",
+      outcome: "success",
+    });
+
+    // Manually backdate the memory to 10 days ago
+    (mem as any).createdAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    // Also need to update the in-memory array (addEpisodicMemory stores a copy)
+    // The service stores the same object reference, so the mutation above works
+
+    const comp = svc.compose("Old stale task");
+    expect(comp.episodicContext).toContain("[Note: this memory may be outdated");
+  });
+
+  it("compose filters working messages by sessionId when provided", () => {
+    const svc = new MemoryService(tmpDir);
+    svc.addWorkingMessage({ role: "user", content: "session-a msg", sessionId: "session-a" });
+    svc.addWorkingMessage({ role: "user", content: "session-b msg", sessionId: "session-b" });
+    svc.addWorkingMessage({ role: "user", content: "no session msg" });
+
+    const comp = svc.compose("anything", "session-a");
+
+    // Should include session-a messages and messages without a sessionId
+    expect(comp.workingMessages).toHaveLength(2);
+    const contents = comp.workingMessages.map((m) => m.content);
+    expect(contents).toContain("session-a msg");
+    expect(contents).toContain("no session msg");
+    expect(contents).not.toContain("session-b msg");
+  });
+
   // ── load/save round-trip ──────────────────────────────────────────
 
   it("loadEpisodicMemory / saveEpisodicMemory round-trips", () => {
@@ -915,6 +948,23 @@ describe("MemoryService", () => {
       expect(formatted).toContain("[PARTIAL]");
     });
 
+    it("formatMemoriesForPrompt includes stale note for memories older than 7 days", () => {
+      const svc = new MemoryService(tmpDir);
+      const mem = svc.addEpisodicMemory({
+        taskDescription: "Old task",
+        summary: "Old summary",
+        outcome: "success",
+      });
+
+      // Manually backdate the memory to 10 days ago
+      (mem as any).createdAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+
+      const formatted = svc.formatMemoriesForPrompt([mem]);
+
+      expect(formatted).toContain("[Note: this memory may be outdated");
+      expect(formatted).toContain("10 days ago");
+    });
+
     it("getPrefetchStats returns empty stats initially", () => {
       const svc = new MemoryService(tmpDir);
       const stats = svc.getPrefetchStats();
@@ -935,6 +985,50 @@ describe("MemoryService", () => {
       expect(stats.inFlightCount).toBe(2);
       expect(stats.runIds).toContain("run-1");
       expect(stats.runIds).toContain("run-2");
+    });
+
+    it("startPrefetch handles errors gracefully and returns empty array", async () => {
+      // Point at a non-existent directory to cause loadEpisodicMemory to fail on JSON parse
+      const badDir = path.join(tmpDir, "bad-memory-dir");
+      fs.mkdirSync(path.join(badDir, ".agentic-workforce/memory"), { recursive: true });
+      // Write invalid JSON to make loadEpisodicMemory throw
+      fs.writeFileSync(path.join(badDir, ".agentic-workforce/memory/episodic.json"), "INVALID JSON{{{");
+
+      const svc = new MemoryService(badDir);
+      // Do NOT call loadEpisodicMemory — let the prefetch trigger it internally
+
+      svc.startPrefetch({
+        runId: "error-run",
+        objective: "Something",
+      });
+
+      // The catch handler should return empty array instead of throwing
+      const memories = await svc.awaitPrefetch("error-run");
+      expect(Array.isArray(memories)).toBe(true);
+      expect(memories).toHaveLength(0);
+    });
+
+    it("awaitPrefetch auto-loads episodic from disk when not pre-loaded", async () => {
+      // svc1 saves memories to disk
+      const svc1 = new MemoryService(tmpDir);
+      svc1.addEpisodicMemory({
+        taskDescription: "Saved to disk task",
+        summary: "Should be loadable from disk",
+        outcome: "success",
+      });
+
+      // svc2 is fresh — no loadEpisodicMemory() called
+      const svc2 = new MemoryService(tmpDir);
+      // Do NOT call svc2.loadEpisodicMemory()
+
+      svc2.startPrefetch({
+        runId: "disk-load-run",
+        objective: "Saved to disk task",
+      });
+
+      const memories = await svc2.awaitPrefetch("disk-load-run");
+      expect(memories.length).toBeGreaterThan(0);
+      expect(memories[0].taskDescription).toBe("Saved to disk task");
     });
 
     it("complete prefetch workflow", async () => {

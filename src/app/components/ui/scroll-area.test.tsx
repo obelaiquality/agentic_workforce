@@ -34,4 +34,16 @@ describe("ScrollArea", () => {
       container.querySelector('[data-slot="scroll-area-viewport"]'),
     ).toBeTruthy();
   });
+
+  it("renders ScrollBar with horizontal orientation", () => {
+    const { container } = render(
+      <ScrollArea>
+        <ScrollBar orientation="horizontal" />
+        <div>Content</div>
+      </ScrollArea>,
+    );
+    // The horizontal scrollbar is rendered inside ScrollArea (which wraps in Root)
+    // Check that the component renders without error - the horizontal branch in className is exercised
+    expect(container.firstChild).toBeTruthy();
+  });
 });

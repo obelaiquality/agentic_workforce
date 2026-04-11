@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fsSyncOrig from "node:fs";
+import pathOrig from "node:path";
+import osOrig from "node:os";
+import { execSync as execSyncOrig } from "node:child_process";
 import { gitStatus, gitDiff, gitCommit } from "./git";
 import type { ToolContext } from "../types";
 
@@ -113,6 +117,156 @@ describe("git tools", () => {
       // Should either succeed or return error, not crash
       expect(result).toBeDefined();
       expect(["success", "error", "approval_required"]).toContain(result.type);
+    });
+  });
+
+  // ── Git tools with real temp repo ────────────────────────────────────────
+
+  describe("git tools with real temp repo", () => {
+    let tmpDir: string;
+    let repoCtx: ToolContext;
+
+    beforeEach(() => {
+      tmpDir = fsSyncOrig.mkdtempSync(pathOrig.join(osOrig.tmpdir(), "git-test-"));
+      execSyncOrig("git init", { cwd: tmpDir });
+      execSyncOrig('git config user.email "test@test.com"', { cwd: tmpDir });
+      execSyncOrig('git config user.name "Test"', { cwd: tmpDir });
+      repoCtx = { ...mockContext, worktreePath: tmpDir };
+    });
+
+    afterEach(() => {
+      fsSyncOrig.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("git_status returns clean status for empty repo", async () => {
+      const result = await gitStatus.execute({}, repoCtx);
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toBe("(no changes)");
+        expect(result.metadata?.hasChanges).toBe(false);
+        expect(result.metadata?.branch).toBeDefined();
+      }
+    });
+
+    it("git_status detects new files", async () => {
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "new.txt"), "hello");
+
+      const result = await gitStatus.execute({}, repoCtx);
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("new.txt");
+        expect(result.metadata?.hasChanges).toBe(true);
+      }
+    });
+
+    it("git_diff shows unstaged changes", async () => {
+      // Create initial commit
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "file.txt"), "original");
+      execSyncOrig("git add -A", { cwd: tmpDir });
+      execSyncOrig('git commit -m "initial"', { cwd: tmpDir });
+
+      // Modify file
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "file.txt"), "modified");
+
+      const result = await gitDiff.execute({ staged: false }, repoCtx);
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("modified");
+        expect(result.metadata?.hasDiff).toBe(true);
+        expect(result.metadata?.staged).toBe(false);
+      }
+    });
+
+    it("git_diff shows staged changes", async () => {
+      // Create initial commit
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "file.txt"), "original");
+      execSyncOrig("git add -A", { cwd: tmpDir });
+      execSyncOrig('git commit -m "initial"', { cwd: tmpDir });
+
+      // Stage a change
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "file.txt"), "staged-change");
+      execSyncOrig("git add file.txt", { cwd: tmpDir });
+
+      const result = await gitDiff.execute({ staged: true }, repoCtx);
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("staged-change");
+        expect(result.metadata?.hasDiff).toBe(true);
+        expect(result.metadata?.staged).toBe(true);
+      }
+    });
+
+    it("git_diff returns no diff when clean", async () => {
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "file.txt"), "content");
+      execSyncOrig("git add -A", { cwd: tmpDir });
+      execSyncOrig('git commit -m "initial"', { cwd: tmpDir });
+
+      const result = await gitDiff.execute({}, repoCtx);
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toBe("(no diff)");
+        expect(result.metadata?.hasDiff).toBe(false);
+      }
+    });
+
+    it("git_commit succeeds with staged changes", async () => {
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "file.txt"), "content");
+      execSyncOrig("git add -A", { cwd: tmpDir });
+
+      const result = await gitCommit.execute(
+        { message: "test commit" },
+        repoCtx,
+      );
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("test commit");
+        expect(result.metadata?.commitHash).toBeDefined();
+        expect(result.metadata?.commitHash).not.toBe("unknown");
+        expect(result.metadata?.message).toBe("test commit");
+      }
+    });
+
+    it("git_commit with add_all stages and commits", async () => {
+      // Create initial commit first
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "init.txt"), "init");
+      execSyncOrig("git add -A", { cwd: tmpDir });
+      execSyncOrig('git commit -m "init"', { cwd: tmpDir });
+
+      // Add a new file without staging
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "new.txt"), "new content");
+
+      const result = await gitCommit.execute(
+        { message: "auto-staged commit", add_all: true },
+        repoCtx,
+      );
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("auto-staged commit");
+      }
+    });
+
+    it("git_commit returns error when nothing is staged", async () => {
+      // Create initial commit so repo is clean
+      fsSyncOrig.writeFileSync(pathOrig.join(tmpDir, "init.txt"), "init");
+      execSyncOrig("git add -A", { cwd: tmpDir });
+      execSyncOrig('git commit -m "init"', { cwd: tmpDir });
+
+      const result = await gitCommit.execute(
+        { message: "empty commit" },
+        repoCtx,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("No changes staged for commit");
+      }
     });
   });
 });

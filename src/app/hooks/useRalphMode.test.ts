@@ -310,4 +310,16 @@ describe("useRalphStream", () => {
     });
     expect(result.current.events).toHaveLength(0);
   });
+
+  it("ignores malformed non-JSON messages", () => {
+    const { result } = renderHook(() => useRalphStream("r-1"), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      mockEventSource.onmessage?.({ data: "not valid json{{{" });
+    });
+
+    expect(result.current.events).toHaveLength(0);
+  });
 });

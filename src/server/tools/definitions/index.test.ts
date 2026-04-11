@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getAllCoreTools, getCoreToolNames, getInitialCoreTools, getDeferredCoreTools } from "./index";
+import { getAllCoreTools, getCoreToolNames, getInitialCoreTools, getDeferredCoreTools, getCoreToolsByCategory } from "./index";
 
 describe("Tool Definitions", () => {
   describe("getAllCoreTools", () => {
@@ -129,6 +129,105 @@ describe("Tool Definitions", () => {
       const names = getCoreToolNames();
       const uniqueNames = new Set(names);
       expect(uniqueNames.size).toBe(names.length);
+    });
+  });
+
+  describe("getCoreToolsByCategory", () => {
+    it("should return all expected categories", () => {
+      const categories = getCoreToolsByCategory();
+
+      expect(categories).toHaveProperty("fileOps");
+      expect(categories).toHaveProperty("shell");
+      expect(categories).toHaveProperty("git");
+      expect(categories).toHaveProperty("verification");
+      expect(categories).toHaveProperty("meta");
+      expect(categories).toHaveProperty("lsp");
+      expect(categories).toHaveProperty("team");
+      expect(categories).toHaveProperty("planMode");
+      expect(categories).toHaveProperty("taskDecomposition");
+    });
+
+    it("should have correct tool counts per category", () => {
+      const categories = getCoreToolsByCategory();
+
+      expect(categories.fileOps).toHaveLength(7);
+      expect(categories.shell).toHaveLength(1);
+      expect(categories.git).toHaveLength(3);
+      expect(categories.verification).toHaveLength(2);
+      expect(categories.meta).toHaveLength(4);
+      expect(categories.lsp).toHaveLength(4);
+    });
+
+    it("should include fuzzy_file_search in fileOps", () => {
+      const categories = getCoreToolsByCategory();
+      const fileOpNames = categories.fileOps.map((t) => t.name);
+
+      expect(fileOpNames).toContain("fuzzy_file_search");
+      expect(fileOpNames).toContain("read_file");
+      expect(fileOpNames).toContain("grep_search");
+    });
+
+    it("should include skill in meta tools", () => {
+      const categories = getCoreToolsByCategory();
+      const metaNames = categories.meta.map((t) => t.name);
+
+      expect(metaNames).toContain("skill");
+      expect(metaNames).toContain("ask_user");
+      expect(metaNames).toContain("complete_task");
+      expect(metaNames).toContain("rollback_file");
+    });
+
+    it("category tools should sum to total core tools", () => {
+      const categories = getCoreToolsByCategory();
+      const totalFromCategories =
+        categories.fileOps.length +
+        categories.shell.length +
+        categories.git.length +
+        categories.verification.length +
+        categories.meta.length +
+        categories.lsp.length +
+        categories.team.length +
+        categories.planMode.length +
+        categories.taskDecomposition.length;
+
+      expect(totalFromCategories).toBe(getAllCoreTools().length);
+    });
+  });
+
+  describe("getInitialCoreTools and getDeferredCoreTools", () => {
+    it("initial + deferred should equal all tools", () => {
+      const initial = getInitialCoreTools();
+      const deferred = getDeferredCoreTools();
+      const all = getAllCoreTools();
+
+      expect(initial.length + deferred.length).toBe(all.length);
+    });
+
+    it("deferred tools should include LSP tools", () => {
+      const deferred = getDeferredCoreTools();
+      const deferredNames = deferred.map((t) => t.name);
+
+      expect(deferredNames).toContain("lsp_diagnostics");
+      expect(deferredNames).toContain("lsp_definition");
+      expect(deferredNames).toContain("lsp_references");
+      expect(deferredNames).toContain("lsp_symbols");
+    });
+
+    it("deferred tools should include fuzzy_file_search", () => {
+      const deferred = getDeferredCoreTools();
+      const deferredNames = deferred.map((t) => t.name);
+
+      expect(deferredNames).toContain("fuzzy_file_search");
+    });
+
+    it("initial tools should include core file ops", () => {
+      const initial = getInitialCoreTools();
+      const initialNames = initial.map((t) => t.name);
+
+      expect(initialNames).toContain("read_file");
+      expect(initialNames).toContain("edit_file");
+      expect(initialNames).toContain("write_file");
+      expect(initialNames).toContain("bash");
     });
   });
 });

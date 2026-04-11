@@ -37,30 +37,16 @@ vi.mock("../db", () => ({
 }));
 
 // Mock the EnhancedTeamOrchestrator to avoid real DB calls during route tests
+const mockExecuteFn = vi.hoisted(() => vi.fn());
+
 vi.mock("../execution/enhancedTeamMode", async (importOriginal) => {
   const original = await importOriginal<typeof import("../execution/enhancedTeamMode")>();
   return {
     ...original,
     EnhancedTeamOrchestrator: class {
       constructor(_deps: unknown) {}
-      async *execute(_input: unknown) {
-        yield {
-          type: "team_session_started" as const,
-          sessionId: "test-session-id",
-          workerCount: 2,
-          phase: "team_plan",
-        };
-        yield {
-          type: "team_phase_changed" as const,
-          from: "team_plan",
-          to: "team_exec",
-        };
-        yield {
-          type: "execution_complete" as const,
-          finalMessage: "Done",
-          totalIterations: 0,
-          totalToolCalls: 0,
-        };
+      execute(input: unknown) {
+        return mockExecuteFn(input);
       }
     },
   };
@@ -101,6 +87,27 @@ function createHarness() {
 describe("enhancedTeamRoutes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // Default mock: yields a team_session_started event first, then other events
+    mockExecuteFn.mockImplementation(async function* () {
+      yield {
+        type: "team_session_started" as const,
+        sessionId: "test-session-id",
+        workerCount: 2,
+        phase: "team_plan",
+      };
+      yield {
+        type: "team_phase_changed" as const,
+        from: "team_plan",
+        to: "team_exec",
+      };
+      yield {
+        type: "execution_complete" as const,
+        finalMessage: "Done",
+        totalIterations: 0,
+        totalToolCalls: 0,
+      };
+    });
   });
 
   afterEach(() => {
@@ -213,6 +220,91 @@ describe("enhancedTeamRoutes", () => {
       const body = response.json();
       expect(body.sessionId).toBe("test-session-id");
       expect(body.status).toBe("active");
+
+      await app.close();
+    });
+
+    it("accepts valid input with all optional fields", async () => {
+      const { app } = createHarness();
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/enhanced-team/start",
+        payload: {
+          actor: "user-1",
+          repoId: "repo-1",
+          objective: "Build feature X",
+          worktreePath: "/tmp/test",
+          ticketId: "TICKET-42",
+          maxWorkers: 4,
+          maxConcurrentWorkers: 2,
+          enableHeartbeat: true,
+          heartbeatIntervalMs: 5000,
+          heartbeatTimeoutMs: 15000,
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.sessionId).toBe("test-session-id");
+      expect(body.runId).toMatch(/^enhanced-team-\d+$/);
+      expect(body.status).toBe("active");
+
+      await app.close();
+    });
+
+    it("returns 500 when generator does not yield team_session_started first", async () => {
+      // Override the mock to yield a non-session-started event first
+      mockExecuteFn.mockImplementation(async function* () {
+        yield {
+          type: "team_phase_changed" as const,
+          from: "team_plan",
+          to: "team_exec",
+        };
+      });
+
+      const { app } = createHarness();
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/enhanced-team/start",
+        payload: {
+          actor: "user-1",
+          repoId: "repo-1",
+          objective: "Build feature X",
+          worktreePath: "/tmp/test",
+        },
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = response.json();
+      expect(body.error).toBe("Failed to start team session");
+
+      await app.close();
+    });
+
+    it("returns 500 when generator is immediately done", async () => {
+      // Override the mock to return an empty generator
+      mockExecuteFn.mockImplementation(async function* () {
+        // yields nothing — done immediately
+      });
+
+      const { app } = createHarness();
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/enhanced-team/start",
+        payload: {
+          actor: "user-1",
+          repoId: "repo-1",
+          objective: "Build feature X",
+          worktreePath: "/tmp/test",
+        },
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = response.json();
+      expect(body.error).toBe("Failed to start team session");
 
       await app.close();
     });
@@ -702,6 +794,186 @@ describe("enhancedTeamRoutes", () => {
       expect(body.tasks).toHaveLength(1);
       expect(body.tasks[0].name).toBe("Task 1");
       expect(body.tasks[0].status).toBe("completed");
+
+      await app.close();
+    });
+
+    it("returns tasks with null claimedAt and leaseExpires", async () => {
+      const { app } = createHarness();
+      mockPrisma.teamSession.findUnique.mockResolvedValueOnce({ id: "session-1" });
+      mockPrisma.teamTask.findMany.mockResolvedValueOnce([
+        {
+          id: "t2",
+          taskName: "Pending Task",
+          description: "Not claimed yet",
+          status: "pending",
+          assignedTo: null,
+          priority: 5,
+          result: null,
+          claimedAt: null,
+          leaseExpires: null,
+        },
+        {
+          id: "t3",
+          taskName: "Leased Task",
+          description: "Has a lease",
+          status: "in_progress",
+          assignedTo: "worker-2",
+          priority: 3,
+          result: null,
+          claimedAt: new Date("2026-04-07T12:00:00Z"),
+          leaseExpires: new Date("2026-04-07T12:30:00Z"),
+        },
+      ]);
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/enhanced-team/session-1/tasks",
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.tasks).toHaveLength(2);
+      expect(body.tasks[0].claimedAt).toBeNull();
+      expect(body.tasks[0].leaseExpires).toBeNull();
+      expect(body.tasks[1].claimedAt).toBe("2026-04-07T12:00:00.000Z");
+      expect(body.tasks[1].leaseExpires).toBe("2026-04-07T12:30:00.000Z");
+
+      await app.close();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/enhanced-team/:id/workers — null heartbeat
+  // -----------------------------------------------------------------------
+
+  describe("GET /api/enhanced-team/:id/workers — null heartbeat", () => {
+    it("returns null lastHeartbeatAt for workers without heartbeat", async () => {
+      const { app } = createHarness();
+      mockPrisma.teamSession.findUnique.mockResolvedValueOnce({ id: "session-1" });
+      mockPrisma.teamWorker.findMany.mockResolvedValueOnce([
+        {
+          id: "w3",
+          workerId: "worker-3",
+          role: "researcher",
+          status: "idle",
+          currentTaskId: null,
+          lastHeartbeatAt: null,
+          createdAt: new Date(),
+        },
+      ]);
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/enhanced-team/session-1/workers",
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.workers).toHaveLength(1);
+      expect(body.workers[0].lastHeartbeatAt).toBeNull();
+
+      await app.close();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/enhanced-team/:id/stream
+  // -----------------------------------------------------------------------
+
+  describe("GET /api/enhanced-team/:id/stream", () => {
+    it("returns 404 when session generator is not found", async () => {
+      const { app } = createHarness();
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/enhanced-team/nonexistent/stream",
+      });
+
+      expect(response.statusCode).toBe(404);
+      const body = response.json();
+      expect(body.error).toBe("Session not found or stream already consumed");
+
+      await app.close();
+    });
+
+    it("streams SSE events from stored generator and cleans up", async () => {
+      const { app } = createHarness();
+
+      // First, start a session so a generator is stored under the sessionId
+      const startRes = await app.inject({
+        method: "POST",
+        url: "/api/enhanced-team/start",
+        payload: {
+          actor: "user-1",
+          repoId: "repo-1",
+          objective: "Build feature X",
+          worktreePath: "/tmp/test",
+        },
+      });
+
+      expect(startRes.statusCode).toBe(200);
+      const sessionId = startRes.json().sessionId;
+      expect(sessionId).toBe("test-session-id");
+
+      // Now stream events — the mock generator already yielded the first event
+      // during start, so the remaining events will be streamed
+      const streamRes = await app.inject({
+        method: "GET",
+        url: `/api/enhanced-team/${sessionId}/stream`,
+      });
+
+      // SSE stream should complete with 200
+      expect(streamRes.statusCode).toBe(200);
+      // The response body should contain SSE data lines
+      const rawBody = streamRes.body;
+      expect(rawBody).toContain("data:");
+
+      // After streaming, the generator should be cleaned up
+      // Attempting to stream again should return 404
+      const secondStreamRes = await app.inject({
+        method: "GET",
+        url: `/api/enhanced-team/${sessionId}/stream`,
+      });
+      expect(secondStreamRes.statusCode).toBe(404);
+
+      await app.close();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/enhanced-team/:id/message — with broadcast (no toWorkerId)
+  // -----------------------------------------------------------------------
+
+  describe("POST /api/enhanced-team/:id/message — broadcast", () => {
+    it("creates a broadcast message when toWorkerId is omitted", async () => {
+      const { app } = createHarness();
+      mockPrisma.teamSession.findUnique.mockResolvedValueOnce({ id: "session-1" });
+      mockPrisma.teamMessage.create.mockResolvedValueOnce({ id: "msg-456" });
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/enhanced-team/session-1/message",
+        payload: {
+          fromWorkerId: "worker-1",
+          content: "Broadcast to all",
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.ok).toBe(true);
+      expect(body.messageId).toBe("msg-456");
+
+      // Verify toWorkerId was null in the prisma call
+      expect(mockPrisma.teamMessage.create).toHaveBeenCalledWith({
+        data: {
+          sessionId: "session-1",
+          fromWorkerId: "worker-1",
+          toWorkerId: null,
+          content: "Broadcast to all",
+        },
+      });
 
       await app.close();
     });

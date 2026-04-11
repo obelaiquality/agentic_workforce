@@ -36,8 +36,9 @@ import {
   lspDefinitionTool,
   lspReferencesTool,
   lspSymbolsTool,
+  shutdownLspClient,
 } from "./lsp";
-import { getSharedLspClient } from "../../lsp/sharedClient";
+import { getSharedLspClient, shutdownSharedLspClient } from "../../lsp/sharedClient";
 
 function getMockClient() {
   return getSharedLspClient() as unknown as {
@@ -316,6 +317,187 @@ describe("LSP tool definitions", () => {
       if (result.type === "error") {
         expect(result.error).toContain("LSP symbols lookup failed");
         expect(result.error).toContain("Server crashed");
+      }
+    });
+
+    it("returns error for unsupported file type", async () => {
+      const result = await lspSymbolsTool.execute(
+        { path: "/tmp/test-project/data.csv" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("No LSP server configured");
+      }
+    });
+
+    it("returns error when server startup fails", async () => {
+      const client = getMockClient();
+      client.startServer.mockRejectedValue(new Error("binary not found"));
+
+      const result = await lspSymbolsTool.execute(
+        { path: "/tmp/test-project/src/index.ts" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("Failed to start LSP server");
+      }
+    });
+  });
+
+  describe("shutdownLspClient", () => {
+    it("delegates to shutdownSharedLspClient", async () => {
+      await shutdownLspClient();
+      expect(shutdownSharedLspClient).toHaveBeenCalled();
+    });
+  });
+
+  describe("lsp_diagnostics (additional)", () => {
+    it("includes info severity section in output", async () => {
+      const client = getMockClient();
+      client.startServer.mockResolvedValue(undefined);
+      client.getDiagnostics.mockResolvedValue([
+        { severity: "info", line: 2, character: 5, message: "FYI: use strict", source: "ts" },
+      ]);
+
+      const result = await lspDiagnosticsTool.execute(
+        { path: "/tmp/test-project/src/index.ts" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("Info (1):");
+        expect(result.content).toContain("FYI: use strict");
+        expect(result.metadata?.infoCount).toBe(1);
+      }
+    });
+
+    it("formats diagnostic without source", async () => {
+      const client = getMockClient();
+      client.startServer.mockResolvedValue(undefined);
+      client.getDiagnostics.mockResolvedValue([
+        { severity: "error", line: 0, character: 0, message: "Parse error" },
+      ]);
+
+      const result = await lspDiagnosticsTool.execute(
+        { path: "/tmp/test-project/src/index.ts" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.content).toContain("Parse error");
+        expect(result.content).not.toContain("[]");
+      }
+    });
+
+    it("returns error when server startup fails", async () => {
+      const client = getMockClient();
+      client.startServer.mockRejectedValue(new Error("typescript-language-server not found"));
+
+      const result = await lspDiagnosticsTool.execute(
+        { path: "/tmp/test-project/src/index.ts" },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("Failed to start LSP server");
+        expect(result.error).toContain("typescript-language-server not found");
+      }
+    });
+  });
+
+  describe("lsp_definition (additional)", () => {
+    it("returns error for unsupported file type", async () => {
+      const result = await lspDefinitionTool.execute(
+        { path: "/tmp/test-project/data.csv", line: 0, character: 0 },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("No LSP server configured");
+      }
+    });
+
+    it("returns error when server startup fails", async () => {
+      const client = getMockClient();
+      client.startServer.mockRejectedValue(new Error("binary missing"));
+
+      const result = await lspDefinitionTool.execute(
+        { path: "/tmp/test-project/src/index.ts", line: 0, character: 0 },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("Failed to start LSP server");
+      }
+    });
+
+    it("handles general execution error", async () => {
+      const client = getMockClient();
+      client.startServer.mockResolvedValue(undefined);
+      client.getDefinition.mockRejectedValue(new Error("Connection reset"));
+
+      const result = await lspDefinitionTool.execute(
+        { path: "/tmp/test-project/src/index.ts", line: 0, character: 0 },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("LSP definition lookup failed");
+      }
+    });
+  });
+
+  describe("lsp_references (additional)", () => {
+    it("returns error for unsupported file type", async () => {
+      const result = await lspReferencesTool.execute(
+        { path: "/tmp/test-project/data.csv", line: 0, character: 0 },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("No LSP server configured");
+      }
+    });
+
+    it("returns error when server startup fails", async () => {
+      const client = getMockClient();
+      client.startServer.mockRejectedValue(new Error("server unavailable"));
+
+      const result = await lspReferencesTool.execute(
+        { path: "/tmp/test-project/src/index.ts", line: 0, character: 0 },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("Failed to start LSP server");
+      }
+    });
+
+    it("handles general execution error", async () => {
+      const client = getMockClient();
+      client.startServer.mockResolvedValue(undefined);
+      client.getReferences.mockRejectedValue(new Error("Timeout"));
+
+      const result = await lspReferencesTool.execute(
+        { path: "/tmp/test-project/src/index.ts", line: 0, character: 0 },
+        mockContext,
+      );
+
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("LSP references lookup failed");
       }
     });
   });

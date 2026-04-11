@@ -166,6 +166,48 @@ describe("OtlpExporter", () => {
 
       expect(otlpSpan.status.code).toBe("STATUS_CODE_ERROR");
     });
+
+    it("maps span with unset status to STATUS_CODE_UNSET", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+      });
+
+      const span = makeSpan({ status: "pending" as any });
+
+      const exporter = new OtlpExporter(makeConfig());
+      await exporter.exportSpans([span]);
+
+      const [, options] = (globalThis.fetch as any).mock.calls[0];
+      const body = JSON.parse(options.body);
+      const otlpSpan = body.resourceSpans[0].scopeSpans[0].spans[0];
+
+      expect(otlpSpan.status.code).toBe("STATUS_CODE_UNSET");
+    });
+
+    it("formats non-string/number/boolean attribute values as stringValue fallback", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+      });
+
+      // Force a value that is not string, number, or boolean through the formatter
+      const span = makeSpan({
+        attributes: { oddAttr: null as any },
+      });
+
+      const exporter = new OtlpExporter(makeConfig());
+      await exporter.exportSpans([span]);
+
+      const [, options] = (globalThis.fetch as any).mock.calls[0];
+      const body = JSON.parse(options.body);
+      const otlpSpan = body.resourceSpans[0].scopeSpans[0].spans[0];
+
+      const oddAttr = otlpSpan.attributes.find((a: any) => a.key === "oddAttr");
+      expect(oddAttr.value).toEqual({ stringValue: "null" });
+    });
   });
 
   // ---------------------------------------------------------------------------

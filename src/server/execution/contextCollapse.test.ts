@@ -300,6 +300,30 @@ describe("ContextCollapseService", () => {
       }
     });
 
+    it("truncates summary exceeding 500 chars and appends ellipsis", () => {
+      // Use long tool names, long file paths, long error/decision lines to exceed 500 chars
+      const longSuffix = "a".repeat(70);
+      const messages: ConversationMessage[] = [
+        makeToolResultMessage(`very_long_tool_name_${longSuffix}_1`, "out"),
+        makeToolResultMessage(`very_long_tool_name_${longSuffix}_2`, "out"),
+        makeToolResultMessage(`very_long_tool_name_${longSuffix}_3`, "out"),
+        makeToolResultMessage(`very_long_tool_name_${longSuffix}_4`, "out"),
+        makeToolResultMessage(`very_long_tool_name_${longSuffix}_5`, "out"),
+        makeMessage("user", `/very/long/path/to/some/deeply/nested/${longSuffix}/file1.ts`),
+        makeMessage("user", `/very/long/path/to/some/deeply/nested/${longSuffix}/file2.ts`),
+        makeMessage("user", `/very/long/path/to/some/deeply/nested/${longSuffix}/file3.ts`),
+        makeMessage("user", `Error: ${"x".repeat(80)} something failed badly`),
+        makeMessage("user", `Error: ${"y".repeat(80)} another failure occurred`),
+        makeMessage("assistant", `I will ${"z".repeat(80)} implement the entire thing`),
+        makeMessage("assistant", `Decision: ${"w".repeat(80)} use a new approach`),
+      ];
+
+      const summary = service.generateExtractSummary(messages);
+
+      expect(summary.length).toBe(500);
+      expect(summary.endsWith("...")).toBe(true);
+    });
+
     it("returns fallback message for empty messages", () => {
       const summary = service.generateExtractSummary([]);
       expect(summary).toBe("No activity.");

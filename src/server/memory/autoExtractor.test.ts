@@ -297,6 +297,169 @@ describe("AutoMemoryExtractor", () => {
     });
   });
 
+  // ── extractFromCompletion - failure path ─────────────────────────────
+
+  describe("extractFromCompletion - failure lessons", () => {
+    it("adds lesson when task was not successful", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      await extractor.extractFromCompletion({
+        runId: "run-1",
+        projectId: "proj-1",
+        ticketId: "ticket-1",
+        objective: "Deploy new feature",
+        totalIterations: 10,
+        totalToolCalls: 20,
+        finalMessage: "Failed to deploy due to dependency issues.",
+        success: false,
+      });
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.outcome).toBe("failure");
+      expect(addCall.lessons.some((l: string) => l.includes("did not complete successfully"))).toBe(true);
+    });
+
+    it("adds both lessons when long iterations and failure", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      await extractor.extractFromCompletion({
+        runId: "run-1",
+        projectId: "proj-1",
+        ticketId: "ticket-1",
+        objective: "Long failing task",
+        totalIterations: 30,
+        totalToolCalls: 100,
+        finalMessage: "Could not complete the task.",
+        success: false,
+      });
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.lessons).toHaveLength(2);
+      expect(addCall.lessons.some((l: string) => l.includes("30 iterations"))).toBe(true);
+      expect(addCall.lessons.some((l: string) => l.includes("did not complete"))).toBe(true);
+    });
+
+    it("returns null when addEpisodicMemory throws", async () => {
+      const throwingMemoryService = {
+        ...createMockMemoryService(),
+        addEpisodicMemory: vi.fn(() => { throw new Error("persist failure"); }),
+      } as unknown as MemoryService;
+
+      const extractor = new AutoMemoryExtractor(throwingMemoryService);
+      const result = await extractor.extractFromCompletion({
+        runId: "run-1",
+        projectId: "proj-1",
+        ticketId: "ticket-1",
+        objective: "Task",
+        totalIterations: 5,
+        totalToolCalls: 10,
+        finalMessage: "Done.",
+        success: true,
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it("extractFromIteration returns null when addEpisodicMemory throws", async () => {
+      const throwingMemoryService = {
+        ...createMockMemoryService(),
+        addEpisodicMemory: vi.fn(() => { throw new Error("persist failure"); }),
+      } as unknown as MemoryService;
+
+      const extractor = new AutoMemoryExtractor(throwingMemoryService);
+      const result = await extractor.extractFromIteration(makeInput());
+      expect(result).toBeNull();
+    });
+
+    it("extractFromCompletion handles finalMessage with no file paths", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      await extractor.extractFromCompletion({
+        runId: "run-1",
+        projectId: "proj-1",
+        ticketId: "ticket-1",
+        objective: "Simple task",
+        totalIterations: 3,
+        totalToolCalls: 5,
+        finalMessage: "Done, nothing special.",
+        success: true,
+      });
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.keyFiles).toEqual([]);
+      expect(addCall.lessons).toEqual([]);
+    });
+
+    it("extractFromCompletion truncates long objective and finalMessage", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      const longObjective = "A".repeat(300);
+      const longMessage = "B".repeat(600);
+
+      await extractor.extractFromCompletion({
+        runId: "run-1",
+        projectId: "proj-1",
+        ticketId: "ticket-1",
+        objective: longObjective,
+        totalIterations: 5,
+        totalToolCalls: 10,
+        finalMessage: longMessage,
+        success: true,
+      });
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.taskDescription.length).toBeLessThanOrEqual(200);
+      expect(addCall.summary.length).toBeLessThanOrEqual(500);
+    });
+  });
+
+  // ── buildMemoryFromContext edge cases ──────────────────────────────
+
+  describe("buildMemoryFromContext edge cases", () => {
+    it("includes error count in summary when errors exist", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      const input = makeInput({
+        iteration: 12,
+        toolCalls: [
+          { name: "file_edit", args: {}, resultType: "error", durationMs: 50 },
+          { name: "shell_exec", args: {}, resultType: "success", durationMs: 80 },
+          { name: "file_read", args: {}, resultType: "error", durationMs: 30 },
+        ],
+      });
+
+      await extractor.extractFromIteration(input);
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.summary).toContain("2 errors encountered");
+    });
+
+    it("truncates objective in taskDescription to 200 chars", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      const longObjective = "X".repeat(300);
+      const input = makeInput({ objective: longObjective });
+
+      await extractor.extractFromIteration(input);
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.taskDescription.length).toBeLessThanOrEqual(200);
+    });
+
+    it("limits keyFiles to 10 entries", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      const toolCalls = [];
+      for (let i = 0; i < 15; i++) {
+        toolCalls.push({
+          name: "file_edit",
+          args: { path: `src/file${i}.ts` },
+          resultType: "success" as const,
+          durationMs: 50,
+        });
+      }
+
+      const input = makeInput({ toolCalls });
+      await extractor.extractFromIteration(input);
+
+      const addCall = (memoryService.addEpisodicMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(addCall.keyFiles.length).toBeLessThanOrEqual(10);
+    });
+  });
+
   // ── runDream ────────────────────────────────────────────────────────
 
   describe("runDream", () => {
@@ -311,6 +474,99 @@ describe("AutoMemoryExtractor", () => {
 
       expect(result.consolidated).toBe(0);
       expect(result.removed).toBe(0);
+    });
+
+    it("extracts learnings from successes and failures when learningsService is provided", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      (memoryService.getRelevantEpisodicMemories as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "1", summary: "Success memory one", taskDescription: "Task 1", outcome: "success", keyFiles: ["src/a.ts"], lessons: ["Pattern A works well"], createdAt: new Date().toISOString() },
+        { id: "2", summary: "Failure memory two", taskDescription: "Task 2", outcome: "failure", keyFiles: ["src/b.ts"], lessons: ["Anti-pattern B causes issues"], createdAt: new Date().toISOString() },
+        { id: "3", summary: "Another success three", taskDescription: "Task 3", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+        { id: "4", summary: "Fourth unique memory", taskDescription: "Task 4", outcome: "partial", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+      ]);
+
+      const learningsService = {
+        recordPattern: vi.fn(),
+        recordAntipattern: vi.fn(),
+        consolidate: vi.fn(),
+        pruneStale: vi.fn(),
+      };
+
+      const result = await extractor.runDream("proj-1", { learningsService: learningsService as any });
+
+      expect(result.consolidated).toBe(4);
+      expect(result.removed).toBe(0);
+      expect(result.learningsExtracted).toBe(2); // 1 success pattern + 1 failure antipattern
+      expect(learningsService.recordPattern).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "proj-1",
+          summary: expect.stringContaining("Pattern A"),
+          source: "auto_extraction",
+        }),
+      );
+      expect(learningsService.recordAntipattern).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "proj-1",
+          summary: expect.stringContaining("Anti-pattern B"),
+          source: "auto_extraction",
+        }),
+      );
+      expect(learningsService.consolidate).toHaveBeenCalledWith("proj-1");
+      expect(learningsService.pruneStale).toHaveBeenCalledWith("proj-1");
+    });
+
+    it("synthesizes skills when skillSynthesizer is provided", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      (memoryService.getRelevantEpisodicMemories as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "1", summary: "Memory A content", taskDescription: "Task 1", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+        { id: "2", summary: "Memory B content", taskDescription: "Task 2", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+        { id: "3", summary: "Memory C content", taskDescription: "Task 3", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+      ]);
+
+      const skillSynthesizer = {
+        synthesizeFromPatterns: vi.fn().mockReturnValue([{ name: "auto-skill-1" }, { name: "auto-skill-2" }]),
+      };
+
+      const result = await extractor.runDream("proj-1", { skillSynthesizer: skillSynthesizer as any });
+
+      expect(result.skillsSuggested).toBe(2);
+      expect(skillSynthesizer.synthesizeFromPatterns).toHaveBeenCalledWith("proj-1");
+    });
+
+    it("does not record learnings for memories with no lessons", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      (memoryService.getRelevantEpisodicMemories as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "1", summary: "Memory A no lessons", taskDescription: "Task 1", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+        { id: "2", summary: "Memory B no lessons", taskDescription: "Task 2", outcome: "failure", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+        { id: "3", summary: "Memory C no lessons", taskDescription: "Task 3", outcome: "partial", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+      ]);
+
+      const learningsService = {
+        recordPattern: vi.fn(),
+        recordAntipattern: vi.fn(),
+        consolidate: vi.fn(),
+        pruneStale: vi.fn(),
+      };
+
+      const result = await extractor.runDream("proj-1", { learningsService: learningsService as any });
+
+      expect(result.learningsExtracted).toBe(0);
+      expect(learningsService.recordPattern).not.toHaveBeenCalled();
+      expect(learningsService.recordAntipattern).not.toHaveBeenCalled();
+    });
+
+    it("runDream without optional services returns zero for learnings and skills", async () => {
+      const extractor = new AutoMemoryExtractor(memoryService);
+      (memoryService.getRelevantEpisodicMemories as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "1", summary: "Deployed the React frontend to production with nginx proxy config.", taskDescription: "Deploy frontend", outcome: "success", keyFiles: [], lessons: ["lesson"], createdAt: new Date().toISOString() },
+        { id: "2", summary: "Refactored database migration scripts to use Prisma ORM conventions.", taskDescription: "Refactor migrations", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+        { id: "3", summary: "Fixed authentication JWT token refresh logic in the middleware layer.", taskDescription: "Fix auth bug", outcome: "success", keyFiles: [], lessons: [], createdAt: new Date().toISOString() },
+      ]);
+
+      const result = await extractor.runDream("proj-1");
+      expect(result.learningsExtracted).toBe(0);
+      expect(result.skillsSuggested).toBe(0);
+      expect(result.consolidated).toBe(3);
     });
 
     it("detects duplicate memories", async () => {

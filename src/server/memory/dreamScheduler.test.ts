@@ -3,15 +3,38 @@ import { DreamScheduler, type DreamSchedulerConfig } from "./dreamScheduler";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
+const mockPromoteLearning = vi.fn().mockResolvedValue(undefined);
+const mockConsolidateGlobal = vi.fn().mockResolvedValue(undefined);
+const mockRecomputeUniversality = vi.fn().mockResolvedValue(undefined);
+const mockGetLearnings = vi.fn().mockReturnValue([]);
+
 vi.mock("./autoExtractor", () => ({
   AutoMemoryExtractor: vi.fn().mockImplementation(() => ({
-    runDream: vi.fn().mockResolvedValue({ consolidated: 3, removed: 1 }),
+    runDream: vi.fn().mockResolvedValue({ learningsExtracted: 3, skillsSuggested: 1 }),
   })),
 }));
 
 vi.mock("../services/memoryService", () => ({
   MemoryService: vi.fn().mockImplementation(() => ({
     loadEpisodicMemory: vi.fn(),
+  })),
+}));
+
+vi.mock("../services/learningsService", () => ({
+  LearningsService: vi.fn().mockImplementation(() => ({
+    getLearnings: mockGetLearnings,
+  })),
+}));
+
+vi.mock("../services/skillSynthesizer", () => ({
+  SkillSynthesizer: vi.fn().mockImplementation(() => ({})),
+}));
+
+vi.mock("../services/globalKnowledgePool", () => ({
+  GlobalKnowledgePool: vi.fn().mockImplementation(() => ({
+    promoteLearning: mockPromoteLearning,
+    consolidateGlobal: mockConsolidateGlobal,
+    recomputeUniversality: mockRecomputeUniversality,
   })),
 }));
 
@@ -203,5 +226,146 @@ describe("DreamScheduler", () => {
     expect(scheduler.isRunning).toBe(false);
 
     spy.mockRestore();
+  });
+
+  // 11. runDreamCycle tracks learningsExtracted and skillsSuggested
+  it("runDreamCycle tracks learnings and skills counts from extractor", async () => {
+    (AutoMemoryExtractor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ runDream: vi.fn().mockResolvedValue({ learningsExtracted: 3, skillsSuggested: 1 }) }),
+    );
+
+    const scheduler = new DreamScheduler(makeConfig());
+
+    await scheduler.runDreamCycle();
+
+    // Each project returns { learningsExtracted: 3, skillsSuggested: 1 }
+    // Two projects = 6 learnings, 2 skills
+    expect(scheduler.stats.learningsCount).toBe(6);
+    expect(scheduler.stats.suggestedSkillsCount).toBe(2);
+  });
+
+  // 12. runDreamCycle promotes high-confidence learnings to global pool
+  it("runDreamCycle promotes learnings to global pool", async () => {
+    (AutoMemoryExtractor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ runDream: vi.fn().mockResolvedValue({ learningsExtracted: 1, skillsSuggested: 0 }) }),
+    );
+    mockGetLearnings.mockReturnValue([
+      { id: "l1", summary: "Learning 1", confidence: 0.8 },
+      { id: "l2", summary: "Learning 2", confidence: 0.7 },
+    ]);
+
+    const scheduler = new DreamScheduler(makeConfig());
+
+    await scheduler.runDreamCycle();
+
+    // 2 learnings per project x 2 projects = 4 promotions
+    expect(mockPromoteLearning).toHaveBeenCalledTimes(4);
+    expect(scheduler.stats.globalLearningsPromoted).toBe(4);
+  });
+
+  // 13. runDreamCycle uses getTechFingerprint callback when provided
+  it("runDreamCycle calls getTechFingerprint when provided", async () => {
+    (AutoMemoryExtractor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ runDream: vi.fn().mockResolvedValue({ learningsExtracted: 1, skillsSuggested: 0 }) }),
+    );
+    mockGetLearnings.mockReturnValue([
+      { id: "l1", summary: "Test", confidence: 0.9 },
+    ]);
+
+    const mockGetFingerprint = vi.fn().mockResolvedValue(["typescript", "react"]);
+    const config = makeConfig({
+      getTechFingerprint: mockGetFingerprint,
+    });
+    const scheduler = new DreamScheduler(config);
+
+    await scheduler.runDreamCycle();
+
+    expect(mockGetFingerprint).toHaveBeenCalledWith("proj-1");
+    expect(mockGetFingerprint).toHaveBeenCalledWith("proj-2");
+    expect(mockPromoteLearning).toHaveBeenCalledWith(
+      expect.anything(),
+      ["typescript", "react"],
+      expect.any(String),
+    );
+  });
+
+  // 14. runDreamCycle uses empty array when getTechFingerprint is not provided
+  it("runDreamCycle passes empty fingerprint array when getTechFingerprint not provided", async () => {
+    (AutoMemoryExtractor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ runDream: vi.fn().mockResolvedValue({ learningsExtracted: 1, skillsSuggested: 0 }) }),
+    );
+    mockGetLearnings.mockReturnValue([
+      { id: "l1", summary: "Test", confidence: 0.9 },
+    ]);
+
+    const config = makeConfig();
+    // Ensure no getTechFingerprint is set
+    delete (config as any).getTechFingerprint;
+
+    const scheduler = new DreamScheduler(config);
+
+    await scheduler.runDreamCycle();
+
+    expect(mockPromoteLearning).toHaveBeenCalledWith(
+      expect.anything(),
+      [],
+      expect.any(String),
+    );
+  });
+
+  // 15. runDreamCycle handles promoteLearning failure gracefully
+  it("runDreamCycle continues when promoteLearning throws", async () => {
+    (AutoMemoryExtractor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ runDream: vi.fn().mockResolvedValue({ learningsExtracted: 1, skillsSuggested: 0 }) }),
+    );
+    mockGetLearnings.mockReturnValue([
+      { id: "l1", summary: "Fail", confidence: 0.9 },
+      { id: "l2", summary: "Succeed", confidence: 0.8 },
+    ]);
+    mockPromoteLearning
+      .mockRejectedValueOnce(new Error("promotion failed"))
+      .mockResolvedValue(undefined);
+
+    const scheduler = new DreamScheduler(makeConfig());
+
+    await scheduler.runDreamCycle();
+
+    // Should still complete the dream cycle
+    expect(scheduler.stats.dreamCount).toBe(1);
+    // One failure + three successes = 3 promoted
+    expect(scheduler.stats.globalLearningsPromoted).toBe(3);
+  });
+
+  // 16. runDreamCycle handles global consolidation failure silently
+  it("runDreamCycle handles global consolidation failure silently", async () => {
+    mockConsolidateGlobal.mockRejectedValueOnce(new Error("consolidation failed"));
+
+    const scheduler = new DreamScheduler(makeConfig());
+
+    await scheduler.runDreamCycle();
+
+    // Dream cycle should still complete
+    expect(scheduler.stats.dreamCount).toBe(1);
+  });
+
+  // 17. runDreamCycle handles recomputeUniversality failure silently
+  it("runDreamCycle handles recomputeUniversality failure silently", async () => {
+    mockRecomputeUniversality.mockRejectedValueOnce(new Error("recompute failed"));
+
+    const scheduler = new DreamScheduler(makeConfig());
+
+    await scheduler.runDreamCycle();
+
+    expect(scheduler.stats.dreamCount).toBe(1);
+  });
+
+  // 18. runDreamCycle calls consolidateGlobal and recomputeUniversality
+  it("runDreamCycle calls global consolidation after processing projects", async () => {
+    const scheduler = new DreamScheduler(makeConfig());
+
+    await scheduler.runDreamCycle();
+
+    expect(mockConsolidateGlobal).toHaveBeenCalledOnce();
+    expect(mockRecomputeUniversality).toHaveBeenCalledOnce();
   });
 });

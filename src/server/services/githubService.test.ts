@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { GitHubService } from "./githubService";
+import { GitHubService, mapProjectBinding } from "./githubService";
 import type { RepoService } from "./repoService";
+import type { RepoRegistration } from "../../shared/contracts";
 
 // Mock dependencies - use vi.hoisted() for proper hoisting
 const { mockRepoRegistry, mockGitHubInstallation, mockGitHubRepoBinding, mockGitHubPullRequestProjection, mockShareableRunReport } = vi.hoisted(() => ({
@@ -614,6 +615,46 @@ describe("GitHubService", () => {
       });
 
       expect(result.report.evidenceUrls).toEqual([]);
+    });
+  });
+
+  describe("mapProjectBinding", () => {
+    function makeRepo(overrides: Partial<RepoRegistration> = {}): RepoRegistration {
+      return {
+        id: "repo-1",
+        displayName: "test-repo",
+        sourceKind: "local_path",
+        sourceUri: "/path/to/repo",
+        repoRoot: "/path/to/repo",
+        managedWorktreeRoot: "/path/to/worktrees",
+        defaultBranch: "main",
+        active: true,
+        benchmarkEligible: false,
+        metadata: {},
+        attachedAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        ...overrides,
+      };
+    }
+
+    it("maps managed_pack sourceKind to managed_demo_pack", () => {
+      const repo = makeRepo({ sourceKind: "managed_pack" });
+      const result = mapProjectBinding(repo);
+      expect(result.sourceKind).toBe("managed_demo_pack");
+    });
+
+    it("falls back to local_attached for unknown sourceKind values", () => {
+      const repo = makeRepo({ sourceKind: "local_path" });
+      const result = mapProjectBinding(repo);
+      expect(result.sourceKind).toBe("local_attached");
+    });
+
+    it("uses active_worktree_path from metadata when it is a string", () => {
+      const repo = makeRepo({
+        metadata: { active_worktree_path: "/custom/worktree/path" },
+      });
+      const result = mapProjectBinding(repo);
+      expect(result.activeWorktreePath).toBe("/custom/worktree/path");
     });
   });
 

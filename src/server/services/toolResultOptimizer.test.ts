@@ -475,6 +475,44 @@ function formatBytes(bytes: number): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  optimizeAndPersist — persistence path                              */
+/* ------------------------------------------------------------------ */
+
+describe('optimizeAndPersist — persistence integration', () => {
+  it('returns preview with file reference when output exceeds persistence threshold', () => {
+    // Generate output exceeding default 100k threshold
+    const huge = 'x'.repeat(100_001);
+    const result = optimizeAndPersist(huge, 'shell');
+
+    expect(result).toContain('[Full output');
+    expect(result).toContain('saved to:');
+    // Preview portion should be present (first 10k chars by default)
+    expect(result).toContain('x'.repeat(100));
+  });
+
+  it('includes formatted byte size in file reference', () => {
+    const huge = 'y'.repeat(200_000);
+    const result = optimizeAndPersist(huge, 'file_read');
+
+    // 200_000 bytes in KB
+    expect(result).toContain('KB');
+    expect(result).toContain('saved to:');
+  });
+
+  it('passes through taskId and label to persistence', () => {
+    const huge = 'z'.repeat(100_001);
+    const result = optimizeAndPersist(huge, 'build', {
+      taskId: 'my-task',
+      label: 'my-build',
+    });
+
+    expect(result).toContain('saved to:');
+    expect(result).toContain('my-task');
+    expect(result).toContain('my-build');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /*  microCompactToolResult (cache topology awareness)                 */
 /* ------------------------------------------------------------------ */
 
@@ -522,5 +560,23 @@ describe('microCompactToolResult', () => {
       hasCacheBreakpoint: false,
     });
     expect(result).toBe('');
+  });
+
+  it('falls through to optimizeToolOutput when no topology is provided', () => {
+    const large = makeLines(200, 'info');
+    const result = microCompactToolResult(large, 'shell');
+    // Should behave like optimizeToolOutput
+    expect(result).toContain('[truncated: showing last 50 of 200 lines]');
+  });
+
+  it('does not apply cache-anchored compaction when output is <= 500 chars at breakpoint', () => {
+    const small = 'short output';
+    const result = microCompactToolResult(small, 'shell', {
+      messageIndex: 3,
+      inCachedRegion: false,
+      hasCacheBreakpoint: true,
+    });
+    // Small output at breakpoint should pass through to optimizeToolOutput
+    expect(result).toBe(small);
   });
 });

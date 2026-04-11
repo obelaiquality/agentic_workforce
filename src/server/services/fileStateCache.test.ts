@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { FileStateCache } from "./fileStateCache";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { FileStateCache, getSharedFileStateCache, resetSharedFileStateCache } from "./fileStateCache";
 
 describe("FileStateCache", () => {
   let cache: FileStateCache;
@@ -371,6 +371,30 @@ describe("FileStateCache", () => {
       expect(readTime).toBeDefined();
       cache.set("/test/file.ts", "v2");
       expect(cache.getLastReadTimestamp("/test/file.ts")).toBe(readTime);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Shared singleton (getSharedFileStateCache / resetSharedFileStateCache)
+  // ---------------------------------------------------------------------------
+
+  describe("shared singleton", () => {
+    afterEach(() => {
+      resetSharedFileStateCache();
+    });
+
+    it("resetSharedFileStateCache clears and nulls the shared cache", () => {
+      const shared = getSharedFileStateCache();
+      shared.set("/test/shared.ts", "shared content");
+      expect(shared.size).toBe(1);
+
+      resetSharedFileStateCache();
+
+      // After reset, a new call should return a fresh empty cache
+      const newShared = getSharedFileStateCache();
+      expect(newShared.size).toBe(0);
+      // It should be a different instance
+      expect(newShared).not.toBe(shared);
     });
   });
 });

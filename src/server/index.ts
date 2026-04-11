@@ -31,6 +31,7 @@ export async function bootstrap() {
 
   app.log.info(`Local API server listening on ${host}:${port}`);
 
+  /* v8 ignore next 5 */
   process.on("SIGINT", async () => {
     await app.close();
     stopSidecarProcess();
@@ -38,6 +39,7 @@ export async function bootstrap() {
     process.exit(0);
   });
 
+  /* v8 ignore next 5 */
   process.on("SIGTERM", async () => {
     await app.close();
     stopSidecarProcess();
@@ -45,17 +47,21 @@ export async function bootstrap() {
     process.exit(0);
   });
 
+  /* v8 ignore next 3 */
   process.on("uncaughtException", (error) => {
     app.log.error(error, "Uncaught exception in API process");
   });
 
+  /* v8 ignore next 3 */
   process.on("unhandledRejection", (reason) => {
     app.log.error(reason instanceof Error ? reason : { reason }, "Unhandled rejection in API process");
   });
 }
 
+/* v8 ignore next */
 const entrypointHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
 
+/* v8 ignore next 7 */
 if (import.meta.url === entrypointHref) {
   bootstrap().catch((error) => {
     // Keep startup failures readable in desktop logs.

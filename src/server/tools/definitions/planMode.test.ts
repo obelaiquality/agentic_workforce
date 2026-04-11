@@ -243,5 +243,13 @@ Build a new feature
       const retrieved = getPlanService();
       expect(retrieved).toBe(customService);
     });
+
+    it("should lazily create a new PlanService when reset to null", () => {
+      // Force _planService to null by setting it explicitly
+      // (setPlanService is the public API for overriding the singleton)
+      setPlanService(null as unknown as PlanService);
+      const service = getPlanService();
+      expect(service).toBeInstanceOf(PlanService);
+    });
   });
 });

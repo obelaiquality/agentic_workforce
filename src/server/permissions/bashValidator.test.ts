@@ -162,4 +162,21 @@ describe("validateBashCommand", () => {
       expect(result.segments).toEqual([]);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Per-segment dangerous pattern detection (lines 132-140)
+  // -----------------------------------------------------------------------
+
+  describe("per-segment dangerous pattern detection", () => {
+    it("detects DELETE FROM without WHERE via per-segment check when full command does not match", () => {
+      // The DELETE FROM pattern requires (;|$) at the end.
+      // In the full command "DELETE FROM users && echo done", the $ anchor doesn't
+      // match because " && echo done" follows. But after splitting on &&,
+      // the segment "DELETE FROM users" is checked and $ matches at segment end.
+      const result = validateBashCommand("DELETE FROM users && echo done");
+      expect(result.safe).toBe(false);
+      expect(result.reason).toContain("Dangerous pattern detected");
+      expect(result.reason).toContain("segment");
+    });
+  });
 });

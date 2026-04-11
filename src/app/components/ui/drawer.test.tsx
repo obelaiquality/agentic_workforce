@@ -3,6 +3,9 @@ import { render, screen } from "@testing-library/react";
 import {
   Drawer,
   DrawerTrigger,
+  DrawerClose,
+  DrawerOverlay,
+  DrawerPortal,
   DrawerContent,
   DrawerHeader,
   DrawerTitle,
@@ -48,5 +51,45 @@ describe("Drawer", () => {
       </Drawer>,
     );
     expect(screen.getByText("Footer")).toBeInTheDocument();
+  });
+
+  it("renders DrawerClose inside open drawer", () => {
+    render(
+      <Drawer open>
+        <DrawerContent>
+          <DrawerTitle>Title</DrawerTitle>
+          <DrawerClose>Close Me</DrawerClose>
+        </DrawerContent>
+      </Drawer>,
+    );
+    expect(screen.getByText("Close Me")).toBeInTheDocument();
+  });
+
+  it("applies custom className to DrawerHeader and DrawerFooter", () => {
+    render(
+      <Drawer open>
+        <DrawerContent>
+          <DrawerTitle>Title</DrawerTitle>
+          <DrawerHeader className="custom-header">Header</DrawerHeader>
+          <DrawerFooter className="custom-footer">Footer</DrawerFooter>
+        </DrawerContent>
+      </Drawer>,
+    );
+    expect(document.querySelector(".custom-header")).toBeTruthy();
+    expect(document.querySelector(".custom-footer")).toBeTruthy();
+  });
+
+  it("renders DrawerOverlay with custom className", () => {
+    const { container } = render(
+      <Drawer open>
+        <DrawerContent>
+          <DrawerTitle>Title</DrawerTitle>
+        </DrawerContent>
+      </Drawer>,
+    );
+    expect(
+      container.querySelector('[data-slot="drawer-overlay"]') ||
+        document.querySelector('[data-slot="drawer-overlay"]'),
+    ).toBeTruthy();
   });
 });

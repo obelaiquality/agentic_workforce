@@ -293,6 +293,25 @@ describe("SafetyClassifier", () => {
       expect(result).toBe("risky");
     });
 
+    it("should return risky when LLM response contains neither SAFE nor DANGEROUS", async () => {
+      const mockOrchestrator = {
+        streamChat: vi.fn().mockResolvedValue({
+          text: "UNCERTAIN",
+          accountId: "test",
+          providerId: "test",
+        }),
+      };
+
+      const classifier = new SafetyClassifier({
+        providerOrchestrator: mockOrchestrator as any,
+        timeoutMs: 5000,
+      });
+
+      const result = await classifier.classifyCommand("npm install something-sketchy");
+      expect(result).toBe("risky");
+      expect(mockOrchestrator.streamChat).toHaveBeenCalled();
+    });
+
     it("should parse DANGEROUS from LLM response", async () => {
       const mockOrchestrator = {
         streamChat: vi.fn().mockResolvedValue({

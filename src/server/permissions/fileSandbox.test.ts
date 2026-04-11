@@ -147,6 +147,17 @@ describe("isPathAllowed", () => {
       expect(isPathAllowed("/tmp/test-project/.env", config)).toBe(false);
       expect(isPathAllowed("/tmp/test-project/sub/.env", config)).toBe(false);
     });
+
+    it("handles ? single-character wildcard in patterns", () => {
+      const config: SandboxConfig = {
+        allowedRoots: [worktree],
+        blockedPatterns: ["?.key"],
+      };
+      // "a.key" matches ?.key (single char before .key)
+      expect(isPathAllowed("/tmp/test-project/a.key", config)).toBe(false);
+      // "ab.key" does not match ?.key (two chars before .key)
+      expect(isPathAllowed("/tmp/test-project/ab.key", config)).toBe(true);
+    });
   });
 
   // -----------------------------------------------------------------------

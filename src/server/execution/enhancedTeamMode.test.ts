@@ -906,3 +906,906 @@ describe("Heartbeat refresh during task execution", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Additional coverage tests
+// ---------------------------------------------------------------------------
+
+describe("decomposeObjective fallback paths", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+
+    // All tasks completed for verify
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") return [];
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+  });
+
+  it("falls back to default decomposition when LLM returns invalid JSON", async () => {
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator("this is not JSON at all!!!"),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    const types = events.map((e) => e.type);
+
+    // Should still start the session using the fallback decomposition
+    expect(types).toContain("team_session_started");
+    expect(types).toContain("execution_complete");
+
+    // Fallback creates one worker with role "implementer"
+    const workerCreateCalls = mockPrisma.teamWorker.create.mock.calls;
+    expect(workerCreateCalls.length).toBe(1);
+    expect(workerCreateCalls[0][0].data.role).toBe("implementer");
+
+    // Fallback creates one task named "Implement objective"
+    const taskCreateCalls = mockPrisma.teamTask.create.mock.calls;
+    expect(taskCreateCalls.length).toBe(1);
+    expect(taskCreateCalls[0][0].data.taskName).toBe("Implement objective");
+  });
+
+  it("falls back when decomposition has empty tasks array", async () => {
+    const emptyTasks = JSON.stringify({
+      tasks: [],
+      workers: [{ role: "implementer", workerId: "w-1" }],
+    });
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(emptyTasks),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    expect(events.map((e) => e.type)).toContain("team_session_started");
+
+    // Should fall back to default single task
+    const taskCreateCalls = mockPrisma.teamTask.create.mock.calls;
+    expect(taskCreateCalls.length).toBe(1);
+    expect(taskCreateCalls[0][0].data.taskName).toBe("Implement objective");
+  });
+
+  it("falls back when decomposition has empty workers array", async () => {
+    const emptyWorkers = JSON.stringify({
+      tasks: [{ name: "Task 1", description: "Do it", priority: 1, workerRole: "impl" }],
+      workers: [],
+    });
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(emptyWorkers),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    expect(events.map((e) => e.type)).toContain("team_session_started");
+
+    // Should fall back to default single worker
+    const workerCreateCalls = mockPrisma.teamWorker.create.mock.calls;
+    expect(workerCreateCalls.length).toBe(1);
+    expect(workerCreateCalls[0][0].data.role).toBe("implementer");
+  });
+
+  it("parses JSON wrapped in triple-backtick code fences", async () => {
+    const fencedJson = "```json\n" + JSON.stringify({
+      tasks: [{ name: "Fenced Task", description: "Do it", priority: 1, workerRole: "implementer" }],
+      workers: [{ role: "implementer", workerId: "w-1" }],
+    }) + "\n```";
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(fencedJson),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    expect(events.map((e) => e.type)).toContain("team_session_started");
+
+    const taskCreateCalls = mockPrisma.teamTask.create.mock.calls;
+    expect(taskCreateCalls.length).toBe(1);
+    expect(taskCreateCalls[0][0].data.taskName).toBe("Fenced Task");
+  });
+
+  it("parses JSON wrapped in plain triple-backtick fences (no json tag)", async () => {
+    const fencedJson = "```\n" + JSON.stringify({
+      tasks: [{ name: "Plain Fenced", description: "Do it", priority: 2, workerRole: "tester" }],
+      workers: [{ role: "tester", workerId: "w-2" }],
+    }) + "\n```";
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(fencedJson),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    expect(events.map((e) => e.type)).toContain("team_session_started");
+
+    const taskCreateCalls = mockPrisma.teamTask.create.mock.calls;
+    expect(taskCreateCalls.length).toBe(1);
+    expect(taskCreateCalls[0][0].data.taskName).toBe("Plain Fenced");
+  });
+});
+
+describe("executeTask JSON parse fallback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+
+    // One pending task
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [{ id: "task-1", taskName: "My Task", description: "Do it", priority: 1, status: "pending", sessionId: "session-1" }];
+      }
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    mockPrisma.teamWorker.findFirst.mockResolvedValueOnce({
+      id: "wid-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      role: "implementer",
+      status: "idle",
+      currentTaskId: null,
+      lastHeartbeatAt: new Date(),
+    }).mockResolvedValue(null);
+  });
+
+  it("returns success with fallback summary when task LLM response is not JSON", async () => {
+    let callCount = 0;
+    const provider: ProviderOrchestrator = {
+      async streamChatWithRetry(
+        _sessionId: string,
+        _messages: Array<{ role: string; content: string }>,
+        onToken: (token: string) => void,
+      ) {
+        callCount++;
+        if (_sessionId.includes("decompose")) {
+          onToken(JSON.stringify({
+            tasks: [{ name: "My Task", description: "Do it", priority: 1, workerRole: "implementer" }],
+            workers: [{ role: "implementer", workerId: "worker-1" }],
+          }));
+        } else {
+          // Task execution returns non-JSON
+          onToken("I completed the task successfully without JSON formatting.");
+        }
+        return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+      },
+    } as unknown as ProviderOrchestrator;
+
+    const orchestrator = new EnhancedTeamOrchestrator({ providerOrchestrator: provider });
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+
+    // Task should be completed (fallback returns success: true)
+    const taskUpdateCalls = mockPrisma.teamTask.update.mock.calls;
+    const completedCall = taskUpdateCalls.find(
+      (c: Array<{ data: { status: string } }>) => c[0].data.status === "completed",
+    );
+    expect(completedCall).toBeDefined();
+    // Fallback summary uses the task name
+    expect(completedCall![0].data.result).toContain("My Task");
+  });
+
+  it("parses task result from fenced JSON", async () => {
+    const provider: ProviderOrchestrator = {
+      async streamChatWithRetry(
+        _sessionId: string,
+        _messages: Array<{ role: string; content: string }>,
+        onToken: (token: string) => void,
+      ) {
+        if (_sessionId.includes("decompose")) {
+          onToken(JSON.stringify({
+            tasks: [{ name: "Task X", description: "Do X", priority: 1, workerRole: "implementer" }],
+            workers: [{ role: "implementer", workerId: "worker-1" }],
+          }));
+        } else {
+          onToken("```json\n" + JSON.stringify({ success: true, summary: "Task X done via fenced" }) + "\n```");
+        }
+        return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+      },
+    } as unknown as ProviderOrchestrator;
+
+    const orchestrator = new EnhancedTeamOrchestrator({ providerOrchestrator: provider });
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+
+    const taskUpdateCalls = mockPrisma.teamTask.update.mock.calls;
+    const completedCall = taskUpdateCalls.find(
+      (c: Array<{ data: { status: string } }>) => c[0].data.status === "completed",
+    );
+    expect(completedCall).toBeDefined();
+    expect(completedCall![0].data.result).toBe("Task X done via fenced");
+  });
+});
+
+describe("executeTask result with success: false", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [{ id: "task-1", taskName: "Fail Task", description: "Will fail", priority: 1, status: "pending", sessionId: "session-1" }];
+      }
+      if (args?.where?.status === "failed") {
+        return [{ id: "task-1", taskName: "Fail Task", description: "Will fail", priority: 1, status: "failed", result: "it broke", sessionId: "session-1" }];
+      }
+      return [{ id: "task-1", status: "failed" }];
+    });
+
+    mockPrisma.teamWorker.findFirst.mockImplementation(async () => ({
+      id: "wid-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      role: "implementer",
+      status: "idle",
+      currentTaskId: null,
+      lastHeartbeatAt: new Date(),
+    }));
+  });
+
+  it("marks task as failed when LLM returns success: false", async () => {
+    const provider: ProviderOrchestrator = {
+      async streamChatWithRetry(
+        _sessionId: string,
+        _messages: Array<{ role: string; content: string }>,
+        onToken: (token: string) => void,
+      ) {
+        if (_sessionId.includes("decompose")) {
+          onToken(JSON.stringify({
+            tasks: [{ name: "Fail Task", description: "Will fail", priority: 1, workerRole: "implementer" }],
+            workers: [{ role: "implementer", workerId: "worker-1" }],
+          }));
+        } else {
+          onToken(JSON.stringify({ success: false, summary: "it broke" }));
+        }
+        return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+      },
+    } as unknown as ProviderOrchestrator;
+
+    const orchestrator = new EnhancedTeamOrchestrator({ providerOrchestrator: provider });
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+
+    // Should have a task result event with status "failed"
+    const taskResults = events.filter((e) => e.type === "team_task_result") as Array<{
+      type: string;
+      taskId: string;
+      status: string;
+    }>;
+    // At least the first round should produce a failed task result
+    const hasFailed = taskResults.some((r) => r.status === "failed");
+    expect(hasFailed).toBe(true);
+  });
+});
+
+describe("createFixTasks with null result", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamWorker.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("creates fix tasks with 'unknown' result when original task has null result", async () => {
+    let verifyCallCount = 0;
+    let fixTaskFindCallCount = 0;
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [{ id: "task-1", taskName: "Task 1", description: "Do it", priority: 1, status: "pending", sessionId: "session-1" }];
+      }
+      if (args?.where?.status === "failed") {
+        fixTaskFindCallCount++;
+        if (fixTaskFindCallCount <= 1) {
+          // Return failed task with null result for createFixTasks
+          return [{ id: "task-1", taskName: "Task 1", description: "Do it", priority: 1, status: "failed", result: null, sessionId: "session-1" }];
+        }
+        return [];
+      }
+      // Verify calls
+      verifyCallCount++;
+      if (verifyCallCount <= 1) {
+        return [{ id: "task-1", status: "failed" }];
+      }
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    mockPrisma.teamWorker.findFirst.mockImplementation(async () => ({
+      id: "wid-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      role: "implementer",
+      status: "idle",
+      currentTaskId: null,
+      lastHeartbeatAt: new Date(),
+    }));
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+
+    // Find the fix task creation call
+    const taskCreateCalls = mockPrisma.teamTask.create.mock.calls;
+    const fixTaskCall = taskCreateCalls.find(
+      (c: Array<{ data: { taskName: string } }>) => c[0].data.taskName.startsWith("Fix:"),
+    );
+    expect(fixTaskCall).toBeDefined();
+    // The description should contain "unknown" since result was null
+    expect(fixTaskCall![0].data.description).toContain("unknown");
+  });
+});
+
+describe("Error handler with non-Error thrown", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("handles non-Error objects in catch block", async () => {
+    mockPrisma.teamSession.create.mockRejectedValueOnce("string error");
+    mockPrisma.teamSession.update.mockResolvedValue({});
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    const errors = events.filter((e) => e.type === "error") as Array<{ type: string; error: string }>;
+    expect(errors.length).toBe(1);
+    expect(errors[0].error).toBe("string error");
+  });
+
+  it("handles teamSession.update failure in error handler gracefully", async () => {
+    mockPrisma.teamSession.create.mockRejectedValueOnce(new Error("DB error"));
+    // The error handler tries to update the session to "failed", which also fails
+    mockPrisma.teamSession.update.mockRejectedValueOnce(new Error("Also failed"));
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    const errors = events.filter((e) => e.type === "error") as Array<{ type: string; error: string }>;
+    // Should still yield the original error
+    expect(errors.length).toBe(1);
+    expect(errors[0].error).toContain("DB error");
+  });
+});
+
+describe("Worker objective fallback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") return [];
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+  });
+
+  it("uses fallback objective when worker has no objective property", async () => {
+    const noObjective = JSON.stringify({
+      tasks: [{ name: "Task 1", description: "Do it", priority: 1, workerRole: "implementer" }],
+      workers: [{ role: "implementer", workerId: "worker-1" }],
+    });
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(noObjective),
+    });
+
+    await collectEvents(orchestrator.execute(baseInput()));
+
+    const workerCreateCalls = mockPrisma.teamWorker.create.mock.calls;
+    expect(workerCreateCalls.length).toBe(1);
+    // Fallback: `${w.role} for: ${input.objective}`
+    expect(workerCreateCalls[0][0].data.objective).toBe("implementer for: Build a feature");
+  });
+});
+
+describe("enableHeartbeat configuration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+    mockPrisma.teamWorker.findMany.mockResolvedValue([]);
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") return [];
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+  });
+
+  it("starts heartbeat monitor when enableHeartbeat is true", async () => {
+    vi.useFakeTimers();
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    const events = await collectEvents(
+      orchestrator.execute(baseInput({
+        enableHeartbeat: true,
+        heartbeatIntervalMs: 5_000,
+        heartbeatTimeoutMs: 30_000,
+      })),
+    );
+
+    // Should complete successfully even with heartbeat enabled
+    expect(events.map((e) => e.type)).toContain("execution_complete");
+
+    vi.useRealTimers();
+  });
+});
+
+describe("Heartbeat monitor stale worker detection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("detects stale workers and reclaims their tasks via the heartbeat monitor", async () => {
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+
+    // One pending task so executeTaskPhase has work to do (allows heartbeat to fire during execution)
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [{ id: "task-1", taskName: "Task 1", description: "Do it", priority: 1, status: "pending", sessionId: "session-1" }];
+      }
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    // Simulate stale workers found by heartbeat monitor
+    mockPrisma.teamWorker.findMany.mockResolvedValue([
+      {
+        id: "wid-stale",
+        workerId: "worker-stale",
+        sessionId: "session-1",
+        role: "implementer",
+        status: "executing",
+        currentTaskId: "task-stale",
+        lastHeartbeatAt: new Date(Date.now() - 120_000),
+      },
+    ]);
+
+    mockPrisma.teamWorker.findFirst.mockResolvedValueOnce({
+      id: "wid-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      role: "implementer",
+      status: "idle",
+      currentTaskId: null,
+      lastHeartbeatAt: new Date(),
+    }).mockResolvedValue(null);
+
+    let resolveExec: (() => void) | null = null;
+    const slowProvider: ProviderOrchestrator = {
+      async streamChatWithRetry(
+        _sessionId: string,
+        _messages: Array<{ role: string; content: string }>,
+        onToken: (token: string) => void,
+      ) {
+        if (_sessionId.includes("decompose")) {
+          onToken(JSON.stringify({
+            tasks: [{ name: "T1", description: "D", priority: 1, workerRole: "implementer" }],
+            workers: [{ role: "implementer", workerId: "worker-1" }],
+          }));
+          return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+        }
+        // Task execution — wait for timer to fire
+        const promise = new Promise<void>((resolve) => {
+          resolveExec = resolve;
+        });
+        await promise;
+        onToken(JSON.stringify({ success: true, summary: "done" }));
+        return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+      },
+    } as unknown as ProviderOrchestrator;
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: slowProvider,
+    });
+
+    const gen = orchestrator.execute(baseInput({
+      enableHeartbeat: true,
+      heartbeatIntervalMs: 5_000,
+      heartbeatTimeoutMs: 30_000,
+    }));
+
+    // Collect events until task is dispatched
+    const events: AgenticEvent[] = [];
+    let dispatched = false;
+    while (!dispatched) {
+      const result = await gen.next();
+      if (result.done) break;
+      events.push(result.value);
+      if (result.value.type === "team_task_dispatched") {
+        dispatched = true;
+      }
+    }
+    expect(dispatched).toBe(true);
+
+    // Start consuming next event (will block on task execution)
+    const nextPromise = gen.next();
+
+    // Advance timer to trigger the heartbeat monitor
+    await vi.advanceTimersByTimeAsync(5_001);
+
+    // Now resolve the task execution so the generator can proceed
+    resolveExec!();
+    const nextResult = await nextPromise;
+    events.push(nextResult.value!);
+
+    // Drain remaining events
+    let done = false;
+    while (!done) {
+      const result = await gen.next();
+      if (result.done) {
+        done = true;
+      } else {
+        events.push(result.value);
+      }
+    }
+
+    // The heartbeat monitor should have found the stale worker and pushed a heartbeat_timeout event
+    const heartbeatTimeouts = events.filter((e) => e.type === "team_heartbeat_timeout");
+    expect(heartbeatTimeouts.length).toBeGreaterThanOrEqual(1);
+    expect((heartbeatTimeouts[0] as any).workerId).toBe("worker-stale");
+
+    // Stale worker should be marked as failed
+    const workerUpdateCalls = mockPrisma.teamWorker.update.mock.calls;
+    const failedWorkerCall = workerUpdateCalls.find(
+      (c: Array<{ data: { status: string } }>) => c[0].data.status === "failed",
+    );
+    expect(failedWorkerCall).toBeDefined();
+  });
+
+  it("handles heartbeat monitor errors gracefully", async () => {
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+
+    // One pending task so we can block during execution
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [{ id: "task-1", taskName: "Task 1", description: "Do it", priority: 1, status: "pending", sessionId: "session-1" }];
+      }
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    // Make the heartbeat monitor findMany throw
+    mockPrisma.teamWorker.findMany.mockRejectedValue(new Error("DB unavailable"));
+
+    mockPrisma.teamWorker.findFirst.mockResolvedValueOnce({
+      id: "wid-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      role: "implementer",
+      status: "idle",
+      currentTaskId: null,
+      lastHeartbeatAt: new Date(),
+    }).mockResolvedValue(null);
+
+    let resolveExec: (() => void) | null = null;
+    const slowProvider: ProviderOrchestrator = {
+      async streamChatWithRetry(
+        _sessionId: string,
+        _messages: Array<{ role: string; content: string }>,
+        onToken: (token: string) => void,
+      ) {
+        if (_sessionId.includes("decompose")) {
+          onToken(JSON.stringify({
+            tasks: [{ name: "T1", description: "D", priority: 1, workerRole: "implementer" }],
+            workers: [{ role: "implementer", workerId: "worker-1" }],
+          }));
+          return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+        }
+        // Wait for timer to fire
+        const promise = new Promise<void>((resolve) => { resolveExec = resolve; });
+        await promise;
+        onToken(JSON.stringify({ success: true, summary: "done" }));
+        return { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } };
+      },
+    } as unknown as ProviderOrchestrator;
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: slowProvider,
+    });
+
+    const gen = orchestrator.execute(baseInput({
+      enableHeartbeat: true,
+      heartbeatIntervalMs: 5_000,
+      heartbeatTimeoutMs: 30_000,
+    }));
+
+    // Collect events until task is dispatched
+    const events: AgenticEvent[] = [];
+    let dispatched = false;
+    while (!dispatched) {
+      const result = await gen.next();
+      if (result.done) break;
+      events.push(result.value);
+      if (result.value.type === "team_task_dispatched") {
+        dispatched = true;
+      }
+    }
+    expect(dispatched).toBe(true);
+
+    // Start consuming next event (will block on task execution)
+    const nextPromise = gen.next();
+
+    // Advance timer to trigger heartbeat (which will throw but be swallowed by catch {})
+    await vi.advanceTimersByTimeAsync(5_001);
+
+    // Resolve task execution
+    resolveExec!();
+    const nextResult = await nextPromise;
+    events.push(nextResult.value!);
+
+    // Drain remaining events — should complete without error
+    let done = false;
+    while (!done) {
+      const result = await gen.next();
+      if (result.done) {
+        done = true;
+      } else {
+        events.push(result.value);
+      }
+    }
+
+    // Should still complete successfully despite heartbeat monitor errors
+    expect(events.map((e) => e.type)).toContain("execution_complete");
+    // Should NOT have any heartbeat timeout events since the error was swallowed
+    const heartbeatTimeouts = events.filter((e) => e.type === "team_heartbeat_timeout");
+    expect(heartbeatTimeouts.length).toBe(0);
+  });
+});
+
+describe("stopHeartbeatMonitor when no timer exists", () => {
+  it("is safe to call execute without heartbeat (stopHeartbeatMonitor with null timer)", async () => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") return [];
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    // enableHeartbeat is false by default, so stopHeartbeatMonitor is called with null timer
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+    expect(events.map((e) => e.type)).toContain("execution_complete");
+  });
+});
+
+describe("No idle workers available", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+
+    // Return pending tasks but no idle workers
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [
+          { id: "task-1", taskName: "Task 1", description: "Do it", priority: 1, status: "pending", sessionId: "session-1" },
+        ];
+      }
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    // No idle workers — always return null
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+  });
+
+  it("skips tasks when no idle workers are available", async () => {
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+
+    // Should not dispatch any tasks
+    const dispatched = events.filter((e) => e.type === "team_task_dispatched");
+    expect(dispatched.length).toBe(0);
+
+    // Should still complete
+    expect(events.map((e) => e.type)).toContain("execution_complete");
+  });
+});
+
+describe("claimTask returns false (task already claimed)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") {
+        return [
+          { id: "task-1", taskName: "Task 1", description: "Do it", priority: 1, status: "pending", sessionId: "session-1" },
+        ];
+      }
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+
+    mockPrisma.teamWorker.findFirst.mockResolvedValueOnce({
+      id: "wid-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      role: "implementer",
+      status: "idle",
+      currentTaskId: null,
+      lastHeartbeatAt: new Date(),
+    }).mockResolvedValue(null);
+
+    // claimTask fails (count: 0)
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("skips task execution when claim fails", async () => {
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    const events = await collectEvents(orchestrator.execute(baseInput()));
+
+    // No tasks should be dispatched
+    const dispatched = events.filter((e) => e.type === "team_task_dispatched");
+    expect(dispatched.length).toBe(0);
+
+    expect(events.map((e) => e.type)).toContain("execution_complete");
+  });
+});
+
+describe("transitionPhase with invalid transition", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") return [];
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+  });
+
+  it("emits error when starting from an invalid phase", async () => {
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    // Force the teamPhase to something that can't transition to team_exec
+    const events = await collectEvents(
+      orchestrator.execute(baseInput({ teamPhase: "team_complete" as any })),
+    );
+
+    const errors = events.filter((e) => e.type === "error") as Array<{ type: string; error: string }>;
+    expect(errors.length).toBe(1);
+    expect(errors[0].error).toContain("Invalid phase transition");
+  });
+});
+
+describe("Input defaults", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.teamSession.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.teamSession.update.mockResolvedValue({});
+    mockPrisma.teamWorker.create.mockResolvedValue({});
+    mockPrisma.teamTask.create.mockResolvedValue({});
+    mockPrisma.teamTask.update.mockResolvedValue({});
+    mockPrisma.teamWorker.update.mockResolvedValue({});
+    mockPrisma.teamTask.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.teamWorker.findFirst.mockResolvedValue(null);
+
+    mockPrisma.teamTask.findMany.mockImplementation(async (args: { where: { status?: string } }) => {
+      if (args?.where?.status === "pending") return [];
+      if (args?.where?.status === "failed") return [];
+      return [{ id: "task-1", status: "completed" }];
+    });
+  });
+
+  it("uses default values for maxWorkers, maxConcurrentWorkers, and ticketId", async () => {
+    const orchestrator = new EnhancedTeamOrchestrator({
+      providerOrchestrator: createMockProviderOrchestrator(),
+    });
+
+    await collectEvents(
+      orchestrator.execute({
+        runId: "run-1",
+        repoId: "repo-1",
+        objective: "Build it",
+        worktreePath: "/tmp/test",
+        actor: "test-user",
+        // No ticketId, maxWorkers, maxConcurrentWorkers
+      }),
+    );
+
+    expect(mockPrisma.teamSession.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        ticketId: null,
+        maxWorkers: 5,
+        maxConcurrent: 3,
+      }),
+    });
+  });
+});

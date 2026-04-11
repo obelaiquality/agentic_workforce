@@ -256,6 +256,42 @@ describe("InterviewPanel", () => {
     expect(screen.getByText("Yes")).toBeInTheDocument();
   });
 
+  it("merges SSE scores with server scores without duplicates", () => {
+    hooksMock.useInterviewStream.mockReturnValue({
+      latestScores: [
+        // round 1 already exists on server — should be skipped
+        { round: 1, overall: 0.7, dimensions: { intent: 0.6, scope: 0.5, architecture: 0.8, constraints: 0.4, priorities: 0.6 } },
+        // round 2 is new from SSE — should be merged
+        { round: 2, overall: 0.5, dimensions: { intent: 0.7, scope: 0.6, architecture: 0.7, constraints: 0.5, priorities: 0.7 } },
+      ],
+      isConnected: true,
+    });
+
+    hooksMock.useInterviewSession.mockReturnValue({
+      data: {
+        session: {
+          id: "session-1",
+          objective: "Merge test",
+          status: "active",
+          currentRound: 2,
+          maxRounds: 5,
+          ambiguityThreshold: 0.3,
+          questions: [],
+          scores: [
+            { round: 1, overall: 0.7, dimensions: { intent: 0.6, scope: 0.5, architecture: 0.8, constraints: 0.4, priorities: 0.6 } },
+          ],
+        },
+      },
+      isLoading: false,
+    });
+
+    renderPanel();
+
+    // Session renders with the merged scores — both rounds are used for charts
+    expect(screen.getByText(/Merge test/)).toBeInTheDocument();
+    expect(screen.getByText("Round 2/5")).toBeInTheDocument();
+  });
+
   it("shows connection indicator when stream is connected", () => {
     hooksMock.useInterviewStream.mockReturnValue({
       latestScores: [],

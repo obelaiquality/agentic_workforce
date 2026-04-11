@@ -334,6 +334,150 @@ describe("teamRoutes", () => {
     await app.close();
   });
 
+  it("POST /api/agentic/execute-team — uses default agents when team_config has empty agents array", async () => {
+    const { app } = createHarness();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/agentic/execute-team",
+      payload: {
+        actor: "user-1",
+        project_id: "proj-1",
+        objective: "Empty agents test",
+        team_config: {
+          agents: [],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.teamId).toBeDefined();
+
+    // Query status to verify default agents were used (planner + implementer)
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: `/api/agentic/teams/${body.teamId}/status`,
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    const status = statusResponse.json();
+    expect(status.agents).toHaveLength(2);
+    expect(status.agents.map((a: { role: string }) => a.role)).toEqual([
+      "planner",
+      "implementer",
+    ]);
+
+    await app.close();
+  });
+
+  it("POST /api/agentic/execute-team — uses default no-op orchestrator when none provided", async () => {
+    // Register routes WITHOUT providing createOrchestrator
+    const app = Fastify();
+    registerTeamRoutes({ app });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/agentic/execute-team",
+      payload: {
+        actor: "user-1",
+        project_id: "proj-1",
+        objective: "No-op orchestrator test",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.teamId).toBeDefined();
+
+    // Wait briefly for the fire-and-forget to complete with the no-op generator
+    await new Promise((r) => setTimeout(r, 50));
+
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: `/api/agentic/teams/${body.teamId}/status`,
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    const status = statusResponse.json();
+    expect(status.status).toBe("completed");
+
+    await app.close();
+  });
+
+  it("POST /api/agentic/execute-team — sets status to failed when orchestrator throws synchronously", async () => {
+    // When createOrchestrator throws synchronously (not an async generator error),
+    // it propagates up through the team's execute method and hits the catch block
+    // in teamRoutes' fire-and-forget IIFE (lines 174-175).
+    const { app } = createHarness({
+      createOrchestrator: (_spec: AgentSpec) => {
+        throw new Error("Synchronous orchestrator failure");
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/agentic/execute-team",
+      payload: {
+        actor: "user-1",
+        project_id: "proj-1",
+        objective: "Failure test",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    // Wait for the fire-and-forget to fail
+    await new Promise((r) => setTimeout(r, 100));
+
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: `/api/agentic/teams/${body.teamId}/status`,
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    const status = statusResponse.json();
+    expect(status.status).toBe("failed");
+
+    await app.close();
+  });
+
+  it("POST /api/agentic/execute-team — sets status to completed after successful execution", async () => {
+    const { app } = createHarness({
+      createOrchestrator: async function* () {
+        yield { type: "status", message: "done" } as unknown as AgenticEvent;
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/agentic/execute-team",
+      payload: {
+        actor: "user-1",
+        project_id: "proj-1",
+        objective: "Completion test",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    // Wait briefly for the fire-and-forget to complete
+    await new Promise((r) => setTimeout(r, 50));
+
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: `/api/agentic/teams/${body.teamId}/status`,
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    const status = statusResponse.json();
+    expect(status.status).toBe("completed");
+
+    await app.close();
+  });
+
   it("POST /api/agentic/teams/:id/message — returns 404 for unknown agent role", async () => {
     const { app } = createHarness();
 

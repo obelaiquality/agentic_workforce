@@ -335,4 +335,226 @@ describe("IdeBridgeServer", () => {
       expect(harness.bridgeServer.hasConnectedSessions()).toBe(true);
     });
   });
+
+  describe("POST /api/ide/connect with null body", () => {
+    it("defaults to generic when body is null", async () => {
+      const response = await harness.app.inject({
+        method: "POST",
+        url: "/api/ide/connect",
+        // Fastify will send null body for empty content
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().clientType).toBe("generic");
+    });
+  });
+
+  describe("POST /api/ide/connect with jetbrains clientType", () => {
+    it("accepts jetbrains as valid client type", async () => {
+      const response = await harness.app.inject({
+        method: "POST",
+        url: "/api/ide/connect",
+        payload: { clientType: "jetbrains" },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().clientType).toBe("jetbrains");
+    });
+  });
+
+  describe("POST /api/ide/approval edge cases", () => {
+    it("returns 400 when decision is missing", async () => {
+      const session = await connectSession(harness.app);
+
+      const response = await harness.app.inject({
+        method: "POST",
+        url: `/api/ide/approval?token=${session.token}`,
+        payload: { approvalId: "test-id" },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("returns 400 when approvalId is missing and decision is valid", async () => {
+      const session = await connectSession(harness.app);
+
+      const response = await harness.app.inject({
+        method: "POST",
+        url: `/api/ide/approval?token=${session.token}`,
+        payload: { decision: "approve" },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("returns 200 even when no callback registered for the approvalId", async () => {
+      const session = await connectSession(harness.app);
+
+      const response = await harness.app.inject({
+        method: "POST",
+        url: `/api/ide/approval?token=${session.token}`,
+        payload: { approvalId: "no-callback-registered", decision: "approve" },
+      });
+
+      // Should still succeed — callback is optional
+      expect(response.statusCode).toBe(200);
+      expect(response.json().ok).toBe(true);
+    });
+  });
+
+  describe("removeApprovalCallback", () => {
+    it("removes a pending approval callback", async () => {
+      let called = false;
+      harness.bridgeServer.onApprovalDecision("removable", () => {
+        called = true;
+      });
+
+      harness.bridgeServer.removeApprovalCallback("removable");
+
+      const session = await connectSession(harness.app);
+
+      await harness.app.inject({
+        method: "POST",
+        url: `/api/ide/approval?token=${session.token}`,
+        payload: { approvalId: "removable", decision: "approve" },
+      });
+
+      expect(called).toBe(false);
+    });
+  });
+
+  describe("sendToSession with active subscriber", () => {
+    it("sends event directly via subscriber when active", () => {
+      const session = harness.sessionManager.createSession("vscode");
+      const received: unknown[] = [];
+
+      // Register a subscriber directly
+      const subscribers = (harness.bridgeServer as any).eventSubscribers as Map<string, (event: any) => void>;
+      subscribers.set(session.id, (event: unknown) => {
+        received.push(event);
+      });
+
+      harness.bridgeServer.sendToSession(session.id, {
+        type: "session_status",
+        status: "running",
+      });
+
+      expect(received).toHaveLength(1);
+      expect((received[0] as any).status).toBe("running");
+    });
+
+    it("falls back to queue when subscriber throws", () => {
+      const session = harness.sessionManager.createSession("vscode");
+      (harness.bridgeServer as any).eventQueues.set(session.id, []);
+
+      const subscribers = (harness.bridgeServer as any).eventSubscribers as Map<string, (event: any) => void>;
+      subscribers.set(session.id, () => {
+        throw new Error("subscriber failed");
+      });
+
+      harness.bridgeServer.sendToSession(session.id, {
+        type: "session_status",
+        status: "error",
+      });
+
+      // Subscriber should have been removed
+      expect(subscribers.has(session.id)).toBe(false);
+
+      // Event should be queued
+      const queue = (harness.bridgeServer as any).eventQueues.get(session.id);
+      expect(queue).toHaveLength(1);
+    });
+  });
+
+  describe("sendToSession without queue", () => {
+    it("does nothing when no queue and no subscriber", () => {
+      // No session exists at all — should not throw
+      expect(() =>
+        harness.bridgeServer.sendToSession("nonexistent-session", {
+          type: "session_status",
+          status: "idle",
+        })
+      ).not.toThrow();
+    });
+  });
+
+  describe("broadcast with subscriber that throws", () => {
+    it("removes subscriber that throws during broadcast", () => {
+      const session = harness.sessionManager.createSession("vscode");
+      (harness.bridgeServer as any).eventQueues.set(session.id, []);
+
+      const subscribers = (harness.bridgeServer as any).eventSubscribers as Map<string, (event: any) => void>;
+      subscribers.set(session.id, () => {
+        throw new Error("crash");
+      });
+
+      harness.bridgeServer.broadcast({
+        type: "session_status",
+        status: "running",
+      });
+
+      expect(subscribers.has(session.id)).toBe(false);
+    });
+  });
+
+  describe("broadcast queue overflow protection", () => {
+    it("caps the event queue at 1000 entries", () => {
+      const session = harness.sessionManager.createSession("vscode");
+      const queue: unknown[] = [];
+      (harness.bridgeServer as any).eventQueues.set(session.id, queue);
+
+      // Fill past capacity
+      for (let i = 0; i < 1010; i++) {
+        harness.bridgeServer.broadcast({
+          type: "session_status",
+          status: "running",
+        });
+      }
+
+      expect(queue.length).toBe(1000);
+    });
+  });
+
+  describe("sendToSession queue overflow protection", () => {
+    it("caps the event queue at 1000 entries", () => {
+      const session = harness.sessionManager.createSession("vscode");
+      const queue: unknown[] = [];
+      (harness.bridgeServer as any).eventQueues.set(session.id, queue);
+
+      for (let i = 0; i < 1010; i++) {
+        harness.bridgeServer.sendToSession(session.id, {
+          type: "session_status",
+          status: "idle",
+        });
+      }
+
+      expect(queue.length).toBe(1000);
+    });
+  });
+
+  describe("extractSession from Authorization header", () => {
+    it("extracts token from Authorization header with array value", async () => {
+      const session = await connectSession(harness.app);
+
+      // Test via status endpoint
+      const response = await harness.app.inject({
+        method: "GET",
+        url: "/api/ide/status",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+    });
+
+    it("returns null when no token in query or headers", async () => {
+      const response = await harness.app.inject({
+        method: "GET",
+        url: "/api/ide/status",
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+  });
 });

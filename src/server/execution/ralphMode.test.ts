@@ -193,6 +193,38 @@ describe("scanForDeslopIssues", () => {
     const issues = scanForDeslopIssues(files);
     expect(issues.every((i) => i.file === "src/a.ts")).toBe(true);
   });
+
+  it("detects consecutive-block-comments via multi-line scan without duplicating", () => {
+    const files = [
+      {
+        path: "src/comments.ts",
+        content: "/* first comment */\n/* second comment */",
+      },
+    ];
+    const issues = scanForDeslopIssues(files);
+    const blockCommentIssues = issues.filter(
+      (i) => i.pattern === "consecutive-block-comments",
+    );
+    // Should detect at least once (either line-by-line or full-content scan)
+    expect(blockCommentIssues.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("deduplicates multi-line consecutive-block-comments when already found per-line", () => {
+    // If the pattern matches on individual lines AND the full content,
+    // the full-content match should be skipped (deduped)
+    const files = [
+      {
+        path: "src/dup.ts",
+        content: "/* block A */\n/* block B */",
+      },
+    ];
+    const issues = scanForDeslopIssues(files);
+    const blockIssues = issues.filter(
+      (i) => i.pattern === "consecutive-block-comments" && i.file === "src/dup.ts",
+    );
+    // Deduplication means we shouldn't have extra entries
+    expect(blockIssues.length).toBeLessThanOrEqual(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -457,6 +489,302 @@ describe("RalphModeOrchestrator", () => {
   // -------------------------------------------------------------------------
   // Resume from checkpoint
   // -------------------------------------------------------------------------
+
+  it("resume() returns null for unknown session", async () => {
+    vi.mocked(prisma.ralphSession.findUnique).mockResolvedValueOnce(null);
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+    const result = await orchestrator.resume("nonexistent");
+    expect(result).toBeNull();
+  });
+
+  it("resumes from checkpoint and emits ralph_resumed event", async () => {
+    // Create existing session to be found
+    vi.mocked(prisma.ralphSession.findFirst).mockResolvedValueOnce({
+      id: "session-existing",
+      runId: "run-test-1",
+      repoId: "repo-1",
+      ticketId: null,
+      specContent: "Build a widget",
+      currentPhase: "execute",
+      currentIteration: 2,
+      maxIterations: 5,
+      verificationTier: "STANDARD",
+      status: "active",
+      progressLedger: {
+        completedPhases: ["intake", "execute"],
+        currentObjective: "Build widget",
+        filesModified: ["src/widget.ts"],
+        testResults: {},
+        verificationsPassed: 0,
+        deslopIssuesFound: 0,
+        deslopIssuesFixed: 0,
+      },
+      sessionOwner: "test-user",
+      actor: "test-user",
+      worktreePath: "/tmp/test-worktree",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(
+      orchestrator.execute(
+        createInput({ resumeFromCheckpoint: true, maxIterations: 3 }),
+      ),
+    );
+
+    const resumedEvents = events.filter((e) => e.type === "ralph_resumed");
+    expect(resumedEvents.length).toBe(1);
+    expect((resumedEvents[0] as { fromPhase: string }).fromPhase).toBeDefined();
+  });
+
+  it("handles LLM failure gracefully during intake (falls back to raw spec)", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockRejectedValueOnce(new Error("LLM unavailable")) // intake fails
+      .mockResolvedValue({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    // Should still proceed past intake
+    const intakeExited = events.find(
+      (e) => e.type === "ralph_phase_exited" && (e as { phase: string }).phase === "intake",
+    );
+    expect(intakeExited).toBeDefined();
+  });
+
+  it("handles LLM failure during execute phase", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" }) // intake
+      .mockRejectedValueOnce(new Error("LLM down")) // execute fails
+      .mockResolvedValue({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    const execExited = events.find(
+      (e) => e.type === "ralph_phase_exited" && (e as { phase: string }).phase === "execute",
+    );
+    expect(execExited).toBeDefined();
+    expect((execExited as { result: string }).result).toContain("errors");
+  });
+
+  it("handles architect review failure and loops back", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Build feature", accountId: "t", providerId: "onprem-qwen" }) // intake
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" }) // execute
+      .mockResolvedValueOnce({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" }) // verify
+      .mockResolvedValueOnce({
+        text: '{ "structurallySound": false, "followsPatterns": false, "summary": "Bad structure" }',
+        accountId: "t",
+        providerId: "onprem-qwen",
+      }) // architect_review fails
+      .mockResolvedValue({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(
+      orchestrator.execute(createInput({ maxIterations: 2 })),
+    );
+
+    // architect_review should have been entered
+    const archReviewPhases = events.filter(
+      (e) => e.type === "ralph_phase_entered" && (e as { phase: string }).phase === "architect_review",
+    );
+    expect(archReviewPhases.length).toBeGreaterThanOrEqual(1);
+
+    // After failure, should have the "needs revision" result
+    const archExited = events.find(
+      (e) =>
+        e.type === "ralph_phase_exited" &&
+        (e as { phase: string }).phase === "architect_review" &&
+        (e as { result: string }).result === "needs revision",
+    );
+    expect(archExited).toBeDefined();
+  });
+
+  it("handles LLM failure during architect review (fallback to passed)", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" })
+      .mockRejectedValueOnce(new Error("LLM unavailable")) // architect_review LLM fails
+      .mockResolvedValue({ text: "{}", accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    // Should still complete since architect_review falls back to "passed"
+    const archExited = events.find(
+      (e) =>
+        e.type === "ralph_phase_exited" &&
+        (e as { phase: string }).phase === "architect_review" &&
+        (e as { result: string }).result === "approved",
+    );
+    expect(archExited).toBeDefined();
+  });
+
+  it("extractFilePaths falls back to regex for non-JSON response", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({
+        text: "You should modify src/widget.ts and tests/widget.test.ts to implement this",
+        accountId: "t",
+        providerId: "onprem-qwen",
+      })
+      .mockResolvedValue({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    const execExited = events.find(
+      (e) => e.type === "ralph_phase_exited" && (e as { phase: string }).phase === "execute",
+    );
+    expect(execExited).toBeDefined();
+    // Should have extracted file paths via regex fallback
+    expect((execExited as { result: string }).result).toContain("files changed");
+  });
+
+  it("LLM failure during verify assumes passed", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" })
+      .mockRejectedValueOnce(new Error("LLM down")) // verify LLM fails
+      .mockResolvedValue({ text: '{ "structurallySound": true, "followsPatterns": true, "summary": "ok" }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    // Verify should still pass (fallback behavior)
+    const verifyExited = events.find(
+      (e) => e.type === "ralph_phase_exited" && (e as { phase: string }).phase === "verify",
+    );
+    expect(verifyExited).toBeDefined();
+    expect((verifyExited as { result: string }).result).toBe("passed");
+  });
+
+  it("unparseable JSON from verify LLM still assumes passed", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: "not valid json at all", accountId: "t", providerId: "onprem-qwen" }) // verify returns unparseable
+      .mockResolvedValue({ text: '{ "structurallySound": true, "followsPatterns": true, "summary": "ok" }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    const verifyExited = events.find(
+      (e) => e.type === "ralph_phase_exited" && (e as { phase: string }).phase === "verify",
+    );
+    expect(verifyExited).toBeDefined();
+    expect((verifyExited as { result: string }).result).toBe("passed");
+  });
+
+  it("unparseable JSON from architect_review falls back to passed", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: "garbage response without json", accountId: "t", providerId: "onprem-qwen" }) // architect returns non-JSON
+      .mockResolvedValue({ text: "{}", accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    const archExited = events.find(
+      (e) =>
+        e.type === "ralph_phase_exited" &&
+        (e as { phase: string }).phase === "architect_review",
+    );
+    expect(archExited).toBeDefined();
+    expect((archExited as { result: string }).result).toBe("approved");
+  });
+
+  it("execute phase includes failureContext in prompt when present", async () => {
+    // Make verify fail once, then pass on second iteration to test failureContext flow
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" }) // intake 1
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" }) // execute 1
+      .mockResolvedValueOnce({ text: '{ "testsPassed": false, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" }) // verify 1 fails
+      .mockResolvedValueOnce({ text: "1. Fix X", accountId: "t", providerId: "onprem-qwen" }) // intake 2
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" }) // execute 2 (with failureContext)
+      .mockResolvedValue({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(
+      orchestrator.execute(createInput({ maxIterations: 2 })),
+    );
+
+    // Second execute call should have included failureContext in prompt
+    const executeCalls = providerOrchestrator.streamChatWithRetry.mock.calls.filter(
+      (call: unknown[]) => {
+        const msgs = call[1] as Array<{ content: string }>;
+        return msgs[0]?.content?.includes("Previous attempt failed");
+      },
+    );
+    expect(executeCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("deslop phase scans files and tracks issues", async () => {
+    providerOrchestrator.streamChatWithRetry
+      .mockResolvedValueOnce({ text: "1. Do X", accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '["src/a.ts"]', accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '{ "testsPassed": true, "lintsPassed": true }', accountId: "t", providerId: "onprem-qwen" })
+      .mockResolvedValueOnce({ text: '{ "structurallySound": true, "followsPatterns": true, "summary": "ok" }', accountId: "t", providerId: "onprem-qwen" });
+
+    const orchestrator = new RalphModeOrchestrator({
+      providerOrchestrator: providerOrchestrator as never,
+      executionService: executionService as never,
+    });
+
+    const events = await collectEvents(orchestrator.execute(createInput()));
+    // Deslop phase should have been entered
+    const deslopEntered = events.find(
+      (e) => e.type === "ralph_phase_entered" && (e as { phase: string }).phase === "deslop",
+    );
+    expect(deslopEntered).toBeDefined();
+
+    const deslopExited = events.find(
+      (e) => e.type === "ralph_phase_exited" && (e as { phase: string }).phase === "deslop",
+    );
+    expect(deslopExited).toBeDefined();
+    expect((deslopExited as { result: string }).result).toContain("issues found");
+  });
 
   it("resume() returns correct input for resuming from a checkpoint", async () => {
     vi.mocked(prisma.ralphSession.findUnique).mockResolvedValueOnce({

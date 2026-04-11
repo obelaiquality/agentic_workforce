@@ -113,4 +113,16 @@ describe("ProgressLedger", () => {
 
     expect(screen.getByText("None")).toBeInTheDocument();
   });
+
+  it("renders subtle chip for phase executions with non-completed non-failed status", () => {
+    const phaseExecutions = [
+      { phase: "execute", iteration: 1, status: "running" },
+    ];
+
+    render(<ProgressLedger ledger={makeLedger()} phaseExecutions={phaseExecutions} />);
+
+    fireEvent.click(screen.getByText("Phase History"));
+
+    expect(screen.getByText("running")).toBeInTheDocument();
+  });
 });

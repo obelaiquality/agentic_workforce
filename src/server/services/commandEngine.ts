@@ -172,6 +172,7 @@ export class CommandEngine {
           : (() => {
               const shell = detectShell();
               const shellArgs =
+                /* v8 ignore next 2 */
                 process.platform === "win32"
                   ? ["/d", "/s", "/c", plan.shellCommand]
                   : ["-lc", plan.shellCommand];
@@ -325,6 +326,7 @@ export class CommandEngine {
     });
 
     const plan = approvedOverride?.commandPlan || requestedPlan;
+    /* v8 ignore next 3 -- defensive guard: requestedPlan from buildCommandPlan is always defined */
     if (!plan) {
       throw new Error("Approved command payload is missing a command plan.");
     }

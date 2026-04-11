@@ -352,4 +352,85 @@ describe("TaskBudgetTracker", () => {
       expect(TaskBudgetTracker.estimateCost(5000, 2000, "local-llama")).toBe(0);
     });
   });
+
+  describe("Duration Budget Exhaustion", () => {
+    it("should detect when duration limit is exceeded", () => {
+      // Create budget with a very short duration limit
+      tracker.createBudget("run-dur", { maxDurationMs: 1 });
+
+      // Wait a small amount to ensure duration exceeds limit
+      const budget = (tracker as any).budgets.get("run-dur");
+      // Manually set startedAt to the past to simulate elapsed time
+      budget.consumed.startedAt = Date.now() - 100;
+
+      const status = tracker.checkBudget("run-dur");
+      expect(status.exceeded).toBe(true);
+      expect(status.warnings.some((w) => w.resource === "duration")).toBe(true);
+      const durationWarning = status.warnings.find(
+        (w) => w.resource === "duration"
+      );
+      expect(durationWarning!.pct).toBeGreaterThanOrEqual(100);
+    });
+
+    it("should warn when duration reaches 80% of limit", () => {
+      tracker.createBudget("run-dur-warn", { maxDurationMs: 1000 });
+
+      const budget = (tracker as any).budgets.get("run-dur-warn");
+      // Set startedAt so elapsed is ~850ms (85%)
+      budget.consumed.startedAt = Date.now() - 850;
+
+      const status = tracker.checkBudget("run-dur-warn");
+      expect(status.exceeded).toBe(false);
+      expect(status.warnings.some((w) => w.resource === "duration")).toBe(true);
+      const durationWarning = status.warnings.find(
+        (w) => w.resource === "duration"
+      );
+      expect(durationWarning!.pct).toBeGreaterThanOrEqual(80);
+    });
+
+    it("should not warn when duration is below 80% of limit", () => {
+      tracker.createBudget("run-dur-ok", { maxDurationMs: 100000 });
+
+      // Budget was just created so duration is ~0ms, well below 80%
+      const status = tracker.checkBudget("run-dur-ok");
+      expect(
+        status.warnings.some((w) => w.resource === "duration")
+      ).toBe(false);
+    });
+  });
+
+  describe("getAllBudgets", () => {
+    it("should return all tracked budgets", () => {
+      tracker.createBudget("run-a", { maxTokens: 100 });
+      tracker.createBudget("run-b", { maxCostUsd: 5.0 });
+
+      const all = tracker.getAllBudgets();
+      expect(all.size).toBe(2);
+      expect(all.has("run-a")).toBe(true);
+      expect(all.has("run-b")).toBe(true);
+    });
+
+    it("should return empty map when no budgets exist", () => {
+      const all = tracker.getAllBudgets();
+      expect(all.size).toBe(0);
+    });
+
+    it("should return a copy, not the internal map", () => {
+      tracker.createBudget("run-c", { maxTokens: 500 });
+      const all = tracker.getAllBudgets();
+      all.delete("run-c");
+
+      // Original should still have it
+      expect(tracker.getConsumed("run-c")).not.toBeNull();
+    });
+  });
+
+  describe("recordIteration on non-existent budget", () => {
+    it("should handle non-existent budget gracefully", () => {
+      // Should not throw
+      tracker.recordIteration("non-existent");
+      const consumed = tracker.getConsumed("non-existent");
+      expect(consumed).toBeNull();
+    });
+  });
 });

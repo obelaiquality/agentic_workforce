@@ -30,5 +30,13 @@ describe("inference scoring", () => {
     expect(getCandidateOrderForHardware("apple-silicon")[0]).toBe("mlx-lm");
     expect(getCandidateOrderForHardware("nvidia-cuda")[0]).toBe("sglang");
   });
+
+  it("returns generic-cpu candidate order", () => {
+    const order = getCandidateOrderForHardware("generic-cpu");
+    expect(order[0]).toBe("llama-cpp-openai");
+    expect(order).toContain("ollama-openai");
+    expect(order).toContain("transformers-openai");
+    expect(order).toHaveLength(3);
+  });
 });
 

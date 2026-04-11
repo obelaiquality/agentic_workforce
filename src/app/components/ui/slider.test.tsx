@@ -27,4 +27,16 @@ describe("Slider", () => {
     );
     expect(container.innerHTML).toContain("custom-class");
   });
+
+  it("renders with controlled value array", () => {
+    const { container } = render(<Slider value={[30, 70]} />);
+    const thumbs = container.querySelectorAll('[role="slider"]');
+    expect(thumbs.length).toBe(2);
+  });
+
+  it("falls back to [min, max] when no value or defaultValue provided", () => {
+    const { container } = render(<Slider min={10} max={90} />);
+    const thumbs = container.querySelectorAll('[role="slider"]');
+    expect(thumbs.length).toBe(2);
+  });
 });

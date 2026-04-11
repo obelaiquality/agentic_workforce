@@ -135,5 +135,46 @@ describe("abortHierarchy", () => {
       root.abort("late"); // child already aborted, should not re-fire
       expect(handler).not.toHaveBeenCalled();
     });
+
+    it("parent abort propagates reason through fork handler to child", () => {
+      const root = createRootAbortController("root");
+      const child = root.fork("task");
+      const grandchild = child.fork("subtask");
+
+      // Abort root with a specific reason — should propagate through the
+      // fork handler (lines 62-66) to child and grandchild
+      root.abort("timeout_reached");
+      expect(child.signal.reason).toBe("timeout_reached");
+      expect(grandchild.signal.reason).toBe("timeout_reached");
+    });
+
+    it("child auto-cleanup removes parent listener when child aborts independently", () => {
+      const root = createRootAbortController("root");
+      const child1 = root.fork("c1");
+      const child2 = root.fork("c2");
+
+      // Abort child1 independently — its cleanup handler (line 74) should
+      // remove the parent's abort listener for child1
+      child1.abort("done");
+
+      // Now abort root — child2 should still get it, child1 should not re-fire
+      const child1Handler = vi.fn();
+      child1.signal.addEventListener("abort", child1Handler);
+      root.abort("root_done");
+
+      expect(child2.aborted).toBe(true);
+      // child1 was already aborted, handler should not be called again
+      expect(child1Handler).not.toHaveBeenCalled();
+    });
+
+    it("handles abort with no explicit reason", () => {
+      const root = createRootAbortController("root");
+      const child = root.fork("task");
+
+      root.abort(); // no reason provided — AbortController uses default DOMException
+      expect(child.aborted).toBe(true);
+      // The child should still be aborted even without an explicit string reason
+      expect(root.aborted).toBe(true);
+    });
   });
 });

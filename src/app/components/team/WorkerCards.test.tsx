@@ -90,4 +90,20 @@ describe("WorkerCards", () => {
     const card = container.querySelector(".border-rose-500\\/30");
     expect(card).not.toBeNull();
   });
+
+  it("renders minutes-ago heartbeat time", () => {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    render(
+      <WorkerCards workers={[makeWorker({ lastHeartbeatAt: fiveMinutesAgo })]} />,
+    );
+    expect(screen.getByText("5m ago")).toBeInTheDocument();
+  });
+
+  it("renders hours-ago heartbeat time", () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+    render(
+      <WorkerCards workers={[makeWorker({ lastHeartbeatAt: twoHoursAgo })]} />,
+    );
+    expect(screen.getByText("2h ago")).toBeInTheDocument();
+  });
 });

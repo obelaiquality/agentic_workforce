@@ -19,4 +19,11 @@ describe("Calendar", () => {
     const { container } = render(<Calendar className="custom-cal" />);
     expect(container.querySelector(".custom-cal")).toBeTruthy();
   });
+
+  it("renders with mode='range' for range-specific cell styles", () => {
+    const { container } = render(
+      <Calendar mode="range" month={new Date(2025, 0, 1)} />,
+    );
+    expect(container.firstChild).toBeTruthy();
+  });
 });

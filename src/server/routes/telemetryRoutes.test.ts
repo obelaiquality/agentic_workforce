@@ -153,4 +153,26 @@ describe("telemetryRoutes", () => {
 
     await app.close();
   });
+
+  it("GET /health returns status, uptime, memory, and timestamp", async () => {
+    const app = createApp();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/telemetry/health",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.status).toBe("ok");
+    expect(typeof body.uptime).toBe("number");
+    expect(body.memory).toBeDefined();
+    expect(body.memory.rss).toBeDefined();
+    expect(body.memory.heapUsed).toBeDefined();
+    expect(typeof body.timestamp).toBe("string");
+    // Validate ISO timestamp format
+    expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
+
+    await app.close();
+  });
 });

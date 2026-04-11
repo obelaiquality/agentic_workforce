@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { MultiAgentTeam, type AgentSpec, type TeamEvent } from "./multiAgentTeam";
+import { MultiAgentTeam, createTeamContext, type AgentSpec, type TeamEvent } from "./multiAgentTeam";
 import type { AgenticEvent, AgenticExecutionInput } from "../tools/types";
 
 describe("MultiAgentTeam", () => {
@@ -371,5 +371,495 @@ describe("MultiAgentTeam", () => {
 
       expect(teamWithLimit.getResults()).toHaveLength(5);
     });
+  });
+
+  describe("agent error handling", () => {
+    it("records failed status when agent generator throws", async () => {
+      const errorOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield { type: "iteration_start", iteration: 1, messageCount: 0 };
+        throw new Error("Agent crashed");
+      };
+
+      const errorTeam = new MultiAgentTeam(errorOrchestrator);
+      errorTeam.addAgent({
+        id: "crasher",
+        role: "implementer",
+        objective: "Will crash",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      const events: TeamEvent[] = [];
+      for await (const event of errorTeam.execute(baseInput)) {
+        events.push(event);
+      }
+
+      const results = errorTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("failed");
+      expect(results[0].summary).toContain("Agent crashed");
+    });
+  });
+
+  describe("finalizeAgent with execution_aborted", () => {
+    it("records aborted status when agent yields execution_aborted as last event", async () => {
+      const abortOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield { type: "iteration_start", iteration: 1, messageCount: 0 };
+        yield {
+          type: "execution_aborted",
+          reason: "User requested abort",
+          totalIterations: 1,
+          totalToolCalls: 0,
+        };
+      };
+
+      const abortTeam = new MultiAgentTeam(abortOrchestrator);
+      abortTeam.addAgent({
+        id: "aborter",
+        role: "implementer",
+        objective: "Will abort",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of abortTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = abortTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("aborted");
+      expect(results[0].summary).toBe("User requested abort");
+    });
+  });
+
+  describe("finalizeAgent with error event", () => {
+    it("records failed status when agent yields error as last event", async () => {
+      const errOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield { type: "iteration_start", iteration: 1, messageCount: 0 };
+        yield {
+          type: "error",
+          error: "Something went wrong internally",
+          recoverable: false,
+        };
+      };
+
+      const errTeam = new MultiAgentTeam(errOrchestrator);
+      errTeam.addAgent({
+        id: "erring",
+        role: "tester",
+        objective: "Will error",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of errTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = errTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("failed");
+      expect(results[0].summary).toBe("Something went wrong internally");
+    });
+  });
+
+  describe("finalizeAgent with no finalEvent", () => {
+    it("records completed with default summary when generator yields no events", async () => {
+      const emptyOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        // yields nothing, immediately returns
+      };
+
+      const emptyTeam = new MultiAgentTeam(emptyOrchestrator);
+      emptyTeam.addAgent({
+        id: "empty",
+        role: "planner",
+        objective: "Plan nothing",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of emptyTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = emptyTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("completed");
+      expect(results[0].summary).toBe("Agent completed successfully");
+    });
+  });
+
+  describe("trackFileChanges", () => {
+    it("tracks file changes from tool_use_started events with path", async () => {
+      const fileOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield {
+          type: "tool_use_started",
+          name: "write_file",
+          input: { path: "/src/newFile.ts" },
+          toolCallId: "tc-1",
+        };
+        yield {
+          type: "execution_complete",
+          finalMessage: "Done",
+          totalIterations: 1,
+          totalToolCalls: 1,
+        };
+      };
+
+      const fileTeam = new MultiAgentTeam(fileOrchestrator);
+      fileTeam.addAgent({
+        id: "writer",
+        role: "implementer",
+        objective: "Write files",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of fileTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = fileTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].filesChanged).toContain("/src/newFile.ts");
+    });
+
+    it("tracks file changes from tool_use_started events with file key", async () => {
+      const fileOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield {
+          type: "tool_use_started",
+          name: "edit_file",
+          input: { file: "/src/existing.ts" },
+          toolCallId: "tc-1",
+        };
+        yield {
+          type: "execution_complete",
+          finalMessage: "Done",
+          totalIterations: 1,
+          totalToolCalls: 1,
+        };
+      };
+
+      const fileTeam = new MultiAgentTeam(fileOrchestrator);
+      fileTeam.addAgent({
+        id: "editor",
+        role: "implementer",
+        objective: "Edit files",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of fileTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = fileTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].filesChanged).toContain("/src/existing.ts");
+    });
+
+    it("does not track non-file-modifying tools", async () => {
+      const readOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield {
+          type: "tool_use_started",
+          name: "read_file",
+          input: { path: "/src/read.ts" },
+          toolCallId: "tc-1",
+        };
+        yield {
+          type: "execution_complete",
+          finalMessage: "Done",
+          totalIterations: 1,
+          totalToolCalls: 1,
+        };
+      };
+
+      const readTeam = new MultiAgentTeam(readOrchestrator);
+      readTeam.addAgent({
+        id: "reader",
+        role: "researcher",
+        objective: "Read files",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of readTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = readTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].filesChanged).toHaveLength(0);
+    });
+
+    it("does not track when tool has no file path", async () => {
+      const noPathOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield {
+          type: "tool_use_started",
+          name: "bash",
+          input: { command: "echo hello" },
+          toolCallId: "tc-1",
+        };
+        yield {
+          type: "execution_complete",
+          finalMessage: "Done",
+          totalIterations: 1,
+          totalToolCalls: 1,
+        };
+      };
+
+      const noPathTeam = new MultiAgentTeam(noPathOrchestrator);
+      noPathTeam.addAgent({
+        id: "basher",
+        role: "implementer",
+        objective: "Run bash",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of noPathTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = noPathTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].filesChanged).toHaveLength(0);
+    });
+
+    it("does not track non-tool_use_started events", async () => {
+      const tokenOrchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+        yield { type: "assistant_token", value: "some output" };
+        yield {
+          type: "execution_complete",
+          finalMessage: "Done",
+          totalIterations: 1,
+          totalToolCalls: 0,
+        };
+      };
+
+      const tokenTeam = new MultiAgentTeam(tokenOrchestrator);
+      tokenTeam.addAgent({
+        id: "talker",
+        role: "planner",
+        objective: "Just talk",
+      });
+
+      const baseInput: AgenticExecutionInput = {
+        runId: "run1",
+        repoId: "repo1",
+        ticketId: "ticket1",
+        objective: "Base objective",
+        worktreePath: "/test/path",
+        actor: "test",
+      };
+
+      for await (const _ of tokenTeam.execute(baseInput)) {
+        // consume
+      }
+
+      const results = tokenTeam.getResults();
+      expect(results).toHaveLength(1);
+      expect(results[0].filesChanged).toHaveLength(0);
+    });
+  });
+
+  describe("receiveMessages for unknown agent", () => {
+    it("returns empty array for agent with no queue", () => {
+      const team2 = new MultiAgentTeam(mockOrchestrator);
+      // Don't add any agents, so no queues exist
+      const messages = team2.receiveMessages("nonexistent");
+      expect(messages).toHaveLength(0);
+    });
+  });
+});
+
+describe("createTeamContext", () => {
+  it("returns a context object with all team operations", () => {
+    const orchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+      yield {
+        type: "execution_complete",
+        finalMessage: "Done",
+        totalIterations: 1,
+        totalToolCalls: 0,
+      };
+    };
+
+    const team = new MultiAgentTeam(orchestrator);
+    team.addAgent({ id: "agent1", role: "implementer", objective: "Task 1" });
+    team.addAgent({ id: "agent2", role: "tester", objective: "Task 2" });
+
+    const ctx = createTeamContext(team, "agent1");
+
+    expect(ctx.teamId).toBe("default");
+    expect(ctx.agentId).toBe("agent1");
+  });
+
+  it("sendMessage delegates to team.sendMessage", () => {
+    const orchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+      yield {
+        type: "execution_complete",
+        finalMessage: "Done",
+        totalIterations: 1,
+        totalToolCalls: 0,
+      };
+    };
+
+    const team = new MultiAgentTeam(orchestrator);
+    team.addAgent({ id: "agent1", role: "implementer", objective: "Task 1" });
+    team.addAgent({ id: "agent2", role: "tester", objective: "Task 2" });
+
+    const ctx = createTeamContext(team, "agent1");
+
+    // Send message from agent1 to agent2
+    ctx.sendMessage("agent2", "Hello from context");
+
+    const messages = team.receiveMessages("agent2");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain("agent1");
+    expect(messages[0].content).toContain("Hello from context");
+  });
+
+  it("receiveMessages delegates to team.receiveMessages", () => {
+    const orchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+      yield {
+        type: "execution_complete",
+        finalMessage: "Done",
+        totalIterations: 1,
+        totalToolCalls: 0,
+      };
+    };
+
+    const team = new MultiAgentTeam(orchestrator);
+    team.addAgent({ id: "agent1", role: "implementer", objective: "Task 1" });
+    team.addAgent({ id: "agent2", role: "tester", objective: "Task 2" });
+
+    const ctx = createTeamContext(team, "agent1");
+
+    // Send a message to agent1 first
+    team.sendMessage("agent2", "agent1", "Hey there");
+
+    const msgs = ctx.receiveMessages();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].content).toContain("Hey there");
+  });
+
+  it("getAllAgents delegates to team.getAllAgents", () => {
+    const orchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+      yield {
+        type: "execution_complete",
+        finalMessage: "Done",
+        totalIterations: 1,
+        totalToolCalls: 0,
+      };
+    };
+
+    const team = new MultiAgentTeam(orchestrator);
+    team.addAgent({ id: "agent1", role: "implementer", objective: "Task 1" });
+    team.addAgent({ id: "agent2", role: "tester", objective: "Task 2" });
+
+    const ctx = createTeamContext(team, "agent1");
+
+    const agents = ctx.getAllAgents();
+    expect(agents).toHaveLength(2);
+    expect(agents.map((a) => a.id)).toContain("agent1");
+    expect(agents.map((a) => a.id)).toContain("agent2");
+  });
+
+  it("getActiveAgents delegates to team.getActiveAgents", () => {
+    const orchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+      yield {
+        type: "execution_complete",
+        finalMessage: "Done",
+        totalIterations: 1,
+        totalToolCalls: 0,
+      };
+    };
+
+    const team = new MultiAgentTeam(orchestrator);
+    team.addAgent({ id: "agent1", role: "implementer", objective: "Task 1" });
+
+    const ctx = createTeamContext(team, "agent1");
+
+    // No agents executing yet
+    expect(ctx.getActiveAgents()).toEqual([]);
+  });
+
+  it("addAgent delegates to team.addAgent", () => {
+    const orchestrator = async function* (_spec: AgentSpec): AsyncGenerator<AgenticEvent> {
+      yield {
+        type: "execution_complete",
+        finalMessage: "Done",
+        totalIterations: 1,
+        totalToolCalls: 0,
+      };
+    };
+
+    const team = new MultiAgentTeam(orchestrator);
+    team.addAgent({ id: "agent1", role: "implementer", objective: "Task 1" });
+
+    const ctx = createTeamContext(team, "agent1");
+
+    ctx.addAgent({ id: "agent3", role: "reviewer", objective: "Review code" });
+
+    const agents = team.getAllAgents();
+    expect(agents).toHaveLength(2);
+    expect(agents.map((a) => a.id)).toContain("agent3");
   });
 });

@@ -131,6 +131,11 @@ describe("requireApprovalForInstall", () => {
     expect(requireApprovalForInstall.matches(bashTool, { command: "npm test" })).toBe(false);
   });
 
+  it("does not match non-bash/non-shell tools without repo.install scope", () => {
+    const readTool = makeTool("read_file", { scope: "repo.read" });
+    expect(requireApprovalForInstall.matches(readTool, { command: "npm install foo" })).toBe(false);
+  });
+
   it("evaluates to approval_required", () => {
     const result = requireApprovalForInstall.evaluate(bashTool, { command: "npm install foo" }, dummyCtx);
     expect(result.decision).toBe("approval_required");
@@ -164,6 +169,11 @@ describe("requireApprovalForNetwork", () => {
 
   it("does not match non-network commands", () => {
     expect(requireApprovalForNetwork.matches(bashTool, { command: "echo hello" })).toBe(false);
+  });
+
+  it("does not match non-bash/non-shell tools without network scope", () => {
+    const readTool = makeTool("read_file", { scope: "repo.read" });
+    expect(requireApprovalForNetwork.matches(readTool, { command: "curl http://example.com" })).toBe(false);
   });
 
   it("evaluates to approval_required", () => {
@@ -241,6 +251,11 @@ describe("autoApproveGitReadOnly", () => {
     "git checkout -b new-branch",
   ])("does not match git write command: %s", (cmd) => {
     expect(autoApproveGitReadOnly.matches(bashTool, { command: cmd })).toBe(false);
+  });
+
+  it("does not match non-bash/non-shell tools without git.meta scope", () => {
+    const readTool = makeTool("read_file", { scope: "repo.read" });
+    expect(autoApproveGitReadOnly.matches(readTool, { command: "git status" })).toBe(false);
   });
 
   it("evaluates to allow", () => {

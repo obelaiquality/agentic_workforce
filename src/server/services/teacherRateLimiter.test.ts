@@ -26,6 +26,23 @@ describe("teacher rate limiter", () => {
     expect(normalized.maxRetries).toBe(8);
   });
 
+  it("uses default dailyTokenBudget when value is not a number", () => {
+    const normalized = normalizeTeacherRateLimit({
+      maxRequestsPerMinute: 10,
+      maxConcurrentTeacherJobs: 2,
+      dailyTokenBudget: "not-a-number" as unknown as number,
+      retryBackoffMs: 1000,
+      maxRetries: 2,
+    });
+
+    expect(normalized.dailyTokenBudget).toBe(120000);
+    // Other fields should still be set from provided values
+    expect(normalized.maxRequestsPerMinute).toBe(10);
+    expect(normalized.maxConcurrentTeacherJobs).toBe(2);
+    expect(normalized.retryBackoffMs).toBe(1000);
+    expect(normalized.maxRetries).toBe(2);
+  });
+
   it("resets usage when day changes", () => {
     const usage = normalizeUsageState(
       {

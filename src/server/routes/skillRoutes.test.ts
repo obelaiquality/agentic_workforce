@@ -111,4 +111,165 @@ describe("skillRoutes", () => {
 
     await app.close();
   });
+
+  it("gets a single skill by ID and deletes it successfully", async () => {
+    const { app } = createHarness();
+
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/skills",
+      payload: {
+        name: "fetch-skill",
+        description: "Skill to fetch and delete",
+        systemPrompt: "Do the thing",
+      },
+    });
+    const skillId = createRes.json().item.id;
+
+    // GET individual skill
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/skills/${skillId}`,
+    });
+    expect(getRes.statusCode).toBe(200);
+    expect(getRes.json().item.name).toBe("fetch-skill");
+    expect(getRes.json().item.id).toBe(skillId);
+
+    // DELETE successfully
+    const deleteRes = await app.inject({
+      method: "DELETE",
+      url: `/api/skills/${skillId}`,
+    });
+    expect(deleteRes.statusCode).toBe(200);
+    expect(deleteRes.json()).toEqual({ ok: true });
+
+    await app.close();
+  });
+
+  it("returns 404 when patching a non-existent skill", async () => {
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/skills/nonexistent-id",
+      payload: { description: "updated" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: "Skill not found or is built-in" });
+
+    await app.close();
+  });
+
+  it("returns 404 when deleting a non-existent skill", async () => {
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/api/skills/nonexistent-id",
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: "Skill not found or is built-in" });
+
+    await app.close();
+  });
+
+  it("returns 400 when POST /api/skills throws an Error", async () => {
+    const { app, service } = createHarness();
+    vi.spyOn(service, "createSkill").mockRejectedValueOnce(new Error("Duplicate name"));
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/skills",
+      payload: { name: "dup" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "Duplicate name" });
+
+    await app.close();
+  });
+
+  it("returns 400 when POST /api/skills throws a non-Error value", async () => {
+    const { app, service } = createHarness();
+    vi.spyOn(service, "createSkill").mockRejectedValueOnce("raw-string-error");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/skills",
+      payload: { name: "test" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "raw-string-error" });
+
+    await app.close();
+  });
+
+  it("lists skills with tags filter", async () => {
+    const { app } = createHarness();
+
+    // Create a skill with tags
+    await app.inject({
+      method: "POST",
+      url: "/api/skills",
+      payload: {
+        name: "tagged-skill",
+        description: "Has tags",
+        tags: ["ops", "deploy"],
+        systemPrompt: "Do it",
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/skills?tags=ops,deploy",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().items.length).toBeGreaterThanOrEqual(1);
+
+    await app.close();
+  });
+
+  it("creates a skill with non-array allowedTools and tags, and non-number maxIterations", async () => {
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/skills",
+      payload: {
+        name: "bare-skill",
+        description: "Minimal config",
+        systemPrompt: "Do something",
+        allowedTools: "not-an-array",
+        tags: "not-an-array",
+        maxIterations: "not-a-number",
+        referenceFiles: "not-an-array",
+        author: "custom-author",
+        version: "2.0.0",
+        contextMode: "fork",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const item = res.json().item;
+    expect(item.allowedTools).toEqual([]);
+    expect(item.tags).toEqual([]);
+    expect(item.maxIterations).toBeNull();
+    expect(item.referenceFiles).toEqual([]);
+    expect(item.author).toBe("custom-author");
+    expect(item.version).toBe("2.0.0");
+    expect(item.contextMode).toBe("fork");
+
+    await app.close();
+  });
+
+  it("lists invocations with limit query parameter", async () => {
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/skills/invocations?limit=10",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().items).toEqual([]);
+
+    await app.close();
+  });
 });

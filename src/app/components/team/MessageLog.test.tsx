@@ -133,4 +133,28 @@ describe("MessageLog", () => {
     const messageEl = container.querySelector(".border-blue-500\\/20");
     expect(messageEl).not.toBeNull();
   });
+
+  it("returns empty string when Date constructor throws in formatTime", () => {
+    const OriginalDate = globalThis.Date;
+    const mockDate = vi.fn((...args: any[]) => {
+      if (args.length === 1 && args[0] === "THROW_FOR_TEST") {
+        throw new Error("Invalid time value");
+      }
+      return new OriginalDate(...args);
+    }) as any;
+    mockDate.prototype = OriginalDate.prototype;
+    mockDate.now = OriginalDate.now;
+    globalThis.Date = mockDate;
+
+    render(
+      <MessageLog
+        messages={[makeMessage({ createdAt: "THROW_FOR_TEST" })]}
+      />,
+    );
+
+    // The message should still render; formatTime catches the error and returns ""
+    expect(screen.getByText("Starting task execution")).toBeInTheDocument();
+
+    globalThis.Date = OriginalDate;
+  });
 });

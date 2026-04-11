@@ -147,4 +147,155 @@ describe("validatePath", () => {
     expect(result.error).toBeDefined();
     expect(result.error).toContain("traversal");
   });
+
+  // ── Symlink resolution ─────────────────────────────────────────────────────
+
+  it("should allow a valid path that exists on disk within worktree", () => {
+    // Use the actual temp directory which exists
+    const tmpWorktree = os.tmpdir();
+    const result = validatePath(tmpWorktree, ".", "read");
+    expect(result.error).toBeUndefined();
+  });
+
+  // ── Dangerous path blocking for write/delete ──────────────────────────────
+
+  it("should reject deleting dangerous system path /usr", () => {
+    const result = validatePath("/usr", "/usr", "delete");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("dangerous");
+  });
+
+  it("should reject writing to /etc", () => {
+    const result = validatePath("/etc", "/etc", "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("dangerous");
+  });
+
+  it("should reject writing to /var", () => {
+    const result = validatePath("/var", "/var", "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("dangerous");
+  });
+
+  it("should reject writing to /tmp root", () => {
+    const result = validatePath("/tmp", "/tmp", "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("dangerous");
+  });
+
+  it("should reject writing to home directory root", () => {
+    const home = os.homedir();
+    const result = validatePath(home, home, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("dangerous");
+  });
+
+  it("should reject writing to .bashrc in home directory", () => {
+    const home = os.homedir();
+    const bashrc = path.join(home, ".bashrc");
+    const result = validatePath(home, bashrc, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("sensitive dotfile");
+  });
+
+  it("should reject writing to .zshrc in home directory", () => {
+    const home = os.homedir();
+    const zshrc = path.join(home, ".zshrc");
+    const result = validatePath(home, zshrc, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("sensitive dotfile");
+  });
+
+  it("should reject writing to .ssh directory in home", () => {
+    const home = os.homedir();
+    const sshDir = path.join(home, ".ssh");
+    const result = validatePath(home, sshDir, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("sensitive dotfile");
+  });
+
+  it("should reject writing to .ssh/id_rsa in home", () => {
+    const home = os.homedir();
+    const sshKey = path.join(home, ".ssh/id_rsa");
+    const result = validatePath(home, sshKey, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("sensitive dotfile");
+  });
+
+  it("should reject writing to .profile in home directory", () => {
+    const home = os.homedir();
+    const profile = path.join(home, ".profile");
+    const result = validatePath(home, profile, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("sensitive dotfile");
+  });
+
+  it("should reject writing to .bash_profile in home directory", () => {
+    const home = os.homedir();
+    const bashProfile = path.join(home, ".bash_profile");
+    const result = validatePath(home, bashProfile, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("sensitive dotfile");
+  });
+
+  it("should reject glob patterns [brackets] in delete paths", () => {
+    const result = validatePath(worktree, "src/[test].ts", "delete");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("Glob");
+  });
+
+  it("should reject glob patterns with ? in write paths", () => {
+    const result = validatePath(worktree, "src/file?.ts", "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("Glob");
+  });
+
+  it("should allow read operations against dangerous paths within their own worktree", () => {
+    // Reading from within a worktree that happens to be a system directory
+    // is still allowed because the dangerous path check only applies to write/delete
+    const home = os.homedir();
+    const filePath = path.join(home, "somefile.txt");
+    const result = validatePath(home, filePath, "read");
+    expect(result.error).toBeUndefined();
+  });
+
+  it("should reject writing to path with trailing separator matching dangerous path", () => {
+    const result = validatePath("/", "/" + path.sep, "write");
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("dangerous");
+  });
+
+  // ── Tilde edge cases ──────────────────────────────────────────────────────
+
+  it("should allow bare ~ path (not treated as dangerous tilde)", () => {
+    // Bare ~ is allowed through tilde check but will fail boundary check
+    const result = validatePath(worktree, "~", "read");
+    // ~ resolves to worktree/~ which is fine for tilde check
+    // but the boundary check may or may not fail depending on resolution
+    expect(result.error === undefined || result.error?.includes("traversal")).toBe(true);
+  });
+
+  it("should allow ~/path (not treated as dangerous tilde)", () => {
+    const result = validatePath(worktree, "~/file.txt", "read");
+    // ~/file.txt is allowed through tilde check but may fail boundary
+    expect(result.error === undefined || result.error?.includes("traversal")).toBe(true);
+  });
+
+  // ── macOS-specific paths ──────────────────────────────────────────────────
+
+  it("should reject writing to /Applications on macOS", () => {
+    if (process.platform === "darwin") {
+      const result = validatePath("/Applications", "/Applications", "write");
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain("dangerous");
+    }
+  });
+
+  it("should reject writing to /Users on macOS", () => {
+    if (process.platform === "darwin") {
+      const result = validatePath("/Users", "/Users", "write");
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain("dangerous");
+    }
+  });
 });

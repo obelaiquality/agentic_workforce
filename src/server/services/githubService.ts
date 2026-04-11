@@ -22,7 +22,8 @@ function runGit(args: string[], cwd?: string) {
   }).trim();
 }
 
-function mapProjectBinding(repo: RepoRegistration, guidelineProfileVersion = 1): ProjectBinding {
+/** @internal exported for testing */
+export function mapProjectBinding(repo: RepoRegistration, guidelineProfileVersion = 1): ProjectBinding {
   const metadata = normalizeStarterMetadata(toRecord(repo.metadata));
   return {
     id: repo.id,

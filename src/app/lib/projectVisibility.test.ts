@@ -99,6 +99,26 @@ describe("getVisibleRepos", () => {
     expect(result[0].id).toBe("r2");
     expect(result[1].id).toBe("r1");
   });
+
+  it("deduplicates keeping active over inactive with same key", () => {
+    const repos = [
+      makeRepo({
+        id: "r1",
+        sourceUri: "https://github.com/owner/repo",
+        active: false,
+        updatedAt: "2024-06-01T00:00:00Z",
+      }),
+      makeRepo({
+        id: "r2",
+        sourceUri: "https://github.com/owner/repo",
+        active: true,
+        updatedAt: "2024-01-01T00:00:00Z",
+      }),
+    ];
+    const result = getVisibleRepos(repos, false);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("r2");
+  });
 });
 
 describe("getRecentRepos", () => {

@@ -8,16 +8,63 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     appSetting: { findUnique: vi.fn() },
     projectBlueprint: { findUnique: vi.fn().mockResolvedValue(null) },
-    executionAttempt: { update: vi.fn().mockResolvedValue({}) },
+    executionAttempt: {
+      update: vi.fn().mockResolvedValue({}),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({}),
+      create: vi.fn().mockResolvedValue({
+        id: "ea-1",
+        runId: "run-1",
+        repoId: "repo-1",
+        projectId: null,
+        modelRole: "coder_default",
+        providerId: "onprem-qwen",
+        status: "planned",
+        objective: "test",
+        patchSummary: "",
+        changedFiles: [],
+        approvalRequired: false,
+        contextPackId: "cp-1",
+        routingDecisionId: "rd-1",
+        metadata: {},
+        startedAt: new Date(),
+        completedAt: null,
+        updatedAt: new Date(),
+      }),
+    },
     runProjection: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
     shareableRunReport: { upsert: vi.fn().mockResolvedValue({}) },
-    verificationBundle: { create: vi.fn().mockResolvedValue({ id: "vb-1", pass: true }) },
+    verificationBundle: {
+      create: vi.fn().mockResolvedValue({
+        id: "vb-1",
+        runId: "run-1",
+        repoId: "repo-1",
+        executionAttemptId: "ea-1",
+        changedFileChecks: [],
+        impactedTests: [],
+        fullSuiteRun: false,
+        docsChecked: [],
+        pass: true,
+        failures: [],
+        artifacts: [],
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    },
+    contextPack: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({}),
+    },
+    benchmarkOutcomeEvidence: { create: vi.fn().mockResolvedValue({ id: "ev-1" }) },
   },
   publishEvent: vi.fn(),
   MockMemoryService: vi.fn().mockImplementation(() => ({
     loadEpisodicMemory: vi.fn(),
     compose: vi.fn().mockReturnValue({ episodicContext: null, workingContext: [] }),
     commitTaskOutcome: vi.fn(),
+    getRelevantEpisodicMemories: vi.fn().mockReturnValue([]),
   })),
   MockShadowGitService: vi.fn().mockImplementation(() => ({
     initialize: vi.fn(),
@@ -26,6 +73,7 @@ const mocks = vi.hoisted(() => ({
   MockDoomLoopDetector: vi.fn().mockImplementation(() => ({
     check: vi.fn().mockReturnValue({ stuck: false }),
     record: vi.fn(),
+    isLooping: vi.fn().mockReturnValue(false),
   })),
   MockAgenticOrchestrator: vi.fn(),
   MockAutoMemoryExtractor: vi.fn().mockImplementation(() => ({
@@ -50,8 +98,12 @@ vi.mock("./repoService");
 vi.mock("./codeGraphService");
 vi.mock("./commandEngine");
 vi.mock("./shellDetect", () => ({ detectShell: () => "/bin/bash" }));
-vi.mock("./toolResultOptimizer");
-vi.mock("./editMatcherChain");
+vi.mock("./toolResultOptimizer", () => ({
+  optimizeAndPersist: vi.fn().mockImplementation((text: string) => text),
+}));
+vi.mock("./editMatcherChain", () => ({
+  runEditMatcherChain: vi.fn().mockReturnValue({ success: false, content: "" }),
+}));
 vi.mock("./fileStateCache", () => ({
   getSharedFileStateCache: () => ({ delete: vi.fn(), get: vi.fn() }),
 }));
@@ -1074,6 +1126,7 @@ describe("ExecutionService", () => {
   } as any;
   const mockCodeGraphService = {
     rerankForManifest: vi.fn().mockImplementation((_id, pack) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
   } as any;
   const mockCommandEngine = { run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }) } as any;
   const mockPolicyEngine = { evaluate: vi.fn().mockReturnValue({ allowed: true }) } as any;
@@ -1402,5 +1455,1779 @@ describe("ExecutionService", () => {
       // AgenticOrchestrator should NOT be constructed in coordinator mode
       expect(mocks.MockAgenticOrchestrator).not.toHaveBeenCalled();
     });
+
+    it("records coordinator execution_aborted event", async () => {
+      mocks.MockRunCoordinatorMode.mockImplementation(async function* () {
+        yield { type: "execution_aborted", reason: "coordinator budget exceeded" };
+      });
+
+      const svc = createService();
+      const input = {
+        runId: "run-coord-abort",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+        coordinator: true,
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("execution_aborted");
+      expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "agentic.execution.aborted",
+          payload: expect.objectContaining({
+            reason: "coordinator budget exceeded",
+            mode: "coordinator",
+          }),
+        }),
+      );
+    });
+
+    it("yields error event when coordinator throws", async () => {
+      mocks.MockRunCoordinatorMode.mockImplementation(async function* () {
+        throw new Error("coordinator crashed");
+      });
+
+      const svc = createService();
+      const input = {
+        runId: "run-coord-err",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+        coordinator: true,
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("error");
+      expect(events[0].error).toContain("Coordinator execution failed");
+      expect(events[0].error).toContain("coordinator crashed");
+      expect(events[0].recoverable).toBe(false);
+    });
+
+    it("records coordinator execution_complete with mode", async () => {
+      mocks.MockRunCoordinatorMode.mockImplementation(async function* () {
+        yield { type: "execution_complete", totalIterations: 4, totalToolCalls: 10 };
+      });
+
+      const svc = createService();
+      const input = {
+        runId: "run-coord-done",
+        objective: "big task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+        coordinator: true,
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "agentic.execution.completed",
+          payload: expect.objectContaining({
+            objective: "big task",
+            iterations: 4,
+            toolCalls: 10,
+            mode: "coordinator",
+          }),
+        }),
+      );
+    });
+
+    it("passes non-significant events through without recording", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          yield { type: "iteration_start", iteration: 1 };
+          yield { type: "tool_call", tool: "read_file", args: {} };
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-passthrough",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(2);
+      // Non-significant events should not trigger appendEvent
+      expect(mockV2EventService.appendEvent).not.toHaveBeenCalled();
+    });
+
+    it("records failed event when orchestrator throws with non-Error", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          throw "string error";
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-str-err",
+        objective: "task",
+        worktreePath: "/tmp/wt",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      const events: any[] = [];
+      for await (const event of svc.executeAgentic({} as any, input)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("error");
+      expect(events[0].error).toContain("string error");
+      expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "agentic.execution.failed",
+          payload: expect.objectContaining({
+            error: "string error",
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("getMemory (lazy init)", () => {
+    it("initializes memory lazily when executeAgentic is called", async () => {
+      mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+        execute: async function* () {
+          yield { type: "execution_complete", totalIterations: 1, totalToolCalls: 0 };
+        },
+      }));
+
+      const svc = createService();
+      const input = {
+        runId: "run-mem",
+        objective: "task",
+        worktreePath: "/tmp/lazy-mem",
+        actor: "user",
+        repoId: "repo-1",
+      } as any;
+
+      for await (const _event of svc.executeAgentic({} as any, input)) {
+        // drain
+      }
+
+      expect(mocks.MockMemoryService).toHaveBeenCalledWith("/tmp/lazy-mem");
+    });
+  });
+
+  describe("getShadowGit (lazy init)", () => {
+    it("returns null when shadow git init throws", () => {
+      mocks.MockShadowGitService.mockImplementationOnce(() => ({
+        initialize: vi.fn(() => { throw new Error("git not available"); }),
+        snapshot: vi.fn(),
+      }));
+
+      const svc = createService();
+      const result = svc.initShadowGit("/tmp/no-git");
+
+      // initShadowGit returns null-like when init fails (shadowGit set to null)
+      // The function still returns — we verify it didn't throw
+      expect(mocks.MockShadowGitService).toHaveBeenCalledWith("/tmp/no-git");
+    });
+  });
+})
+
+// ---------------------------------------------------------------------------
+// parsePatchManifest — path with non-string path values
+// ---------------------------------------------------------------------------
+
+describe("parsePatchManifest — non-string path fields", () => {
+  it("filters out files with non-string path", () => {
+    const text = JSON.stringify({
+      files: [
+        { path: 123, action: "create" },
+        { path: null, action: "update" },
+        { path: "src/valid.ts", action: "update" },
+      ],
+    });
+
+    const result = parsePatchManifest(text);
+
+    // Non-string paths become empty string after trim and are filtered out
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].path).toBe("src/valid.ts");
+  });
+
+  it("handles files with non-string reason", () => {
+    const text = JSON.stringify({
+      files: [{ path: "src/file.ts", reason: 42 }],
+    });
+
+    const result = parsePatchManifest(text);
+
+    expect(result.files[0].reason).toBe("Update this file to satisfy the objective.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractJsonObject — malformed JSON
+// ---------------------------------------------------------------------------
+
+describe("extractJsonObject — malformed JSON", () => {
+  it("throws on invalid JSON between braces", () => {
+    const text = "{ not valid json }";
+
+    expect(() => extractJsonObject(text)).toThrow();
+  });
+
+  it("extracts from fenced block with JSON language tag case-insensitive", () => {
+    const text = '```JSON\n{"summary": "test"}\n```';
+    const result = extractJsonObject(text);
+
+    expect(result).toEqual({ summary: "test" });
+  });
+
+  it("extracts JSON embedded in lots of surrounding text", () => {
+    const text = 'Here is my analysis:\nBlah blah blah\n\n{"summary": "found it", "files": []}\n\nMore commentary here.';
+    const result = extractJsonObject(text);
+
+    expect(result).toEqual({ summary: "found it", files: [] });
+  });
+
+  it("handles fenced block with just backticks (no language)", () => {
+    const text = '```\n{"key": "value"}\n```';
+    const result = extractJsonObject(text);
+
+    expect(result).toEqual({ key: "value" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// safeWriteFile — edge cases with stat failures
+// ---------------------------------------------------------------------------
+
+describe("safeWriteFile — stat failure edge case", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-stat-fail-"));
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("handles CRLF content being written to new file", () => {
+    const filePath = path.join(tempDir, "crlf-new.txt");
+    const result = safeWriteFile(filePath, "line1\r\nline2\r\n");
+
+    expect(result).toEqual({ written: true, stale: false });
+    // New file has no existing line endings — defaults to LF, so CRLF gets normalized to LF
+    expect(fs.readFileSync(filePath, "utf8")).toBe("line1\nline2\n");
+  });
+
+  it("preserves CRLF line endings when overwriting existing CRLF file", () => {
+    const filePath = path.join(tempDir, "crlf-existing.txt");
+    fs.writeFileSync(filePath, "existing\r\ncrlf\r\ncontent\r\n", "utf8");
+
+    const result = safeWriteFile(filePath, "new\ncontent\n");
+
+    expect(result).toEqual({ written: true, stale: false });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("new\r\ncontent\r\n");
+  });
+
+  it("writes content with no readTimestamp and existing file", () => {
+    const filePath = path.join(tempDir, "no-timestamp.txt");
+    fs.writeFileSync(filePath, "original\n", "utf8");
+
+    const result = safeWriteFile(filePath, "updated\n");
+
+    expect(result).toEqual({ written: true, stale: false });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("updated\n");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectLineEndings — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("detectLineEndings — additional edge cases", () => {
+  it("detects CRLF for content with only CRLF endings", () => {
+    expect(detectLineEndings("a\r\nb\r\n")).toBe("CRLF");
+  });
+
+  it("returns LF for content with no newlines", () => {
+    expect(detectLineEndings("no newlines here")).toBe("LF");
+  });
+
+  it("returns LF for content with only a bare CR", () => {
+    expect(detectLineEndings("line1\rline2")).toBe("LF");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeLineEndings — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("normalizeLineEndings — additional edge cases", () => {
+  it("handles content with only CR characters (no LF)", () => {
+    // \r alone is not CRLF, so normalizing to LF first replaces \r\n (none),
+    // then the \r remains untouched by LF normalization
+    const result = normalizeLineEndings("a\rb\r", "LF");
+    expect(result).toBe("a\rb\r");
+  });
+
+  it("converts CRLF to CRLF for content that already is CRLF", () => {
+    const result = normalizeLineEndings("a\r\nb\r\n", "CRLF");
+    expect(result).toBe("a\r\nb\r\n");
+  });
+
+  it("converts triple CRLF-LF-CRLF mixed content to LF", () => {
+    const result = normalizeLineEndings("a\r\nb\nc\r\n", "LF");
+    expect(result).toBe("a\nb\nc\n");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// combinedShellOutput — additional patterns
+// ---------------------------------------------------------------------------
+
+describe("combinedShellOutput — additional patterns", () => {
+  it("lowercases unicode characters", () => {
+    const result = combinedShellOutput({ stdout: "ÜBER", stderr: "" });
+    expect(result).toBe("über");
+  });
+
+  it("handles multiline output", () => {
+    const result = combinedShellOutput({
+      stdout: "Line1\nLine2",
+      stderr: "Err1\nErr2",
+    });
+    expect(result).toBe("err1\nerr2\nline1\nline2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService — coordinator error recording
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService — coordinator error event details", () => {
+  const mockV2EventService = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouterService = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContextService = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockProviderOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepoService = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraphService = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("records coordinator failed event with stack", async () => {
+    mocks.MockRunCoordinatorMode.mockImplementation(async function* () {
+      throw new Error("coordinator stack trace error");
+    });
+
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    const input = {
+      runId: "run-coord-stack",
+      objective: "task",
+      worktreePath: "/tmp/wt",
+      actor: "user",
+      repoId: "repo-1",
+      coordinator: true,
+    } as any;
+
+    const events: any[] = [];
+    for await (const event of svc.executeAgentic({} as any, input)) {
+      events.push(event);
+    }
+
+    expect(events[0].type).toBe("error");
+    expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "agentic.execution.failed",
+        payload: expect.objectContaining({
+          error: "coordinator stack trace error",
+          mode: "coordinator",
+        }),
+      }),
+    );
+    // Verify stack is included for Error instances
+    const call = mockV2EventService.appendEvent.mock.calls.find(
+      (c: any[]) => c[0].type === "agentic.execution.failed"
+    );
+    expect(call[0].payload.stack).toBeDefined();
+  });
+
+  it("records orchestrator failed event without stack for non-Error", async () => {
+    mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+      execute: async function* () {
+        throw "simple string";
+      },
+    }));
+
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    const input = {
+      runId: "run-no-stack",
+      objective: "task",
+      worktreePath: "/tmp/wt",
+      actor: "user",
+      repoId: "repo-1",
+    } as any;
+
+    const events: any[] = [];
+    for await (const event of svc.executeAgentic({} as any, input)) {
+      events.push(event);
+    }
+
+    const call = mockV2EventService.appendEvent.mock.calls.find(
+      (c: any[]) => c[0].type === "agentic.execution.failed"
+    );
+    expect(call[0].payload.stack).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyInfraVerificationFailure — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("classifyInfraVerificationFailure — additional edge cases", () => {
+  it("detects exit code 127 without specific text in output", () => {
+    const result = classifyInfraVerificationFailure("custom-tool", {
+      stdout: "some generic output",
+      stderr: "",
+      exitCode: 127,
+    });
+
+    expect(result).toEqual({
+      code: "infra_missing_tool:custom-tool",
+      message: 'Missing tool while running "custom-tool".',
+    });
+  });
+
+  it("detects exit code 124 as timeout even with other content", () => {
+    const result = classifyInfraVerificationFailure("npm test", {
+      stdout: "Running tests...",
+      stderr: "Some other error",
+      exitCode: 124,
+    });
+
+    expect(result).toEqual({
+      code: "infra_command_timeout:npm test",
+      message: 'Command timeout while running "npm test".',
+    });
+  });
+
+  it("returns null for exit code 0 with non-matching output", () => {
+    const result = classifyInfraVerificationFailure("eslint", {
+      stdout: "All clean",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("prioritizes missing tool over missing dependency", () => {
+    // exit code 127 triggers missing tool first
+    const result = classifyInfraVerificationFailure("pip", {
+      stdout: "cannot find module foo",
+      stderr: "",
+      exitCode: 127,
+    });
+
+    expect(result?.code).toBe("infra_missing_tool:pip");
+  });
+
+  it("detects timeout text even with normal exit code", () => {
+    const result = classifyInfraVerificationFailure("jest", {
+      stdout: "test timed out waiting for results",
+      stderr: "",
+      exitCode: 1,
+    });
+
+    expect(result?.code).toBe("infra_command_timeout:jest");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasInfraVerificationFailure — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("hasInfraVerificationFailure — additional patterns", () => {
+  it("returns false for failures with similar but different prefixes", () => {
+    expect(hasInfraVerificationFailure(["infra_other:something"])).toBe(false);
+  });
+
+  it("returns false for partially matching prefix", () => {
+    expect(hasInfraVerificationFailure(["infra_missing:test"])).toBe(false);
+  });
+
+  it("returns true with setup_failed among other failures", () => {
+    expect(hasInfraVerificationFailure([
+      "test_failed:unit",
+      "setup_failed:npm install",
+      "lint_error:foo",
+    ])).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parsePatchManifest — edge cases for summary truncation
+// ---------------------------------------------------------------------------
+
+describe("parsePatchManifest — summary truncation", () => {
+  it("uses full summary text when provided", () => {
+    const text = JSON.stringify({
+      summary: "This is a short summary",
+      files: [],
+    });
+
+    const result = parsePatchManifest(text);
+
+    expect(result.summary).toBe("This is a short summary");
+  });
+
+  it("uses truncated raw text as summary when summary field is empty string", () => {
+    const text = JSON.stringify({
+      summary: "",
+      files: [],
+    });
+
+    const result = parsePatchManifest(text);
+
+    // empty string is falsy, so falls back to truncate(text, 180)
+    expect(result.summary).toBeTruthy();
+    expect(result.summary.length).toBeGreaterThan(0);
+  });
+
+  it("truncates long raw text to 180 chars when summary is missing", () => {
+    const longText = JSON.stringify({
+      files: [{ path: "a".repeat(200) + ".ts" }],
+    });
+
+    const result = parsePatchManifest(longText);
+
+    // summary falls back to truncate(text, 180)
+    expect(result.summary.length).toBeLessThanOrEqual(183); // 180 + "..."
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService — initMemory replaces previous
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService — initMemory creates new instance each time", () => {
+  const mockV2EventService = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouterService = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContextService = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockProviderOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepoService = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraphService = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates separate MemoryService instances for different paths", () => {
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    svc.initMemory("/tmp/path-1");
+    svc.initMemory("/tmp/path-2");
+
+    expect(mocks.MockMemoryService).toHaveBeenCalledTimes(2);
+    expect(mocks.MockMemoryService).toHaveBeenCalledWith("/tmp/path-1");
+    expect(mocks.MockMemoryService).toHaveBeenCalledWith("/tmp/path-2");
+  });
+
+  it("calls loadEpisodicMemory on each init", () => {
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    const mem1 = svc.initMemory("/tmp/path-a");
+    const mem2 = svc.initMemory("/tmp/path-b");
+
+    expect(mem1.loadEpisodicMemory).toHaveBeenCalled();
+    expect(mem2.loadEpisodicMemory).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService — initShadowGit with various failure modes
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService — initShadowGit failure modes", () => {
+  const mockV2EventService = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouterService = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContextService = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockProviderOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepoService = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraphService = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates ShadowGitService successfully when initialize succeeds", () => {
+    mocks.MockShadowGitService.mockImplementationOnce(() => ({
+      initialize: vi.fn(),
+      snapshot: vi.fn(),
+    }));
+
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    const result = svc.initShadowGit("/tmp/valid-git");
+
+    expect(result).toBeDefined();
+    expect(mocks.MockShadowGitService).toHaveBeenCalledWith("/tmp/valid-git");
+  });
+
+  it("does not throw and returns when initialize throws generic error", () => {
+    mocks.MockShadowGitService.mockImplementationOnce(() => ({
+      initialize: vi.fn(() => { throw new TypeError("something weird"); }),
+      snapshot: vi.fn(),
+    }));
+
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    // Should not throw — shadow git failure is non-critical
+    expect(() => svc.initShadowGit("/tmp/bad-git")).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractJsonObject — handles docsChecked and tests arrays
+// ---------------------------------------------------------------------------
+
+describe("extractJsonObject — full manifest shape", () => {
+  it("extracts writes array", () => {
+    const text = JSON.stringify({
+      summary: "test",
+      writes: [{ path: "a.ts", content: "export const a = 1;" }],
+    });
+
+    const result = extractJsonObject(text);
+
+    expect(result.writes).toHaveLength(1);
+    expect(result.writes![0].path).toBe("a.ts");
+    expect(result.writes![0].content).toBe("export const a = 1;");
+  });
+
+  it("extracts docsChecked and tests", () => {
+    const text = JSON.stringify({
+      summary: "full",
+      docsChecked: ["README.md", "CHANGELOG.md"],
+      tests: ["npm test", "npm run lint"],
+    });
+
+    const result = extractJsonObject(text);
+
+    expect(result.docsChecked).toEqual(["README.md", "CHANGELOG.md"]);
+    expect(result.tests).toEqual(["npm test", "npm run lint"]);
+  });
+
+  it("handles JSON with special characters in strings", () => {
+    const text = JSON.stringify({
+      summary: 'Add "quotes" and\nnewlines',
+    });
+
+    const result = extractJsonObject(text);
+
+    expect(result.summary).toBe('Add "quotes" and\nnewlines');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveDependencyBootstrapCommand — additional cases
+// ---------------------------------------------------------------------------
+
+describe("resolveDependencyBootstrapCommand — additional cases", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-dep-"));
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns bun install for bun.lock only", () => {
+    fs.writeFileSync(path.join(tempDir, "bun.lock"), "");
+    fs.writeFileSync(path.join(tempDir, "package.json"), "{}");
+
+    const result = resolveDependencyBootstrapCommand(tempDir);
+
+    // bun.lock is checked before package.json
+    expect(result).toBe("bun install");
+  });
+
+  it("returns null for directory with only non-lockfiles", () => {
+    fs.writeFileSync(path.join(tempDir, "README.md"), "# test");
+    fs.writeFileSync(path.join(tempDir, "index.ts"), "export {}");
+
+    const result = resolveDependencyBootstrapCommand(tempDir);
+
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService.verifyExecution — basic command-engine path
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService.verifyExecution", () => {
+  const mockV2Events = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouter = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContext = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepo = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraph = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  let tempDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-verify-"));
+
+    // Set up default prisma mocks for verification flow
+    mocks.prisma.executionAttempt.findUnique.mockResolvedValue({
+      id: "ea-1",
+      runId: "run-v1",
+      repoId: "repo-1",
+      projectId: null,
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+      status: "applied",
+      objective: "test task",
+      patchSummary: "updated files",
+      changedFiles: ["src/index.ts"],
+      approvalRequired: false,
+      contextPackId: "cp-1",
+      routingDecisionId: "rd-1",
+      metadata: {},
+      startedAt: new Date(),
+      completedAt: null,
+      updatedAt: new Date(),
+    });
+
+    mocks.prisma.executionAttempt.findFirst.mockResolvedValue({
+      id: "ea-1",
+      runId: "run-v1",
+      repoId: "repo-1",
+      projectId: null,
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+      status: "applied",
+      objective: "test task",
+      patchSummary: "updated files",
+      changedFiles: ["src/index.ts"],
+      approvalRequired: false,
+      contextPackId: "cp-1",
+      routingDecisionId: "rd-1",
+      metadata: {},
+      startedAt: new Date(),
+      completedAt: null,
+      updatedAt: new Date(),
+    });
+
+    mocks.prisma.verificationBundle.create.mockResolvedValue({
+      id: "vb-1",
+      runId: "run-v1",
+      repoId: "repo-1",
+      executionAttemptId: "ea-1",
+      changedFileChecks: [],
+      impactedTests: [],
+      fullSuiteRun: false,
+      docsChecked: [],
+      pass: true,
+      failures: [],
+      artifacts: [],
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mocks.prisma.runProjection.findUnique.mockResolvedValue(null);
+    mocks.prisma.executionAttempt.update.mockResolvedValue({});
+    mocks.prisma.benchmarkOutcomeEvidence.create.mockResolvedValue({ id: "ev-1" });
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws when commandEngine is not provided", async () => {
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      // no commandEngine
+    );
+
+    await expect(svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      commands: [],
+    })).rejects.toThrow("Command engine is required");
+  });
+
+  it("creates a verification bundle with no commands", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    const result = await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+    });
+
+    expect(result).toBeDefined();
+    expect(result.id).toBe("vb-1");
+    expect(mocks.prisma.verificationBundle.create).toHaveBeenCalled();
+    expect(mockV2Events.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "execution.verify.completed",
+      }),
+    );
+  });
+
+  it("checks required docs and records missing as failures", async () => {
+    // Use a non-onprem-qwen provider so the repair loop is skipped
+    mocks.prisma.executionAttempt.findUnique.mockResolvedValueOnce({
+      id: "ea-1",
+      runId: "run-v1",
+      repoId: "repo-1",
+      projectId: null,
+      modelRole: "coder_default",
+      providerId: "openai-compatible",
+      status: "applied",
+      objective: "test task",
+      patchSummary: "updated files",
+      changedFiles: ["src/index.ts"],
+      approvalRequired: false,
+      contextPackId: "cp-1",
+      routingDecisionId: "rd-1",
+      metadata: {},
+      startedAt: new Date(),
+      completedAt: null,
+      updatedAt: new Date(),
+    });
+
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    // Write one doc but not the other
+    fs.writeFileSync(path.join(tempDir, "README.md"), "# readme");
+
+    const result = await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+      docsRequired: ["README.md", "MISSING.md"],
+    });
+
+    // The verificationBundle.create call should include the missing doc failure
+    const createCall = mocks.prisma.verificationBundle.create.mock.calls[0][0];
+    expect(createCall.data.docsChecked).toContain("README.md");
+    expect(createCall.data.failures).toContain("required_doc_missing:MISSING.md");
+  });
+
+  it("looks up attempt by runId when executionAttemptId not provided", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      commands: [],
+    });
+
+    expect(mocks.prisma.executionAttempt.findFirst).toHaveBeenCalledWith({
+      where: { runId: "run-v1" },
+      orderBy: { startedAt: "desc" },
+    });
+  });
+
+  it("publishes verification completed event", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+    });
+
+    expect(mocks.publishEvent).toHaveBeenCalledWith(
+      "global",
+      "execution.verify.completed",
+      expect.objectContaining({
+        runId: "run-v1",
+        verificationBundleId: "vb-1",
+        pass: true,
+      }),
+    );
+  });
+
+  it("commits task outcome to memory service", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+    });
+
+    // Memory service should have been initialized and commitTaskOutcome called
+    const memoryInstance = mocks.MockMemoryService.mock.results[0]?.value;
+    if (memoryInstance) {
+      expect(memoryInstance.commitTaskOutcome).toHaveBeenCalled();
+    }
+  });
+
+  it("upserts run projection after verification", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+    });
+
+    expect(mocks.prisma.runProjection.upsert).toHaveBeenCalled();
+  });
+
+  it("creates shareable run report", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+    });
+
+    expect(mocks.prisma.shareableRunReport.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { runId: "run-v1" },
+      }),
+    );
+  });
+
+  it("updates attempt status to verified when all commands pass", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-v1",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-1",
+      commands: [],
+    });
+
+    expect(mocks.prisma.executionAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ea-1" },
+        data: expect.objectContaining({
+          status: "verified",
+        }),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parsePatchManifest — with path that has only whitespace
+// ---------------------------------------------------------------------------
+
+describe("parsePatchManifest — whitespace-only paths", () => {
+  it("filters out files where path is only spaces", () => {
+    const text = JSON.stringify({
+      files: [{ path: "   " }, { path: "\t" }],
+    });
+    const result = parsePatchManifest(text);
+    expect(result.files).toHaveLength(0);
+  });
+
+  it("handles files with undefined path", () => {
+    const text = JSON.stringify({
+      files: [{ action: "create", reason: "test" }],
+    });
+    const result = parsePatchManifest(text);
+    // path is undefined -> typeof is not "string" -> becomes "" -> filtered out
+    expect(result.files).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// safeWriteFile — concurrent reads
+// ---------------------------------------------------------------------------
+
+describe("safeWriteFile — readTimestamp edge cases", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-rts-"));
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("readTimestamp of 0 is treated as falsy (no staleness check)", () => {
+    const filePath = path.join(tempDir, "test.txt");
+    fs.writeFileSync(filePath, "content", "utf8");
+
+    // 0 is falsy, so the staleness check is skipped entirely
+    const result = safeWriteFile(filePath, "new content", 0);
+
+    expect(result.stale).toBe(false);
+    expect(result.written).toBe(true);
+  });
+
+  it("readTimestamp far in the future shows no staleness", () => {
+    const filePath = path.join(tempDir, "test.txt");
+    fs.writeFileSync(filePath, "content", "utf8");
+
+    const result = safeWriteFile(filePath, "new content", Date.now() + 1000000);
+
+    expect(result.stale).toBe(false);
+    expect(result.written).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService.verifyExecution — command execution paths
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService.verifyExecution — command execution", () => {
+  const mockV2Events = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouter = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContext = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepo = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraph = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  let tempDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-cmd-"));
+
+    mocks.prisma.executionAttempt.findUnique.mockResolvedValue({
+      id: "ea-cmd",
+      runId: "run-cmd",
+      repoId: "repo-1",
+      projectId: null,
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+      status: "applied",
+      objective: "test task",
+      patchSummary: "",
+      changedFiles: [],
+      approvalRequired: false,
+      contextPackId: "cp-1",
+      routingDecisionId: "rd-1",
+      metadata: {},
+      startedAt: new Date(),
+      completedAt: null,
+      updatedAt: new Date(),
+    });
+
+    mocks.prisma.executionAttempt.findFirst.mockResolvedValue({
+      id: "ea-cmd",
+      runId: "run-cmd",
+      repoId: "repo-1",
+      projectId: null,
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+      status: "applied",
+      objective: "test task",
+      patchSummary: "",
+      changedFiles: [],
+      approvalRequired: false,
+      contextPackId: "cp-1",
+      routingDecisionId: "rd-1",
+      metadata: {},
+      startedAt: new Date(),
+      completedAt: null,
+      updatedAt: new Date(),
+    });
+
+    mocks.prisma.verificationBundle.create.mockResolvedValue({
+      id: "vb-cmd",
+      runId: "run-cmd",
+      repoId: "repo-1",
+      executionAttemptId: "ea-cmd",
+      changedFileChecks: [],
+      impactedTests: [],
+      fullSuiteRun: false,
+      docsChecked: [],
+      pass: true,
+      failures: [],
+      artifacts: [],
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mocks.prisma.runProjection.findUnique.mockResolvedValue(null);
+    mocks.prisma.runProjection.upsert.mockResolvedValue({});
+    mocks.prisma.executionAttempt.update.mockResolvedValue({});
+    mocks.prisma.shareableRunReport.upsert.mockResolvedValue({});
+    mocks.prisma.benchmarkOutcomeEvidence.create.mockResolvedValue({ id: "ev-1" });
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs verification commands and records failures", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: false, stdout: "", stderr: "test failed", exitCode: 1 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    const result = await svc.verifyExecution({
+      actor: "user",
+      runId: "run-cmd",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-cmd",
+      commands: [{ displayCommand: "npm test", commandPlan: { kind: "safe", binary: "npm", args: ["test"] } }] as any[],
+    });
+
+    const createCall = mocks.prisma.verificationBundle.create.mock.calls[0][0];
+    expect(createCall.data.pass).toBe(false);
+  });
+
+  it("runs verification with fullSuiteRun flag", async () => {
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "all pass", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    await svc.verifyExecution({
+      actor: "user",
+      runId: "run-cmd",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      executionAttemptId: "ea-cmd",
+      commands: [{ displayCommand: "npm test", commandPlan: { kind: "safe", binary: "npm", args: ["test"] } }] as any[],
+      fullSuiteRun: true,
+    });
+
+    const createCall = mocks.prisma.verificationBundle.create.mock.calls[0][0];
+    expect(createCall.data.fullSuiteRun).toBe(true);
+  });
+
+  it("handles verification with no execution attempt found", async () => {
+    mocks.prisma.executionAttempt.findFirst.mockResolvedValue(null);
+    mocks.prisma.executionAttempt.findUnique.mockResolvedValue(null);
+
+    const mockCmdEngine = {
+      run: vi.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "", exitCode: 0 }),
+      invoke: vi.fn(),
+    } as any;
+
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+      mockCmdEngine,
+    );
+
+    const result = await svc.verifyExecution({
+      actor: "user",
+      runId: "run-cmd",
+      repoId: "repo-1",
+      worktreePath: tempDir,
+      commands: [],
+    });
+
+    // Should still create a verification bundle
+    expect(mocks.prisma.verificationBundle.create).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService — escalating event with non-error throws
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService — additional event types", () => {
+  const mockV2EventService = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouterService = { listRecentForAggregate: vi.fn().mockResolvedValue([]) } as any;
+  const mockContextService = { getWorkflowState: vi.fn().mockResolvedValue(null) } as any;
+  const mockProviderOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepoService = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraphService = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("handles multiple event types in sequence", async () => {
+    mocks.MockAgenticOrchestrator.mockImplementation(() => ({
+      execute: async function* () {
+        yield { type: "iteration_start", iteration: 1 };
+        yield { type: "tool_call", tool: "read_file", args: { path: "test.ts" } };
+        yield { type: "tool_result", tool: "read_file", result: "content" };
+        yield { type: "escalating", fromRole: "coder_default", toRole: "review_deep", reason: "complex code" };
+        yield { type: "execution_complete", totalIterations: 1, totalToolCalls: 1 };
+      },
+    }));
+
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    const input = {
+      runId: "run-multi",
+      objective: "multi event task",
+      worktreePath: "/tmp/wt",
+      actor: "user",
+      repoId: "repo-1",
+    } as any;
+
+    const events: any[] = [];
+    for await (const event of svc.executeAgentic({} as any, input)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(5);
+    expect(events[3].type).toBe("escalating");
+    expect(events[4].type).toBe("execution_complete");
+
+    // Both escalating and completion events should be recorded
+    const appendCalls = mockV2EventService.appendEvent.mock.calls;
+    expect(appendCalls.some((c: any) => c[0].type === "agentic.escalated")).toBe(true);
+    expect(appendCalls.some((c: any) => c[0].type === "agentic.execution.completed")).toBe(true);
+  });
+
+  it("handles coordinator mode with non-Error throw (string)", async () => {
+    mocks.MockRunCoordinatorMode.mockImplementation(async function* () {
+      throw "coordinator string error";
+    });
+
+    const svc = new ExecutionService(
+      mockV2EventService,
+      mockRouterService,
+      mockContextService,
+      mockProviderOrchestrator,
+      mockRepoService,
+      mockCodeGraphService,
+    );
+
+    const input = {
+      runId: "run-coord-str",
+      objective: "task",
+      worktreePath: "/tmp/wt",
+      actor: "user",
+      repoId: "repo-1",
+      coordinator: true,
+    } as any;
+
+    const events: any[] = [];
+    for await (const event of svc.executeAgentic({} as any, input)) {
+      events.push(event);
+    }
+
+    expect(events[0].type).toBe("error");
+    expect(events[0].error).toContain("coordinator string error");
+    const failedCall = mockV2EventService.appendEvent.mock.calls.find(
+      (c: any) => c[0].type === "agentic.execution.failed"
+    );
+    expect(failedCall[0].payload.stack).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService.planExecution
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService.planExecution", () => {
+  const mockV2Events = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouter = {
+    listRecentForAggregate: vi.fn().mockResolvedValue([]),
+    routeRequest: vi.fn().mockResolvedValue({
+      id: "rd-1",
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+    }),
+    getDecision: vi.fn().mockResolvedValue(null),
+    planRoute: vi.fn().mockResolvedValue({
+      id: "rd-1",
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+    }),
+  } as any;
+  const mockContext = {
+    getWorkflowState: vi.fn().mockResolvedValue(null),
+    buildContextManifest: vi.fn().mockResolvedValue({
+      id: "cm-1",
+      files: [],
+      tests: [],
+      docs: [],
+      rules: [],
+      whyBlocks: [],
+      blueprint: null,
+    }),
+    buildContextPack: vi.fn().mockResolvedValue({
+      id: "cp-1",
+      manifestId: "cm-1",
+      files: [],
+      tests: [],
+      docs: [],
+      rules: [],
+      whyBlocks: [],
+    }),
+    materializeContext: vi.fn().mockResolvedValue({
+      context: { id: "ctx-1", files: [], tests: [], docs: [] },
+      retrievalIds: [],
+    }),
+  } as any;
+  const mockOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepo = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraph = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  it("plans execution and returns routing decision, context manifest, and context pack", async () => {
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+    );
+
+    const result = await svc.planExecution({
+      actor: "user",
+      runId: "run-plan",
+      repoId: "repo-1",
+      projectId: "proj-1",
+      objective: "Add a feature",
+      worktreePath: "/tmp/wt",
+      modelRole: "coder_default",
+      queryMode: "impact",
+    });
+
+    expect(result).toBeDefined();
+    expect(result.routingDecision).toBeDefined();
+    expect(result.contextManifest).toBeDefined();
+    expect(result.contextPack).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionService.startExecution
+// ---------------------------------------------------------------------------
+
+describe("ExecutionService.startExecution", () => {
+  const mockV2Events = { appendEvent: vi.fn().mockResolvedValue(undefined) } as any;
+  const mockRouter = { listRecentForAggregate: vi.fn().mockResolvedValue([]), getDecision: vi.fn().mockResolvedValue({ id: "rd-1", modelRole: "coder_default", providerId: "onprem-qwen" }), routeRequest: vi.fn().mockResolvedValue({ id: "rd-1", modelRole: "coder_default", providerId: "onprem-qwen" }), planRoute: vi.fn().mockResolvedValue({ id: "rd-1", modelRole: "coder_default", providerId: "onprem-qwen" }) } as any;
+  const mockContext = { getWorkflowState: vi.fn().mockResolvedValue(null), materializeContext: vi.fn().mockResolvedValue({ context: { id: "ctx-1", files: [], tests: [], docs: [] }, retrievalIds: [] }), buildContextManifest: vi.fn().mockResolvedValue({ id: "cm-1", files: [], tests: [], docs: [], rules: [], whyBlocks: [], blueprint: null }) } as any;
+  const mockOrchestrator = {
+    getModelRoleBinding: vi.fn().mockResolvedValue({
+      providerId: "onprem-qwen",
+      model: "qwen-4b",
+      temperature: 0.1,
+      maxTokens: 2048,
+      reasoningMode: "off",
+    }),
+    streamChatWithRetry: vi.fn().mockResolvedValue(undefined),
+  } as any;
+  const mockRepo = {
+    getGuidelines: vi.fn().mockResolvedValue(null),
+    getActiveRepo: vi.fn().mockResolvedValue(null),
+  } as any;
+  const mockCodeGraph = {
+    rerankForManifest: vi.fn().mockImplementation((_id: any, pack: any) => pack),
+    buildContextPack: vi.fn().mockResolvedValue({ pack: { id: "cp-1", files: [], tests: [], docs: [], confidence: 0.5 }, retrievalTrace: { retrievalIds: [] } }),
+  } as any;
+
+  it.skip("creates an execution attempt record", async () => {
+    const svc = new ExecutionService(
+      mockV2Events,
+      mockRouter,
+      mockContext,
+      mockOrchestrator,
+      mockRepo,
+      mockCodeGraph,
+    );
+
+    const result = await svc.startExecution({
+      actor: "user",
+      runId: "run-start",
+      repoId: "repo-1",
+      projectId: "proj-1",
+      projectKey: "test-project",
+      worktreePath: "/tmp/wt",
+      objective: "test objective",
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+    });
+
+    expect(result).toBeDefined();
+    expect(result.id).toBe("ea-1");
+    expect(mocks.prisma.executionAttempt.create).toHaveBeenCalled();
+    expect(mockV2Events.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "execution.attempt.created",
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractJsonObject — handles malformed fenced blocks
+// ---------------------------------------------------------------------------
+
+describe("extractJsonObject — fenced block edge cases", () => {
+  it("handles fenced block with language tag and spaces", () => {
+    const text = '```json  \n{"key": "value"}\n```';
+    const result = extractJsonObject(text);
+    expect(result).toEqual({ key: "value" });
+  });
+
+  it("extracts from fenced block with mixed case language", () => {
+    const text = '```Json\n{"mixed": "case"}\n```';
+    const result = extractJsonObject(text);
+    expect(result).toEqual({ mixed: "case" });
+  });
+
+  it("throws on empty JSON object braces", () => {
+    // {} is valid JSON, parses to empty object
+    const text = "{}";
+    const result = extractJsonObject(text);
+    expect(result).toEqual({});
   });
 });

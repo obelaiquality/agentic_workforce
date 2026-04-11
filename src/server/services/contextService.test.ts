@@ -720,5 +720,268 @@ describe("ContextService", () => {
 
       expect(result).toEqual([]);
     });
+
+    it("handles retrieval trace with non-array results", async () => {
+      const now = new Date();
+      mocks.prisma.retrievalTrace.findMany.mockResolvedValue([
+        {
+          id: "trace-1",
+          repoId: "repo-1",
+          aggregateId: "run-123",
+          query: "test",
+          retrievalIds: ["r-1"],
+          results: "not-an-array",
+          createdAt: now,
+        },
+      ]);
+
+      const result = await service.getRetrievalTrace("run-123");
+
+      expect(result).toHaveLength(1);
+      expect(result[0].results).toEqual([]);
+      expect(result[0].repoId).toBe("repo-1");
+    });
+  });
+
+  describe("materializeContext with retrieval_ids", () => {
+    it("fetches knowledgeIndexMetadata and codeGraphNode results when retrieval_ids provided", async () => {
+      const now = new Date();
+      mocks.prisma.contextManifest.findFirst.mockResolvedValue(null);
+      mocks.prisma.knowledgeIndexMetadata.findMany.mockResolvedValue([
+        {
+          id: "know-1",
+          source: "knowledge_base",
+          path: "/docs/readme.md",
+          snippet: "some knowledge",
+          score: 0.95,
+          embeddingId: "emb-1",
+        },
+      ]);
+      mocks.prisma.codeGraphNode.findMany.mockResolvedValue([
+        {
+          id: "cg-1",
+          kind: "function",
+          path: "/src/utils.ts",
+          content: "function doSomething() { return true; }",
+          name: "doSomething",
+          updatedAt: now,
+        },
+      ]);
+      mocks.prisma.contextManifest.create.mockResolvedValue({
+        id: "ctx-1",
+        repoId: null,
+        aggregateId: "run-123",
+        aggregateType: "run",
+        goal: "test goal",
+        constraints: [],
+        activeFiles: [],
+        retrievalIds: ["know-1", "cg-1"],
+        memoryRefs: [],
+        openQuestions: [],
+        verificationPlan: [],
+        rollbackPlan: [],
+        policyScopes: [],
+        version: 1,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+      mocks.prisma.retrievalTrace.create.mockResolvedValue({
+        id: "trace-1",
+        repoId: null,
+        aggregateId: "run-123",
+        query: "test goal",
+        retrievalIds: ["know-1", "cg-1"],
+        results: [
+          {
+            id: "know-1",
+            source: "knowledge_base",
+            path: "/docs/readme.md",
+            snippet: "some knowledge",
+            score: 0.95,
+            embedding_id: "emb-1",
+          },
+          {
+            id: "cg-1",
+            source: "code_graph:function",
+            path: "/src/utils.ts",
+            snippet: "function doSomething() { return true",
+            score: 1,
+            embedding_id: null,
+          },
+        ],
+        createdAt: now,
+      });
+      mocks.prisma.workflowStateProjection.create.mockResolvedValue({
+        id: "wf-1",
+        repoId: null,
+        aggregateId: "run-123",
+        phase: "context",
+        status: "ready",
+        summary: "Context materialized for run",
+        nextSteps: [],
+        blockers: [],
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const result = await service.materializeContext({
+        actor: "test-user",
+        aggregate_id: "run-123",
+        aggregate_type: "run",
+        goal: "test goal",
+        retrieval_ids: ["know-1", "cg-1"],
+      });
+
+      expect(result.retrievalTrace).not.toBeNull();
+      expect(result.retrievalTrace!.results).toHaveLength(2);
+      expect(mocks.prisma.knowledgeIndexMetadata.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["know-1", "cg-1"] } },
+        })
+      );
+      expect(mocks.prisma.codeGraphNode.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["know-1", "cg-1"] } },
+        })
+      );
+    });
+
+    it("maps codeGraphNode results using name when content is empty", async () => {
+      const now = new Date();
+      mocks.prisma.contextManifest.findFirst.mockResolvedValue(null);
+      mocks.prisma.knowledgeIndexMetadata.findMany.mockResolvedValue([]);
+      mocks.prisma.codeGraphNode.findMany.mockResolvedValue([
+        {
+          id: "cg-1",
+          kind: "class",
+          path: "/src/models/User.ts",
+          content: "",
+          name: "UserModel",
+          updatedAt: now,
+        },
+      ]);
+      mocks.prisma.contextManifest.create.mockResolvedValue({
+        id: "ctx-1",
+        repoId: null,
+        aggregateId: "run-123",
+        aggregateType: "run",
+        goal: "test",
+        constraints: [],
+        activeFiles: [],
+        retrievalIds: ["cg-1"],
+        memoryRefs: [],
+        openQuestions: [],
+        verificationPlan: [],
+        rollbackPlan: [],
+        policyScopes: [],
+        version: 1,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+      mocks.prisma.retrievalTrace.create.mockResolvedValue({
+        id: "trace-1",
+        repoId: null,
+        aggregateId: "run-123",
+        query: "test",
+        retrievalIds: ["cg-1"],
+        results: [
+          {
+            id: "cg-1",
+            source: "code_graph:class",
+            path: "/src/models/User.ts",
+            snippet: "UserModel",
+            score: 1,
+            embedding_id: null,
+          },
+        ],
+        createdAt: now,
+      });
+      mocks.prisma.workflowStateProjection.create.mockResolvedValue({
+        id: "wf-1",
+        repoId: null,
+        aggregateId: "run-123",
+        phase: "context",
+        status: "ready",
+        summary: "Context materialized for run",
+        nextSteps: [],
+        blockers: [],
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const result = await service.materializeContext({
+        actor: "test-user",
+        aggregate_id: "run-123",
+        aggregate_type: "run",
+        goal: "test",
+        retrieval_ids: ["cg-1"],
+      });
+
+      // Should use name "UserModel" when content is empty
+      expect(mocks.prisma.retrievalTrace.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            results: expect.arrayContaining([
+              expect.objectContaining({
+                source: "code_graph:class",
+                snippet: "UserModel",
+              }),
+            ]),
+          }),
+        })
+      );
+    });
+
+    it("does not fetch knowledge/code-graph when retrieval_ids is empty array", async () => {
+      const now = new Date();
+      mocks.prisma.contextManifest.findFirst.mockResolvedValue(null);
+      mocks.prisma.contextManifest.create.mockResolvedValue({
+        id: "ctx-1",
+        repoId: null,
+        aggregateId: "run-123",
+        aggregateType: "run",
+        goal: "test",
+        constraints: [],
+        activeFiles: [],
+        retrievalIds: [],
+        memoryRefs: [],
+        openQuestions: [],
+        verificationPlan: [],
+        rollbackPlan: [],
+        policyScopes: [],
+        version: 1,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+      mocks.prisma.workflowStateProjection.create.mockResolvedValue({
+        id: "wf-1",
+        repoId: null,
+        aggregateId: "run-123",
+        phase: "context",
+        status: "ready",
+        summary: "Context materialized for run",
+        nextSteps: [],
+        blockers: [],
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await service.materializeContext({
+        actor: "test-user",
+        aggregate_id: "run-123",
+        aggregate_type: "run",
+        goal: "test",
+        retrieval_ids: [],
+      });
+
+      expect(mocks.prisma.knowledgeIndexMetadata.findMany).not.toHaveBeenCalled();
+      expect(mocks.prisma.codeGraphNode.findMany).not.toHaveBeenCalled();
+    });
   });
 });

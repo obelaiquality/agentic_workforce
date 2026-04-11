@@ -125,4 +125,27 @@ describe("PreflightGate", () => {
       expect(screen.queryByText("Preflight Checks Need Attention")).not.toBeInTheDocument();
     });
   });
+
+  it("stays dismissed when sessionStorage already has the dismissed key", async () => {
+    window.sessionStorage.setItem("mission-control-preflight-dismissed", "1");
+
+    mockGetPreflight.mockResolvedValue({
+      checks: [
+        { key: "backend.available", ok: false, severity: "error", message: "Backend is not available" },
+      ],
+      checkedAt: "2026-04-10T00:00:00Z",
+    });
+
+    render(
+      <PreflightGate>
+        <div>Already dismissed content</div>
+      </PreflightGate>
+    );
+
+    // Even though there are blocking checks, the modal should not appear since dismissed=true
+    expect(screen.getByText("Already dismissed content")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Preflight Checks Need Attention")).not.toBeInTheDocument();
+    });
+  });
 });

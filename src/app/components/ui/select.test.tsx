@@ -8,6 +8,7 @@ import {
   SelectValue,
   SelectGroup,
   SelectLabel,
+  SelectSeparator,
 } from "./select";
 
 describe("Select", () => {
@@ -59,5 +60,28 @@ describe("Select", () => {
     expect(screen.getByText("Fruits")).toBeInTheDocument();
     expect(screen.getByText("Apple")).toBeInTheDocument();
     expect(screen.getByText("Banana")).toBeInTheDocument();
+  });
+
+  it("renders SelectSeparator when open", () => {
+    render(
+      <Select open>
+        <SelectTrigger>
+          <SelectValue placeholder="Pick" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectItem value="a">Alpha</SelectItem>
+          </SelectGroup>
+          <SelectSeparator />
+          <SelectGroup>
+            <SelectItem value="b">Beta</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>,
+    );
+    // SelectSeparator renders into a portal, query the document body
+    expect(
+      document.querySelector('[data-slot="select-separator"]'),
+    ).toBeTruthy();
   });
 });

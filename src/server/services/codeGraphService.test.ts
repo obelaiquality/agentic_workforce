@@ -51,6 +51,13 @@ vi.mock("./treeSitterAnalyzer", () => ({
   extractImportsTreeSitter: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("./ripgrep", () => ({
+  getRipgrepPath: vi.fn().mockReturnValue(null),
+  execRipgrep: vi.fn().mockResolvedValue([]),
+  COMMON_IGNORE_DIRS: ["node_modules", ".git"],
+  commonExclusionArgs: vi.fn().mockReturnValue(["--glob", "!node_modules"]),
+}));
+
 // Mock fs to avoid real file system access
 vi.mock("node:fs", () => ({
   default: {
@@ -1170,6 +1177,988 @@ describe("CodeGraphService", () => {
 
       expect(status?.status).toBe("not_indexed");
       expect(status?.nodeCount).toBe(0);
+    });
+  });
+
+  describe("getLatestContextPack", () => {
+    it("returns mapped context pack when one exists", async () => {
+      const now = new Date();
+      mockPrisma.contextPack.findFirst.mockResolvedValue({
+        id: "pack1",
+        repoId: "repo1",
+        objective: "test objective",
+        queryMode: "basic",
+        files: ["src/a.ts"],
+        symbols: ["Foo"],
+        tests: ["a.test.ts"],
+        docs: ["README.md"],
+        rules: ["rule1"],
+        priorRuns: ["run1"],
+        confidence: 0.8,
+        why: ["reason1"],
+        tokenBudget: 2000,
+        retrievalTraceId: "trace1",
+        metadata: { key: "val" },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const result = await service.getLatestContextPack("repo1");
+
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe("pack1");
+      expect(result!.files).toEqual(["src/a.ts"]);
+      expect(result!.symbols).toEqual(["Foo"]);
+      expect(result!.createdAt).toBe(now.toISOString());
+    });
+
+    it("returns null when no context pack exists", async () => {
+      mockPrisma.contextPack.findFirst.mockResolvedValue(null);
+
+      const result = await service.getLatestContextPack("repo1");
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("getExecutionAttempts", () => {
+    it("returns mapped execution attempts", async () => {
+      const now = new Date();
+      mockPrisma.executionAttempt.findMany.mockResolvedValue([
+        {
+          id: "attempt1",
+          runId: "run1",
+          repoId: "repo1",
+          projectId: "proj1",
+          modelRole: "coder_default",
+          providerId: "qwen-cli",
+          status: "completed",
+          objective: "do stuff",
+          patchSummary: "fixed it",
+          changedFiles: ["a.ts", "b.ts"],
+          approvalRequired: false,
+          contextPackId: "pack1",
+          routingDecisionId: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          metadata: { key: "val" },
+        },
+      ]);
+
+      const result = await service.getExecutionAttempts("run1");
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("attempt1");
+      expect(result[0].changedFiles).toEqual(["a.ts", "b.ts"]);
+      expect(result[0].startedAt).toBe(now.toISOString());
+      expect(result[0].completedAt).toBe(now.toISOString());
+    });
+
+    it("returns empty array when no attempts found", async () => {
+      mockPrisma.executionAttempt.findMany.mockResolvedValue([]);
+
+      const result = await service.getExecutionAttempts("run-none");
+
+      expect(result).toEqual([]);
+    });
+
+    it("handles null completedAt", async () => {
+      const now = new Date();
+      mockPrisma.executionAttempt.findMany.mockResolvedValue([
+        {
+          id: "attempt2",
+          runId: "run2",
+          repoId: "repo1",
+          projectId: "proj1",
+          modelRole: "coder_default",
+          providerId: "qwen-cli",
+          status: "running",
+          objective: "still working",
+          patchSummary: null,
+          changedFiles: [],
+          approvalRequired: false,
+          contextPackId: null,
+          routingDecisionId: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          metadata: null,
+        },
+      ]);
+
+      const result = await service.getExecutionAttempts("run2");
+
+      expect(result[0].completedAt).toBeNull();
+      expect(result[0].metadata).toEqual({});
+    });
+  });
+
+  describe("getVerificationBundle", () => {
+    it("returns mapped verification bundle", async () => {
+      const now = new Date();
+      mockPrisma.verificationBundle.findFirst.mockResolvedValue({
+        id: "vb1",
+        runId: "run1",
+        repoId: "repo1",
+        executionAttemptId: "attempt1",
+        changedFileChecks: ["a.ts"],
+        impactedTests: ["a.test.ts"],
+        fullSuiteRun: true,
+        docsChecked: ["README.md"],
+        pass: true,
+        failures: [],
+        artifacts: ["output.log"],
+        createdAt: now,
+        updatedAt: now,
+        metadata: { key: "val" },
+      });
+
+      const result = await service.getVerificationBundle("run1");
+
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe("vb1");
+      expect(result!.pass).toBe(true);
+      expect(result!.changedFileChecks).toEqual(["a.ts"]);
+      expect(result!.artifacts).toEqual(["output.log"]);
+      expect(result!.createdAt).toBe(now.toISOString());
+    });
+
+    it("returns null when no verification bundle exists", async () => {
+      mockPrisma.verificationBundle.findFirst.mockResolvedValue(null);
+
+      const result = await service.getVerificationBundle("run-none");
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("indexRepo", () => {
+    it("indexes files with BFS fallback when ripgrep is unavailable", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      // Mock the ripgrep module to disable rg
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      // Setup fs mocks: root dir has one ts file and one subdir
+      mockedFs.readdirSync
+        .mockReturnValueOnce([
+          { name: "index.ts", isDirectory: () => false, isFile: () => true } as any,
+          { name: "sub", isDirectory: () => true, isFile: () => false } as any,
+          { name: "node_modules", isDirectory: () => true, isFile: () => false } as any,
+        ])
+        .mockReturnValueOnce([
+          { name: "helper.ts", isDirectory: () => false, isFile: () => true } as any,
+        ]);
+
+      mockedFs.readFileSync.mockReturnValue(Buffer.from("export function myFunc() {}"));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 2 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.repoId).toBe("repo1");
+      // Should have created nodes (2 files + symbols)
+      expect(result.nodeCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it("indexes with command nodes from guideline profile", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "main.py", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      mockedFs.readFileSync.mockReturnValue(Buffer.from("def hello():\n    pass\nclass World:\n    pass"));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue({
+        repoId: "repo1",
+        testCommands: ["pytest"],
+        buildCommands: ["make build"],
+        lintCommands: ["flake8"],
+        patchRules: [],
+        docRules: [],
+        requiredArtifacts: [],
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 5 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      // 1 file + 2 symbols (hello, World) + 3 commands = 6 nodes
+      expect(result.nodeCount).toBe(6);
+    });
+
+    it("handles binary files by returning empty content", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "image.png", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      // Simulate binary file with null byte
+      const binaryBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x0a]);
+      mockedFs.readFileSync.mockReturnValue(binaryBuffer);
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 1 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.nodeCount).toBe(1);
+    });
+
+    it("creates test coverage edges for test files", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync
+        .mockReturnValueOnce([
+          { name: "src", isDirectory: () => true, isFile: () => false } as any,
+          { name: "tests", isDirectory: () => true, isFile: () => false } as any,
+        ])
+        .mockReturnValueOnce([
+          { name: "utils.ts", isDirectory: () => false, isFile: () => true } as any,
+        ])
+        .mockReturnValueOnce([
+          { name: "utils.test.ts", isDirectory: () => false, isFile: () => true } as any,
+        ]);
+      mockedFs.readFileSync.mockReturnValue(Buffer.from("export function helper() {}"));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 3 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 2 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.edgeCount).toBeGreaterThan(0);
+    });
+
+    it("creates documentation edges for doc files referencing symbols", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync
+        .mockReturnValueOnce([
+          { name: "src", isDirectory: () => true, isFile: () => false } as any,
+          { name: "docs", isDirectory: () => true, isFile: () => false } as any,
+        ])
+        .mockReturnValueOnce([
+          { name: "myService.ts", isDirectory: () => false, isFile: () => true } as any,
+        ])
+        .mockReturnValueOnce([
+          { name: "guide.md", isDirectory: () => false, isFile: () => true } as any,
+        ]);
+
+      mockedFs.readFileSync.mockImplementation((filePath: any) => {
+        const fp = String(filePath);
+        if (fp.includes("myService")) {
+          return Buffer.from("export function myService() {}");
+        }
+        return Buffer.from("# Guide\nUsing myservice in your project and myService calls");
+      });
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 3 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 2 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      // Should have doc-to-file and doc-to-symbol edges
+      expect(result.edgeCount).toBeGreaterThan(0);
+    });
+
+    it("creates import edges for typescript files", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "index.ts", isDirectory: () => false, isFile: () => true } as any,
+        { name: "helper.ts", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      mockedFs.readFileSync.mockImplementation((filePath: any) => {
+        const fp = String(filePath);
+        if (fp.includes("index")) {
+          return Buffer.from('import { helper } from "./helper";\nexport function main() {}');
+        }
+        return Buffer.from("export function helper() {}");
+      });
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 4 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 3 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.edgeCount).toBeGreaterThan(0);
+    });
+
+    it("handles readdir errors gracefully in BFS walk", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockImplementation(() => {
+        throw new Error("Permission denied");
+      });
+      mockedFs.readFileSync.mockReturnValue(Buffer.from(""));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.fileCount).toBe(0);
+    });
+
+    it("indexes rust files with symbols and imports", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "lib.rs", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      mockedFs.readFileSync.mockReturnValue(Buffer.from(
+        "use std::io;\npub fn process() {}\npub struct Config {}\npub enum Mode {}\npub trait Handler {}"
+      ));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 5 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 4 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      // 1 file + 4 symbols (process, Config, Mode, Handler)
+      expect(result.nodeCount).toBe(5);
+    });
+
+    it("indexes python files with symbols and imports", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "app.py", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      mockedFs.readFileSync.mockReturnValue(Buffer.from(
+        "from os import path\nimport json\ndef main():\n    pass\nclass App:\n    pass"
+      ));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 3 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 2 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      // 1 file + 2 symbols (main, App)
+      expect(result.nodeCount).toBe(3);
+    });
+
+    it("detects various file types for language", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "config.json", isDirectory: () => false, isFile: () => true } as any,
+        { name: "config.yaml", isDirectory: () => false, isFile: () => true } as any,
+        { name: "config.yml", isDirectory: () => false, isFile: () => true } as any,
+        { name: "README.md", isDirectory: () => false, isFile: () => true } as any,
+        { name: "README.mdx", isDirectory: () => false, isFile: () => true } as any,
+        { name: "app.jsx", isDirectory: () => false, isFile: () => true } as any,
+        { name: "app.mjs", isDirectory: () => false, isFile: () => true } as any,
+        { name: "app.cjs", isDirectory: () => false, isFile: () => true } as any,
+        { name: "unknown.xyz", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      mockedFs.readFileSync.mockReturnValue(Buffer.from("content"));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 9 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.fileCount).toBe(9);
+    });
+
+    it("handles updateRepoStatus when repo not found", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      // First call for updateRepoStatus("indexing") returns null
+      mockPrisma.repoRegistry.findUnique.mockResolvedValueOnce(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([]);
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 0 });
+      // Second call for updateRepoStatus("ready") also returns null
+      mockPrisma.repoRegistry.findUnique.mockResolvedValueOnce(null);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      // update should not have been called when repo not found
+      expect(mockPrisma.repoRegistry.update).not.toHaveBeenCalled();
+    });
+
+    it("indexes with ripgrep when available", async () => {
+      const ripgrep = await import("./ripgrep");
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue("/usr/bin/rg");
+      vi.mocked(ripgrep.execRipgrep).mockResolvedValue(["/test/repo/index.ts"]);
+
+      mockedFs.readFileSync.mockReturnValue(Buffer.from("export function main() {}"));
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 2 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 1 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.fileCount).toBe(1);
+    });
+
+    it("reads file error returns empty content", async () => {
+      const fs = await import("node:fs");
+      const mockedFs = vi.mocked(fs.default);
+
+      const ripgrep = await import("./ripgrep");
+      vi.mocked(ripgrep.getRipgrepPath).mockReturnValue(null);
+
+      mockedFs.readdirSync.mockReturnValueOnce([
+        { name: "bad.ts", isDirectory: () => false, isFile: () => true } as any,
+      ]);
+      mockedFs.readFileSync.mockImplementation(() => {
+        throw new Error("EACCES");
+      });
+
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.codeGraphEdge.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.codeGraphNode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.codeGraphNode.createMany.mockResolvedValue({ count: 1 });
+      mockPrisma.codeGraphEdge.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.repoRegistry.update.mockResolvedValue({} as any);
+      mockPrisma.auditEvent.create.mockResolvedValue({} as any);
+
+      const result = await service.indexRepo("repo1", "/test/repo");
+
+      expect(result.status).toBe("ready");
+      expect(result.nodeCount).toBe(1);
+    });
+  });
+
+  describe("buildContextPack additional paths", () => {
+    beforeEach(() => {
+      mockPrisma.repoRegistry.findUnique.mockResolvedValue({
+        id: "repo1",
+        managedWorktreeRoot: "/test/repo",
+        metadata: {},
+        updatedAt: new Date(),
+      });
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue(null);
+      mockPrisma.benchmarkRun.findMany.mockResolvedValue([]);
+      mockPrisma.executionAttempt.findMany.mockResolvedValue([]);
+      mockPrisma.retrievalTrace.create.mockResolvedValue({
+        id: "trace1",
+        repoId: "repo1",
+        aggregateId: "repo:repo1",
+        query: "test",
+        retrievalIds: [],
+        results: [],
+        metadata: {},
+        createdAt: new Date(),
+      });
+    });
+
+    it("triggers auto-indexing when node count is zero", async () => {
+      // First call returns 0, second call after indexing returns 1
+      mockPrisma.codeGraphNode.count
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(1);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+
+      const originalIndexRepo = service.indexRepo;
+      service.indexRepo = vi.fn().mockResolvedValue({
+        repoId: "repo1",
+        status: "ready" as const,
+        nodeCount: 0,
+        edgeCount: 0,
+        fileCount: 0,
+      });
+
+      mockPrisma.contextPack.create.mockResolvedValue({
+        id: "pack1",
+        repoId: "repo1",
+        objective: "test",
+        queryMode: "basic",
+        files: [],
+        symbols: [],
+        tests: [],
+        docs: [],
+        rules: [],
+        priorRuns: [],
+        confidence: 0.25,
+        why: [],
+        tokenBudget: 1800,
+        retrievalTraceId: "trace1",
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await service.buildContextPack({
+        repoId: "repo1",
+        objective: "test",
+      });
+
+      expect(service.indexRepo).toHaveBeenCalledWith("repo1", expect.any(String), "system");
+      service.indexRepo = originalIndexRepo;
+    });
+
+    it("includes guidelines rules when available", async () => {
+      mockPrisma.codeGraphNode.count.mockResolvedValue(1);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+      mockPrisma.repoGuidelineProfile.findUnique.mockResolvedValue({
+        repoId: "repo1",
+        patchRules: ["no-console", "prefer-const"],
+        docRules: ["jsdoc-required"],
+        requiredArtifacts: ["changelog"],
+        testCommands: [],
+        buildCommands: [],
+        lintCommands: [],
+      } as any);
+
+      mockPrisma.contextPack.create.mockImplementation(async (args: any) => {
+        return {
+          id: "pack1",
+          repoId: "repo1",
+          ...args.data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      });
+
+      const result = await service.buildContextPack({
+        repoId: "repo1",
+        objective: "test",
+      });
+
+      // Rules should include patch + doc + required artifact rules
+      const createCall = mockPrisma.contextPack.create.mock.calls[0][0] as any;
+      expect(createCall.data.rules).toContain("no-console");
+      expect(createCall.data.rules).toContain("jsdoc-required");
+      expect(createCall.data.rules).toContain("changelog");
+    });
+
+    it("includes prior run references", async () => {
+      mockPrisma.codeGraphNode.count.mockResolvedValue(1);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+
+      mockPrisma.benchmarkRun.findMany.mockResolvedValue([
+        { id: "bench1" } as any,
+      ]);
+      mockPrisma.executionAttempt.findMany.mockResolvedValue([
+        { id: "exec1", status: "completed" } as any,
+        { id: "exec2", status: "failed" } as any,
+      ]);
+
+      mockPrisma.contextPack.create.mockImplementation(async (args: any) => {
+        return {
+          id: "pack1",
+          repoId: "repo1",
+          ...args.data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      });
+
+      await service.buildContextPack({
+        repoId: "repo1",
+        objective: "test",
+      });
+
+      const createCall = mockPrisma.contextPack.create.mock.calls[0][0] as any;
+      expect(createCall.data.priorRuns).toContain("exec1");
+      expect(createCall.data.priorRuns).toContain("bench1");
+    });
+
+    it("uses review mode scoring with doc and test boost", async () => {
+      mockPrisma.codeGraphNode.count.mockResolvedValue(3);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([
+        {
+          id: "doc1",
+          repoId: "repo1",
+          kind: "doc",
+          path: "docs/auth.md",
+          name: "auth.md",
+          language: "markdown",
+          content: "# Auth docs",
+          metadata: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: "test1",
+          repoId: "repo1",
+          kind: "test",
+          path: "tests/auth.test.ts",
+          name: "auth.test.ts",
+          language: "typescript",
+          content: "test auth",
+          metadata: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+
+      mockPrisma.contextPack.create.mockResolvedValue({
+        id: "pack1",
+        repoId: "repo1",
+        objective: "review auth",
+        queryMode: "review",
+        files: [],
+        symbols: [],
+        tests: ["tests/auth.test.ts"],
+        docs: ["docs/auth.md"],
+        rules: [],
+        priorRuns: [],
+        confidence: 0.49,
+        why: [],
+        tokenBudget: 1800,
+        retrievalTraceId: "trace1",
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const result = await service.buildContextPack({
+        repoId: "repo1",
+        objective: "review auth",
+        queryMode: "review",
+      });
+
+      expect(result.pack.queryMode).toBe("review");
+    });
+
+    it("uses architecture mode scoring with doc and symbol boost", async () => {
+      mockPrisma.codeGraphNode.count.mockResolvedValue(2);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([
+        {
+          id: "sym1",
+          repoId: "repo1",
+          kind: "symbol",
+          path: "src/main.ts",
+          name: "MainService",
+          language: "typescript",
+          content: "export class MainService {}",
+          metadata: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: "doc1",
+          repoId: "repo1",
+          kind: "doc",
+          path: "docs/architecture.md",
+          name: "architecture.md",
+          language: "markdown",
+          content: "# Architecture overview of MainService",
+          metadata: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+
+      mockPrisma.contextPack.create.mockResolvedValue({
+        id: "pack1",
+        repoId: "repo1",
+        objective: "understand mainservice architecture",
+        queryMode: "architecture",
+        files: [],
+        symbols: ["MainService"],
+        tests: [],
+        docs: ["docs/architecture.md"],
+        rules: [],
+        priorRuns: [],
+        confidence: 0.49,
+        why: [],
+        tokenBudget: 1800,
+        retrievalTraceId: "trace1",
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const result = await service.buildContextPack({
+        repoId: "repo1",
+        objective: "understand mainservice architecture",
+        queryMode: "architecture",
+      });
+
+      expect(result.pack.queryMode).toBe("architecture");
+    });
+
+    it("generates proper why explanations for different node types", async () => {
+      mockPrisma.codeGraphNode.count.mockResolvedValue(4);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([
+        {
+          id: "file1",
+          repoId: "repo1",
+          kind: "file",
+          path: "src/auth.ts",
+          name: "auth.ts",
+          language: "typescript",
+          content: "authentication logic",
+          metadata: { priority: "high" },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: "test1",
+          repoId: "repo1",
+          kind: "test",
+          path: "tests/auth.test.ts",
+          name: "auth.test.ts",
+          language: "typescript",
+          content: "test authentication",
+          metadata: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: "doc1",
+          repoId: "repo1",
+          kind: "doc",
+          path: "docs/auth.md",
+          name: "auth.md",
+          language: "markdown",
+          content: "auth documentation",
+          metadata: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+
+      mockPrisma.contextPack.create.mockImplementation(async (args: any) => {
+        return {
+          id: "pack1",
+          ...args.data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      });
+
+      await service.buildContextPack({
+        repoId: "repo1",
+        objective: "auth",
+      });
+
+      const createCall = mockPrisma.contextPack.create.mock.calls[0][0] as any;
+      const why = createCall.data.why as string[];
+      expect(why.some((w: string) => w.includes("relevant file"))).toBe(true);
+      expect(why.some((w: string) => w.includes("impacted test"))).toBe(true);
+    });
+
+    it("passes custom tokenBudget and aggregateId", async () => {
+      mockPrisma.codeGraphNode.count.mockResolvedValue(1);
+      mockPrisma.codeGraphNode.findMany.mockResolvedValue([]);
+      mockPrisma.codeGraphEdge.findMany.mockResolvedValue([]);
+
+      mockPrisma.contextPack.create.mockImplementation(async (args: any) => {
+        return {
+          id: "pack1",
+          ...args.data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      });
+
+      await service.buildContextPack({
+        repoId: "repo1",
+        objective: "test",
+        tokenBudget: 3000,
+        aggregateId: "custom:agg",
+      });
+
+      const createCall = mockPrisma.contextPack.create.mock.calls[0][0] as any;
+      expect(createCall.data.tokenBudget).toBe(3000);
+
+      // aggregateId should be passed to retrievalTrace
+      const traceCall = mockPrisma.retrievalTrace.create.mock.calls[0][0] as any;
+      expect(traceCall.data.aggregateId).toBe("custom:agg");
     });
   });
 

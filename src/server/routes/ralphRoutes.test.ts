@@ -182,6 +182,33 @@ describe("POST /api/ralph/:id/pause", () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it("returns already_inactive when session exists in DB but not active", async () => {
+    const { prisma } = await import("../db");
+    (prisma.ralphSession.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "sess-db",
+      runId: "run-db",
+      status: "paused",
+    });
+
+    const { app } = createHarness();
+
+    // Re-mock after harness creation (harness calls findUnique during start)
+    (prisma.ralphSession.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "sess-db",
+      runId: "run-db",
+      status: "paused",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/ralph/sess-db/pause",
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.status).toBe("already_inactive");
+    expect(body.session_id).toBe("sess-db");
+  });
 });
 
 describe("GET /api/ralph/:id/ledger", () => {
@@ -300,5 +327,146 @@ describe("POST /api/ralph/:id/resume", () => {
       url: "/api/ralph/nonexistent/resume",
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it("returns 404 when resume() returns null", async () => {
+    const { prisma } = await import("../db");
+
+    const { app } = createHarness();
+
+    // First call: route checks session exists → returns session
+    // Second call: orchestrator.resume() checks session → returns null
+    (prisma.ralphSession.findUnique as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        id: "sess-no-resume",
+        runId: "run-x",
+        status: "paused",
+      })
+      .mockResolvedValueOnce(null);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/ralph/sess-no-resume/resume",
+    });
+    expect(res.statusCode).toBe(404);
+    const body = JSON.parse(res.payload);
+    expect(body.error).toContain("Cannot resume");
+  });
+});
+
+describe("POST /api/ralph/:id/resume — successful resume", () => {
+  beforeEach(async () => {
+    const { prisma } = await import("../db");
+    (prisma.ralphSession.findUnique as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(null);
+  });
+
+  it("returns resumed status when resume() provides valid input", async () => {
+    const { prisma } = await import("../db");
+
+    // First call: route checks session exists
+    (prisma.ralphSession.findUnique as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        id: "sess-resume",
+        runId: "run-resume",
+        status: "paused",
+        specContent: "Build a widget",
+        currentPhase: "execute",
+        currentIteration: 3,
+        maxIterations: 10,
+        verificationTier: "STANDARD",
+        progressLedger: {},
+      })
+      // Second call: orchestrator.resume() — returns the session for resume
+      .mockResolvedValueOnce({
+        id: "sess-resume",
+        runId: "run-resume",
+        status: "paused",
+        specContent: "Build a widget",
+        currentPhase: "execute",
+        currentIteration: 3,
+        maxIterations: 10,
+        verificationTier: "STANDARD",
+        progressLedger: {},
+        repoId: "repo-1",
+        worktreePath: "/tmp/worktree",
+        actor: "user",
+      });
+
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/ralph/sess-resume/resume",
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.status).toBe("resumed");
+    expect(body.session_id).toBe("sess-resume");
+    expect(body.stream_url).toContain("/api/ralph/sess-resume/stream");
+  });
+});
+
+describe("POST /api/ralph/start — optional fields", () => {
+  it("accepts all optional fields", async () => {
+    const { app } = createHarness();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/ralph/start",
+      payload: {
+        spec_content: "Build a widget",
+        actor: "test-user",
+        project_id: "proj-1",
+        repo_id: "repo-override",
+        ticket_id: "ticket-1",
+        worktree_path: "/custom/path",
+        max_iterations: 20,
+        verification_tier: "THOROUGH",
+        resume_from_checkpoint: true,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.session_id).toBeDefined();
+  });
+});
+
+describe("GET /api/ralph/:id/stream", () => {
+  it("returns 404 for unknown session with no active orchestrator", async () => {
+    const { app } = createHarness();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/ralph/nonexistent/stream",
+    });
+    expect(res.statusCode).toBe(404);
+    const body = JSON.parse(res.payload);
+    expect(body.error).toBe("No active session found");
+  });
+
+  it("streams events for an active session after start", async () => {
+    const { app } = createHarness();
+
+    // First start a session to register the orchestrator
+    const startRes = await app.inject({
+      method: "POST",
+      url: "/api/ralph/start",
+      payload: {
+        spec_content: "Build streaming widget",
+        actor: "test-user",
+        project_id: "proj-1",
+      },
+    });
+    expect(startRes.statusCode).toBe(201);
+    const { session_id } = JSON.parse(startRes.payload);
+
+    // Now try to stream — the orchestrator should be registered
+    const streamRes = await app.inject({
+      method: "GET",
+      url: `/api/ralph/${session_id}/stream`,
+    });
+    // Since the generator is already exhausted (ralph_started was consumed during start),
+    // the stream will complete immediately. The response comes through raw writeHead.
+    // With inject() and raw handling, we expect the response to go through.
+    expect(streamRes.statusCode).toBe(200);
   });
 });

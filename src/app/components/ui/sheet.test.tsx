@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import {
   Sheet,
   SheetTrigger,
+  SheetClose,
   SheetContent,
   SheetHeader,
   SheetTitle,
@@ -59,5 +60,50 @@ describe("Sheet", () => {
       </Sheet>,
     );
     expect(screen.getByText("Close")).toBeInTheDocument();
+  });
+
+  it("renders SheetClose component", () => {
+    render(
+      <Sheet open>
+        <SheetContent>
+          <SheetTitle>Title</SheetTitle>
+          <SheetClose>Dismiss</SheetClose>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByText("Dismiss")).toBeInTheDocument();
+  });
+
+  it("renders SheetContent with side=left", () => {
+    render(
+      <Sheet open>
+        <SheetContent side="left">
+          <SheetTitle>Left Sheet</SheetTitle>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByText("Left Sheet")).toBeInTheDocument();
+  });
+
+  it("renders SheetContent with side=top", () => {
+    render(
+      <Sheet open>
+        <SheetContent side="top">
+          <SheetTitle>Top Sheet</SheetTitle>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByText("Top Sheet")).toBeInTheDocument();
+  });
+
+  it("renders SheetContent with side=bottom", () => {
+    render(
+      <Sheet open>
+        <SheetContent side="bottom">
+          <SheetTitle>Bottom Sheet</SheetTitle>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByText("Bottom Sheet")).toBeInTheDocument();
   });
 });

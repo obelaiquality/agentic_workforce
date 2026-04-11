@@ -180,4 +180,51 @@ describe("ProjectMemoryPanel", () => {
       );
     });
   });
+
+  it("displays failure count in stats bar when failures exist", async () => {
+    const statsWithFailures = { ...mockStats, failureCount: 3 };
+    (global.fetch as any).mockResolvedValue({
+      json: async () => ({ memories: mockMemories, stats: statsWithFailures }),
+    });
+
+    renderWithQueryClient(<ProjectMemoryPanel worktreePath="/tmp/test" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("3 failed")).toBeInTheDocument();
+    });
+  });
+
+  it("queryFn returns empty data for falsy worktreePath via direct refetch", async () => {
+    // The queryFn has a ternary: worktreePath ? fetchMemories(...) : Promise.resolve({...})
+    // When enabled is false, react-query won't auto-fire the queryFn.
+    // We need to force the queryFn to execute with a falsy worktreePath.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+
+    (global.fetch as any).mockResolvedValue({
+      json: async () => ({ memories: [], stats: null }),
+    });
+
+    // Render with empty string worktreePath
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProjectMemoryPanel worktreePath="" />
+      </QueryClientProvider>,
+    );
+
+    // Manually call refetchQueries to force the queryFn to fire despite enabled=false
+    // This uses cancelRefetch:true to force execution
+    const queries = queryClient.getQueryCache().findAll({ queryKey: ["project-memory"] });
+    for (const query of queries) {
+      // Force execute the queryFn directly via the query's fetch method
+      await query.fetch();
+    }
+
+    // The component should show the empty/no-project state
+    expect(screen.getByText(/Select a project|No memories yet/)).toBeInTheDocument();
+  });
 });

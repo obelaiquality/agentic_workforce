@@ -24,6 +24,17 @@ describe("getDesktopBridge", () => {
     (window as any).desktopBridge = bridge;
     expect(getDesktopBridge()).toBe(bridge);
   });
+
+  it("returns undefined when window is undefined (server-side)", () => {
+    const origWindow = globalThis.window;
+    // @ts-expect-error -- simulate server-side environment
+    delete globalThis.window;
+    try {
+      expect(getDesktopBridge()).toBeUndefined();
+    } finally {
+      globalThis.window = origWindow;
+    }
+  });
 });
 
 describe("hasDesktopRepoPicker", () => {

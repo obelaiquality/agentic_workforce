@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { z } from "zod";
-import { ToolRegistry, createToolRegistry } from "./registry";
+import { ToolRegistry, createToolRegistry, getDefaultToolRegistry } from "./registry";
 import type { ToolDefinition, ToolContext, ToolResult } from "./types";
 
 // Helper to create a minimal ToolContext for testing
@@ -482,6 +482,211 @@ describe("ToolRegistry", () => {
       const reviewCtx = { ...ctx, stage: "review" as const };
       const result = await registry.executeValidated("disabled_tool", {}, reviewCtx);
       expect(result.type).toBe("success");
+    });
+
+    it("returns error with non-Error throw", async () => {
+      const stringThrowTool: ToolDefinition = {
+        name: "string_throw",
+        description: "Throws a string",
+        inputSchema: z.object({}),
+        permission: { scope: "repo.read" },
+        async execute() {
+          throw "raw string error";
+        },
+      };
+      registry.register(stringThrowTool);
+
+      const result = await registry.executeValidated("string_throw", {}, ctx);
+      expect(result.type).toBe("error");
+      if (result.type === "error") {
+        expect(result.error).toContain("raw string error");
+      }
+    });
+  });
+
+  // ── unregister() ─────────────────────────────────────────────────────────────
+
+  describe("unregister()", () => {
+    it("removes a registered tool and its aliases", () => {
+      registry.register(readTool);
+      expect(registry.has("read_file")).toBe(true);
+      expect(registry.has("read")).toBe(true);
+
+      registry.unregister("read_file");
+      expect(registry.has("read_file")).toBe(false);
+      expect(registry.has("read")).toBe(false);
+      expect(registry.has("cat")).toBe(false);
+    });
+
+    it("does nothing when unregistering non-existent tool", () => {
+      expect(() => registry.unregister("nonexistent")).not.toThrow();
+    });
+  });
+
+  // ── unregisterAll() ──────────────────────────────────────────────────────────
+
+  describe("unregisterAll()", () => {
+    it("removes multiple tools at once", () => {
+      registry.registerAll([readTool, writeTool]);
+      expect(registry.size).toBe(2);
+
+      registry.unregisterAll(["read_file", "write_file"]);
+      expect(registry.size).toBe(0);
+    });
+  });
+
+  // ── listEnabled() ────────────────────────────────────────────────────────────
+
+  describe("listEnabled()", () => {
+    it("returns all tools when no context provided", () => {
+      registry.registerAll([readTool, writeTool, disabledTool]);
+      const enabled = registry.listEnabled();
+      expect(enabled).toHaveLength(3);
+    });
+
+    it("filters out tools disabled in context", () => {
+      registry.registerAll([readTool, writeTool, disabledTool]);
+      const buildCtx = createMockContext();
+      const enabled = registry.listEnabled(buildCtx);
+      // disabledTool requires stage=review, buildCtx has stage=build
+      expect(enabled.map((t) => t.name)).not.toContain("disabled_tool");
+      expect(enabled).toHaveLength(2);
+    });
+
+    it("includes tool when context matches isEnabled", () => {
+      registry.registerAll([readTool, disabledTool]);
+      const reviewCtx = { ...createMockContext(), stage: "review" as const };
+      const enabled = registry.listEnabled(reviewCtx);
+      expect(enabled.map((t) => t.name)).toContain("disabled_tool");
+    });
+  });
+
+  // ── getInitialToolsForContext() ──────────────────────────────────────────────
+
+  describe("getInitialToolsForContext()", () => {
+    it("returns initial tools filtered by context", () => {
+      registry.registerAll([readTool, writeTool, disabledTool, deferredTool]);
+      const buildCtx = createMockContext();
+      const initial = registry.getInitialToolsForContext(buildCtx);
+      // disabledTool is filtered (wrong stage), deferredTool is filtered (alwaysLoad=false)
+      expect(initial.map((t) => t.name)).toEqual(
+        expect.arrayContaining(["read_file", "write_file"]),
+      );
+      expect(initial.map((t) => t.name)).not.toContain("disabled_tool");
+      expect(initial.map((t) => t.name)).not.toContain("fancy_analysis");
+    });
+  });
+
+  // ── getDeferredToolsForContext() ─────────────────────────────────────────────
+
+  describe("getDeferredToolsForContext()", () => {
+    it("returns deferred tools filtered by context", () => {
+      registry.registerAll([readTool, deferredTool]);
+      const ctx = createMockContext();
+      const deferred = registry.getDeferredToolsForContext(ctx);
+      expect(deferred).toHaveLength(1);
+      expect(deferred[0].name).toBe("fancy_analysis");
+    });
+  });
+
+  // ── toJsonSchemasForContext() ────────────────────────────────────────────────
+
+  describe("toJsonSchemasForContext()", () => {
+    it("returns schemas for initial tools filtered by context", () => {
+      registry.registerAll([readTool, writeTool, disabledTool]);
+      const buildCtx = createMockContext();
+      const schemas = registry.toJsonSchemasForContext(buildCtx);
+      expect(schemas.map((s) => s.name)).not.toContain("disabled_tool");
+      expect(schemas.map((s) => s.name)).toEqual(
+        expect.arrayContaining(["read_file", "write_file"]),
+      );
+    });
+  });
+
+  // ── zodToJsonSchema edge cases ───────────────────────────────────────────────
+
+  describe("zodToJsonSchema edge cases", () => {
+    it("converts ZodLiteral schema", () => {
+      const tool: ToolDefinition = {
+        name: "literal_test",
+        description: "Test literal",
+        inputSchema: z.object({ mode: z.literal("strict") }),
+        permission: { scope: "repo.read" },
+        async execute() {
+          return { type: "success", content: "OK" };
+        },
+      };
+      registry.register(tool);
+      const schema = registry.toJsonSchema(tool);
+      expect(schema.parameters).toMatchObject({
+        type: "object",
+        properties: { mode: { type: "string", const: "strict" } },
+      });
+    });
+
+    it("converts ZodUnion schema", () => {
+      const tool: ToolDefinition = {
+        name: "union_test",
+        description: "Test union",
+        inputSchema: z.object({ value: z.union([z.string(), z.number()]) }),
+        permission: { scope: "repo.read" },
+        async execute() {
+          return { type: "success", content: "OK" };
+        },
+      };
+      registry.register(tool);
+      const schema = registry.toJsonSchema(tool);
+      expect(schema.parameters).toMatchObject({
+        type: "object",
+        properties: {
+          value: { oneOf: [{ type: "string" }, { type: "number" }] },
+        },
+      });
+    });
+
+    it("converts ZodDefault schema", () => {
+      const tool: ToolDefinition = {
+        name: "default_test",
+        description: "Test default",
+        inputSchema: z.object({ count: z.number().default(10) }),
+        permission: { scope: "repo.read" },
+        async execute() {
+          return { type: "success", content: "OK" };
+        },
+      };
+      registry.register(tool);
+      const schema = registry.toJsonSchema(tool);
+      // Default-wrapped values should not appear in required
+      expect((schema.parameters as Record<string, unknown>).required).toBeUndefined();
+    });
+
+    it("falls back to string type for unknown Zod types", () => {
+      const tool: ToolDefinition = {
+        name: "any_test",
+        description: "Test any",
+        inputSchema: z.object({ data: z.any() }),
+        permission: { scope: "repo.read" },
+        async execute() {
+          return { type: "success", content: "OK" };
+        },
+      };
+      registry.register(tool);
+      const schema = registry.toJsonSchema(tool);
+      expect(schema.parameters).toMatchObject({
+        type: "object",
+        properties: { data: { type: "string" } },
+      });
+    });
+  });
+
+  // ── getDefaultToolRegistry() ─────────────────────────────────────────────────
+
+  describe("getDefaultToolRegistry()", () => {
+    it("returns a singleton ToolRegistry", () => {
+      const r1 = getDefaultToolRegistry();
+      const r2 = getDefaultToolRegistry();
+      expect(r1).toBe(r2);
+      expect(r1).toBeInstanceOf(ToolRegistry);
     });
   });
 });

@@ -570,6 +570,35 @@ describe("requestExecution", () => {
     ).rejects.toThrow("retrieval_context_ids");
   });
 
+  it("uses spawn_lanes nextSteps when executionMode is multi_agent", async () => {
+    routerService.planRoute.mockResolvedValue({
+      id: "rd-multi",
+      ticketId: "ticket-1",
+      runId: null,
+      executionMode: "multi_agent",
+      modelRole: "coder_default",
+      providerId: "onprem-qwen",
+      maxLanes: 3,
+      risk: "high",
+      verificationDepth: "deep",
+      decompositionScore: 0.8,
+      estimatedFileOverlap: 0.05,
+      rationale: ["Multi-agent route"],
+      createdAt: new Date().toISOString(),
+    });
+    sidecar.evaluatePolicy.mockResolvedValue(allowPolicy());
+
+    await service.requestExecution(baseInput);
+
+    expect(mockPrisma.workflowStateProjection.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          nextSteps: ["spawn_lanes", "execute", "prepare_merge_verification"],
+        }),
+      }),
+    );
+  });
+
   it("falls back to aggregate-based routing when no direct decision found", async () => {
     const aggregateDecision = {
       id: "rd-agg",

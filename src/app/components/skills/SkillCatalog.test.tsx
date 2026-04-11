@@ -149,4 +149,70 @@ describe("SkillCatalog", () => {
       expect(apiClientMock.deleteSkill).toHaveBeenCalledWith("custom_release");
     });
   });
+
+  it("filters skills by search query", async () => {
+    renderView();
+    await screen.findByText("commit");
+
+    const searchInput = screen.getByPlaceholderText("Search skills...");
+    fireEvent.change(searchInput, { target: { value: "release" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText("commit")).not.toBeInTheDocument();
+      expect(screen.getAllByText("release").length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("resets editor form when New skill button is clicked during edit", async () => {
+    renderView();
+    await screen.findByText("commit");
+
+    // Start editing an existing skill
+    fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
+    expect(screen.getByDisplayValue("release")).toBeInTheDocument();
+
+    // Click "New skill" to reset
+    fireEvent.click(screen.getByRole("button", { name: /New skill/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Skill name")).toHaveValue("");
+      expect(screen.getByText("Create Custom Skill")).toBeInTheDocument();
+    });
+  });
+
+  it("shows empty custom skills message when no custom skills exist", async () => {
+    apiClientMock.listSkills.mockResolvedValue({
+      items: [
+        {
+          id: "builtin_commit",
+          name: "commit",
+          description: "Commit staged changes",
+          version: "1.0.0",
+          contextMode: "inline",
+          allowedTools: ["git_status"],
+          maxIterations: null,
+          systemPrompt: "Commit safely",
+          referenceFiles: [],
+          author: "system",
+          tags: [],
+          builtIn: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    renderView();
+
+    expect(await screen.findByText("No custom skills yet. Create one to add reusable workflows.")).toBeInTheDocument();
+  });
+
+  it("does not render invocation list when there are no invocations", async () => {
+    apiClientMock.listSkillInvocations.mockResolvedValue({ items: [] });
+
+    renderView();
+
+    expect(await screen.findByText("Recent Invocations")).toBeInTheDocument();
+    expect(screen.getByText("No skill invocations recorded yet.")).toBeInTheDocument();
+  });
 });

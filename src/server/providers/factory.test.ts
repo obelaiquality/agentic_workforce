@@ -18,4 +18,19 @@ describe("ProviderFactory", () => {
 
     expect(() => factory.resolve("qwen-cli")).toThrowError(/not registered/i);
   });
+
+  it("lists all registered adapters", () => {
+    const factory = new ProviderFactory();
+    expect(factory.list()).toEqual([]);
+
+    const openAi = new OpenAiCompatibleAdapter();
+    const onPrem = new OnPremQwenAdapter();
+    factory.register(openAi);
+    factory.register(onPrem);
+
+    const listed = factory.list();
+    expect(listed).toHaveLength(2);
+    expect(listed).toContain(openAi);
+    expect(listed).toContain(onPrem);
+  });
 });

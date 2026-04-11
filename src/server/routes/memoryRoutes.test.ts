@@ -172,6 +172,31 @@ describe("memoryRoutes", () => {
       await app.close();
     });
 
+    it("returns null for oldestCreatedAt and newestCreatedAt when no memories exist", async () => {
+      const { app } = createHarness();
+
+      // First call (for the list) returns empty, second call (for stats) returns empty
+      mockMemoryService.getRelevantEpisodicMemories.mockReturnValue([]);
+      mockMemoryService.episodicCount.mockReturnValue(0);
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/memory?worktreePath=/test/path",
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.memories).toHaveLength(0);
+      expect(body.stats.oldestCreatedAt).toBeNull();
+      expect(body.stats.newestCreatedAt).toBeNull();
+      expect(body.stats.episodicCount).toBe(0);
+      expect(body.stats.successCount).toBe(0);
+      expect(body.stats.failureCount).toBe(0);
+      expect(body.stats.partialCount).toBe(0);
+
+      await app.close();
+    });
+
     it("respects limit parameter", async () => {
       const { app } = createHarness();
 

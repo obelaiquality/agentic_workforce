@@ -624,5 +624,524 @@ describe("LSPClient edge cases", () => {
       expect((client as any).parseLocations(null)).toEqual([]);
       expect((client as any).parseLocations("not an array")).toEqual([]);
     });
+
+    it("parseLocations filters out null entries from invalid locations", () => {
+      const result = [
+        { uri: "file:///a.ts", range: { start: { line: 1, character: 0 } } },
+        null, // invalid
+        { bogus: true }, // invalid (no uri/range)
+        { uri: "file:///b.ts", range: { start: { line: 5, character: 3 } } },
+      ];
+
+      const locations = (client as any).parseLocations(result);
+      expect(locations).toHaveLength(2);
+      expect(locations[0].file).toBe("/a.ts");
+      expect(locations[1].file).toBe("/b.ts");
+    });
+
+    it("parseLocation returns null for non-object location", () => {
+      expect((client as any).parseLocation("string")).toBeNull();
+      expect((client as any).parseLocation(42)).toBeNull();
+    });
+
+    it("parseLocation returns null when uri is missing", () => {
+      const result = { range: { start: { line: 0, character: 0 } } };
+      expect((client as any).parseLocation(result)).toBeNull();
+    });
+
+    it("parseLocation returns null when range.start is missing", () => {
+      const result = { uri: "file:///test.ts", range: {} };
+      expect((client as any).parseLocation(result)).toBeNull();
+    });
+
+    it("parseLocation defaults line/character to 0 if not provided", () => {
+      const result = {
+        uri: "file:///test.ts",
+        range: { start: {} },
+      };
+      const location = (client as any).parseLocation(result);
+      expect(location).toEqual({
+        file: "/test.ts",
+        line: 0,
+        character: 0,
+      });
+    });
+  });
+
+  describe("parseSymbols", () => {
+    it("parses document symbols with children", () => {
+      const result = [
+        {
+          name: "MyClass",
+          kind: 5, // Class
+          range: { start: { line: 0, character: 0 } },
+          children: [
+            {
+              name: "myMethod",
+              kind: 6, // Method
+              range: { start: { line: 2, character: 4 } },
+            },
+          ],
+        },
+      ];
+
+      const symbols = (client as any).parseSymbols(result, "/test/file.ts");
+      expect(symbols).toHaveLength(2);
+      expect(symbols[0].name).toBe("MyClass");
+      expect(symbols[0].kind).toBe("Class");
+      expect(symbols[1].name).toBe("myMethod");
+      expect(symbols[1].kind).toBe("Method");
+    });
+
+    it("returns empty array for non-array input", () => {
+      expect((client as any).parseSymbols(null, "/test.ts")).toEqual([]);
+      expect((client as any).parseSymbols("not array", "/test.ts")).toEqual([]);
+    });
+
+    it("skips symbols without name or range", () => {
+      const result = [
+        null,
+        { kind: 5, range: { start: { line: 0, character: 0 } } }, // no name
+        { name: "noRange", kind: 5 }, // no range
+        { name: "valid", kind: 12, range: { start: { line: 5, character: 0 } } },
+      ];
+
+      const symbols = (client as any).parseSymbols(result, "/test.ts");
+      expect(symbols).toHaveLength(1);
+      expect(symbols[0].name).toBe("valid");
+    });
+
+    it("handles symbols with location.range instead of range", () => {
+      const result = [
+        {
+          name: "located",
+          kind: 13,
+          location: {
+            uri: "file:///test.ts",
+            range: { start: { line: 10, character: 2 } },
+          },
+        },
+      ];
+
+      const symbols = (client as any).parseSymbols(result, "/test.ts");
+      expect(symbols).toHaveLength(1);
+      expect(symbols[0].name).toBe("located");
+      expect(symbols[0].line).toBe(10);
+    });
+  });
+
+  describe("handleMessage error response", () => {
+    it("rejects pending request on error response", () => {
+      const rejections: Error[] = [];
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 1,
+        pending: new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      fakeState.pending.set(1, {
+        resolve: vi.fn(),
+        reject: (err) => rejections.push(err),
+      });
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).handleMessage("typescript", {
+        id: 1,
+        error: { code: -32600, message: "Invalid request" },
+      }, fakeState);
+
+      expect(rejections).toHaveLength(1);
+      expect(rejections[0].message).toBe("Invalid request");
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("rejects with default message when error.message is missing", () => {
+      const rejections: Error[] = [];
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 1,
+        pending: new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      fakeState.pending.set(1, {
+        resolve: vi.fn(),
+        reject: (err) => rejections.push(err),
+      });
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).handleMessage("typescript", {
+        id: 1,
+        error: { code: -32600 },
+      }, fakeState);
+
+      expect(rejections).toHaveLength(1);
+      expect(rejections[0].message).toBe("LSP request failed");
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("ignores error response for unknown request id", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 1,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      // Should not throw for unknown id
+      expect(() =>
+        (client as any).handleMessage("typescript", { id: 999, error: { code: -1, message: "unknown" } }, fakeState)
+      ).not.toThrow();
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("ignores result response for unknown request id", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 1,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      expect(() =>
+        (client as any).handleMessage("typescript", { id: 999, result: {} }, fakeState)
+      ).not.toThrow();
+
+      (client as any).servers.delete("typescript");
+    });
+  });
+
+  describe("handleDiagnostics edge cases", () => {
+    it("ignores diagnostics without uri", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).handleDiagnostics(fakeState, {
+        diagnostics: [{ range: { start: { line: 0, character: 0 } }, severity: 1, message: "err" }],
+      });
+
+      expect(fakeState.diagnosticsMap.size).toBe(0);
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("ignores diagnostics without diagnostics array", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).handleDiagnostics(fakeState, {
+        uri: "file:///test.ts",
+      });
+
+      expect(fakeState.diagnosticsMap.size).toBe(0);
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("maps severity 3 to info and severity 4 to hint", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).handleDiagnostics(fakeState, {
+        uri: "file:///test.ts",
+        diagnostics: [
+          { range: { start: { line: 0, character: 0 } }, severity: 3, message: "info msg" },
+          { range: { start: { line: 1, character: 0 } }, severity: 4, message: "hint msg" },
+        ],
+      });
+
+      const diags = fakeState.diagnosticsMap.get("/test.ts")!;
+      expect(diags[0].severity).toBe("info");
+      expect(diags[1].severity).toBe("hint");
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("defaults range values when start is missing", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).handleDiagnostics(fakeState, {
+        uri: "file:///test.ts",
+        diagnostics: [
+          { message: "no range at all" },
+        ],
+      });
+
+      const diags = fakeState.diagnosticsMap.get("/test.ts")!;
+      expect(diags[0].line).toBe(0);
+      expect(diags[0].character).toBe(0);
+
+      (client as any).servers.delete("typescript");
+    });
+  });
+
+  describe("handleServerOutput edge cases", () => {
+    it("handles invalid JSON in message body", () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      const invalidBody = "{ invalid json }}}";
+      const frame = `Content-Length: ${Buffer.byteLength(invalidBody, "utf8")}\r\n\r\n${invalidBody}`;
+
+      // Should not throw — error is logged
+      expect(() => (client as any).handleServerOutput("typescript", frame)).not.toThrow();
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("handles multiple messages in a single chunk", () => {
+      const resolvedValues: unknown[] = [];
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 2,
+        pending: new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      fakeState.pending.set(1, {
+        resolve: (val) => resolvedValues.push(val),
+        reject: vi.fn(),
+      });
+      fakeState.pending.set(2, {
+        resolve: (val) => resolvedValues.push(val),
+        reject: vi.fn(),
+      });
+      (client as any).servers.set("typescript", fakeState);
+
+      const body1 = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { first: true } });
+      const body2 = JSON.stringify({ jsonrpc: "2.0", id: 2, result: { second: true } });
+      const frame = `Content-Length: ${Buffer.byteLength(body1, "utf8")}\r\n\r\n${body1}Content-Length: ${Buffer.byteLength(body2, "utf8")}\r\n\r\n${body2}`;
+
+      (client as any).handleServerOutput("typescript", frame);
+
+      expect(resolvedValues).toHaveLength(2);
+      expect(resolvedValues[0]).toEqual({ first: true });
+      expect(resolvedValues[1]).toEqual({ second: true });
+
+      (client as any).servers.delete("typescript");
+    });
+
+    it("does nothing if language server not found", () => {
+      // Should not throw
+      expect(() => (client as any).handleServerOutput("nonexistent", "data")).not.toThrow();
+    });
+  });
+
+  describe("cleanupServer", () => {
+    it("uses default error when no error provided", () => {
+      const rejections: Error[] = [];
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 1,
+        pending: new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      fakeState.pending.set(1, {
+        resolve: vi.fn(),
+        reject: (err) => rejections.push(err),
+      });
+      (client as any).servers.set("typescript", fakeState);
+
+      (client as any).cleanupServer("typescript");
+
+      expect(rejections).toHaveLength(1);
+      expect(rejections[0].message).toBe("Server stopped");
+      expect((client as any).servers.has("typescript")).toBe(false);
+    });
+
+    it("handles kill throwing an error", () => {
+      const fakeState = {
+        process: {
+          stdin: { write: vi.fn() },
+          kill: vi.fn(() => { throw new Error("already dead"); }),
+        },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      // Should not throw
+      expect(() => (client as any).cleanupServer("typescript")).not.toThrow();
+      expect((client as any).servers.has("typescript")).toBe(false);
+    });
+
+    it("does nothing for non-existent server", () => {
+      expect(() => (client as any).cleanupServer("nonexistent")).not.toThrow();
+    });
+  });
+
+  describe("sendMessage", () => {
+    it("writes Content-Length framed message to stdin", () => {
+      const writeSpy = vi.fn();
+      const fakeState = {
+        process: { stdin: { write: writeSpy }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+
+      const message = { jsonrpc: "2.0" as const, id: 1, method: "test", params: {} };
+      (client as any).sendMessage(fakeState, message);
+
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      const written = writeSpy.mock.calls[0][0];
+      expect(written).toContain("Content-Length:");
+      expect(written).toContain('"method":"test"');
+    });
+  });
+
+  describe("notify throws when server not running", () => {
+    it("throws for non-running server", async () => {
+      await expect(
+        (client as any).notify("nonexistent", "textDocument/didOpen", {})
+      ).rejects.toThrow("Language server not running: nonexistent");
+    });
+  });
+
+  describe("request throws when server not running", () => {
+    it("throws for non-running server", async () => {
+      await expect(
+        (client as any).request("nonexistent", "textDocument/definition", {})
+      ).rejects.toThrow("Language server not running: nonexistent");
+    });
+  });
+
+  describe("getDefinition returns null for unsupported file", () => {
+    it("returns null for file with no matching config", async () => {
+      const result = await client.getDefinition("/test/file.xyz123", 0, 0);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("getReferences returns empty for unsupported file", () => {
+    it("returns empty for file with no matching config", async () => {
+      const result = await client.getReferences("/test/file.xyz123", 0, 0);
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("getDocumentSymbols returns empty for unsupported file", () => {
+    it("returns empty for file with no matching config", async () => {
+      const result = await client.getDocumentSymbols("/test/file.xyz123");
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("notifyFileSaved edge cases", () => {
+    it("is no-op for unsupported file type", async () => {
+      await expect(client.notifyFileSaved("/test/file.xyz123")).resolves.toBeUndefined();
+    });
+
+    it("is no-op when server not initialized", async () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: false,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      await expect(client.notifyFileSaved("/test/file.ts")).resolves.toBeUndefined();
+
+      (client as any).servers.delete("typescript");
+    });
+  });
+
+  describe("startServer returns early for existing server", () => {
+    it("returns early if server already running for language", async () => {
+      const fakeState = {
+        process: { stdin: { write: vi.fn() }, kill: vi.fn() },
+        requestId: 0,
+        pending: new Map(),
+        buffer: "",
+        worktreePath: "/test",
+        initialized: true,
+        diagnosticsMap: new Map(),
+      };
+      (client as any).servers.set("typescript", fakeState);
+
+      // Should return without error
+      await expect(client.startServer("typescript", "/test")).resolves.toBeUndefined();
+
+      (client as any).servers.delete("typescript");
+    });
+  });
+
+  describe("stopServer when no server running", () => {
+    it("returns early if no server for that language", async () => {
+      await expect(client.stopServer("nonexistent")).resolves.toBeUndefined();
+    });
   });
 });

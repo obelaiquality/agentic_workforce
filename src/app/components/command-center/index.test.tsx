@@ -180,4 +180,89 @@ describe("CommandCenterView", () => {
     render(<CommandCenterView mission={mission as never} />);
     expect(screen.getByTestId("approval-inline")).toBeInTheDocument();
   });
+
+  it("renders MissionHeaderStrip when repo is selected", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission();
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.getByTestId("mission-header-strip")).toBeInTheDocument();
+  });
+
+  it("renders AgentStatusSidebar when experimental autonomy has channels", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      experimentalAutonomy: {
+        channels: [{ id: "ch-1", source: "webhook" }],
+        subagents: [],
+      },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.getByTestId("agent-sidebar")).toBeInTheDocument();
+  });
+
+  it("renders AgentStatusSidebar when experimental autonomy has subagents", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      experimentalAutonomy: {
+        channels: [],
+        subagents: [{ id: "sa-1", role: "coder" }],
+      },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.getByTestId("agent-sidebar")).toBeInTheDocument();
+  });
+
+  it("does not render AgentStatusSidebar when no autonomy activity", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      experimentalAutonomy: { channels: [], subagents: [] },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.queryByTestId("agent-sidebar")).not.toBeInTheDocument();
+  });
+
+  it("renders OutcomeDebriefDrawer when verification is present", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      verification: { passed: true },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.getByTestId("outcome-debrief-drawer")).toBeInTheDocument();
+  });
+
+  it("renders OutcomeDebriefDrawer when shareReport summary is present", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      shareReport: { summary: "Task completed successfully" },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.getByTestId("outcome-debrief-drawer")).toBeInTheDocument();
+  });
+
+  it("renders OutcomeDebriefDrawer when runSummary has non-idle status", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      runSummary: { status: "completed" },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.getByTestId("outcome-debrief-drawer")).toBeInTheDocument();
+  });
+
+  it("does not render OutcomeDebriefDrawer for idle runSummary", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      runSummary: { status: "idle" },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.queryByTestId("outcome-debrief-drawer")).not.toBeInTheDocument();
+  });
+
+  it("does not render OutcomeDebriefDrawer for planned runSummary", async () => {
+    const { CommandCenterView } = await import("./index");
+    const mission = makeMission({
+      runSummary: { status: "planned" },
+    });
+    render(<CommandCenterView mission={mission as never} />);
+    expect(screen.queryByTestId("outcome-debrief-drawer")).not.toBeInTheDocument();
+  });
 });

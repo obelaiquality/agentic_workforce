@@ -342,6 +342,31 @@ describe("AgentMessageBus", () => {
       expect(payloads).toContain(5);
       expect(payloads).toContain(104);
     });
+
+    it("should auto-create queue and enforce FIFO eviction for unregistered agent", () => {
+      const freshBus = new AgentMessageBus();
+      freshBus.registerAgent("sender");
+
+      // Send > 100 messages to an agent that was never registered
+      for (let i = 0; i < 105; i++) {
+        freshBus.send({
+          from: "sender",
+          to: "unregistered-agent",
+          type: "Custom",
+          payload: { index: i },
+          priority: "normal",
+        });
+      }
+
+      const messages = freshBus.getMessages("unregistered-agent");
+      expect(messages).toHaveLength(100);
+
+      // Oldest 5 should be evicted
+      const payloads = messages.map((m) => (m.payload as { index: number }).index);
+      expect(payloads).not.toContain(0);
+      expect(payloads).toContain(5);
+      expect(payloads).toContain(104);
+    });
   });
 
   // ---------------------------------------------------------------------------

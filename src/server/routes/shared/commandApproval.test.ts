@@ -506,6 +506,58 @@ describe("handleCommandInvocationApprovalDecision", () => {
     );
   });
 
+  it("falls back to payload.command when display_command is not present", async () => {
+    const approval = {
+      id: "approval-1",
+      actionType: "command_tool_invocation" as const,
+      payload: {
+        run_id: "run-1",
+        ticket_id: "ticket-1",
+        repo_id: "repo-1",
+        stage: "build",
+        command: "npm run lint",
+        worktree_path: "/tmp/worktree",
+        command_plan: { executable: "npm", args: ["run", "lint"], flags: {} },
+      },
+    };
+
+    const mockTicket = { id: "ticket-1", repoId: "repo-1", status: "in_progress" as const };
+    const mockInvoked = {
+      event: {
+        id: "event-1",
+        policyDecision: "allowed" as const,
+        exitCode: 0,
+        summary: "OK",
+      },
+    };
+
+    vi.mocked(mockTicketService.getTicket).mockResolvedValue(mockTicket as any);
+    vi.mocked(mockCommandEngine.invoke).mockResolvedValue(mockInvoked as any);
+    mocks.commandPlanFromRecord.mockReturnValue({ executable: "npm", args: ["run", "lint"], flags: {} });
+
+    const result = await handleCommandInvocationApprovalDecision({
+      approval,
+      decision: "approved",
+      actor: "user-1",
+      executeApprovedCommand: true,
+      requeueBlockedStage: false,
+      ticketService: mockTicketService,
+      commandEngine: mockCommandEngine,
+      v2EventService: mockV2EventService,
+    });
+
+    expect(mockCommandEngine.invoke).toHaveBeenCalled();
+    // The v2 event should use the fallback command value
+    expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          command: "npm run lint",
+        }),
+      })
+    );
+    expect(result.commandExecution).not.toBeNull();
+  });
+
   it("validates stage field and only accepts valid values", async () => {
     const approval = {
       id: "approval-1",
@@ -983,6 +1035,101 @@ describe("decideApprovalWithCommandFollowup", () => {
       exitCode: 0,
       summary: "OK",
     });
+  });
+
+  it("returns null from resumeApprovedExecutionRequest when prompt is missing", async () => {
+    const approvalDecision = {
+      id: "approval-1",
+      actionType: "execution_request" as const,
+      payload: {
+        run_id: "run-1",
+        ticket_id: "ticket-1",
+        repo_id: "repo-1",
+        // prompt is missing
+        model_role: "coder_default",
+        provider_id: "qwen-cli",
+      },
+    };
+
+    vi.mocked(mockApprovalService.decideApproval).mockResolvedValue(approvalDecision as any);
+
+    // resumeApprovedExecutionRequest should return null when prompt is missing,
+    // so no execution or verification happens
+    const result = await decideApprovalWithCommandFollowup({
+      approvalId: "approval-1",
+      decision: "approved",
+      actor: "user-1",
+      executeApprovedCommand: false,
+      requeueBlockedStage: false,
+      approvalService: mockApprovalService,
+      executionService: mockExecutionService,
+      projectBlueprintService: mockProjectBlueprintService,
+      repoService: mockRepoService,
+      ticketService: mockTicketService,
+      commandEngine: mockCommandEngine,
+      v2EventService: mockV2EventService,
+    });
+
+    // The execution_request path fires the event but resumeApprovedExecutionRequest returns null
+    expect(mockV2EventService.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "execution.requested",
+      })
+    );
+    // startExecution should NOT have been called since resume returned null
+    expect(mockExecutionService.startExecution).not.toHaveBeenCalled();
+    expect(result.item).toEqual(approvalDecision);
+  });
+
+  it("resolves repoId from ticket.repoId when not in payload or runMetadata", async () => {
+    const approvalDecision = {
+      id: "approval-1",
+      actionType: "execution_request" as const,
+      payload: {
+        run_id: "run-1",
+        ticket_id: "ticket-1",
+        prompt: "Fix the bug",
+        model_role: "coder_default",
+        provider_id: "qwen-cli",
+        // No repo_id or project_id in payload
+      },
+    };
+
+    const mockTicket = { id: "ticket-1", repoId: "repo-from-ticket", status: "in_progress" as const };
+    const mockAttempt = { id: "attempt-1" };
+
+    vi.mocked(mockApprovalService.decideApproval).mockResolvedValue(approvalDecision as any);
+    vi.mocked(mockTicketService.getTicket).mockResolvedValue(mockTicket as any);
+    vi.mocked(mockRepoService.getActiveWorktreePath).mockResolvedValue("/tmp/worktree");
+    vi.mocked(mockExecutionService.startExecution).mockResolvedValue(mockAttempt as any);
+    vi.mocked(mockProjectBlueprintService.get).mockResolvedValue({} as any);
+    vi.mocked(mockRepoService.getGuidelines).mockResolvedValue([]);
+    // No repo_id in runMetadata either
+    mocks.prisma.runProjection.findUnique.mockResolvedValue({
+      metadata: {},
+    });
+
+    await decideApprovalWithCommandFollowup({
+      approvalId: "approval-1",
+      decision: "approved",
+      actor: "user-1",
+      executeApprovedCommand: false,
+      requeueBlockedStage: false,
+      approvalService: mockApprovalService,
+      executionService: mockExecutionService,
+      projectBlueprintService: mockProjectBlueprintService,
+      repoService: mockRepoService,
+      ticketService: mockTicketService,
+      commandEngine: mockCommandEngine,
+      v2EventService: mockV2EventService,
+    });
+
+    // repoId should fall through to ticket.repoId
+    expect(mockExecutionService.startExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoId: "repo-from-ticket",
+      })
+    );
   });
 
   it("passes reason parameter to decideApproval", async () => {

@@ -148,5 +148,48 @@ describe("PluginLoader", () => {
       // Tool registry should still be empty (data-only tools can't be registered)
       expect(toolRegistry.size).toBe(0);
     });
+
+    it("runs without error when plugins have no tools property", async () => {
+      writeManifest(tmpDir, "no-tools-plugin", {
+        name: "no-tools-plugin",
+        version: "1.0.0",
+        description: "Plugin without tools",
+      });
+
+      await loader.loadFromDirectory(tmpDir, "user");
+      expect(() => loader.registerPluginTools()).not.toThrow();
+      expect(toolRegistry.size).toBe(0);
+    });
+
+    it("iterates tools for multiple plugins with data-only tools", async () => {
+      writeManifest(tmpDir, "plugin-a", {
+        name: "plugin-a",
+        version: "1.0.0",
+        description: "Plugin A",
+        tools: [
+          { name: "tool_1", description: "Tool one" },
+          { name: "tool_2", description: "Tool two" },
+        ],
+      });
+      writeManifest(tmpDir, "plugin-b", {
+        name: "plugin-b",
+        version: "1.0.0",
+        description: "Plugin B",
+        tools: [{ name: "tool_3", description: "Tool three" }],
+      });
+
+      await loader.loadFromDirectory(tmpDir, "user");
+      loader.registerPluginTools();
+      // Still no tools registered (data-only), but no errors
+      expect(toolRegistry.size).toBe(0);
+    });
+  });
+
+  describe("loadBuiltins", () => {
+    it("attempts to load from builtins directory without error", async () => {
+      // loadBuiltins looks for a 'builtins' dir relative to the module file.
+      // In test context, this dir likely doesn't exist, so it should return 0.
+      await expect(loader.loadBuiltins()).resolves.not.toThrow();
+    });
   });
 });

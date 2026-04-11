@@ -162,6 +162,99 @@ describe("bitmap pre-filtering", () => {
 // Async indexing
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Additional scoring paths
+// ---------------------------------------------------------------------------
+
+describe("search scoring — additional coverage", () => {
+  it("handles search with limit 0 returning empty even with query", () => {
+    expect(index.search("registry", 0)).toEqual([]);
+  });
+
+  it("returns empty for empty query with no top-level cache", () => {
+    const emptyIndex = new FileIndex();
+    expect(emptyIndex.search("", 5)).toEqual([]);
+  });
+
+  it("handles single-character query", () => {
+    const results = index.search("r", 5);
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("handles case-sensitive search correctly", () => {
+    // Uppercase letter forces case-sensitive mode
+    const results = index.search("App", 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.path).toContain("App");
+  });
+
+  it("exercises gap penalty with spread-out characters", () => {
+    // Characters far apart should still match but with lower score
+    const results = index.search("rg", 10);
+    // 'r' and 'g' exist in "registry" close together
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("exercises top-k insertion with binary search", () => {
+    // Search with a very small limit forces the binary-search top-k insertion
+    const results = index.search("ts", 2);
+    expect(results.length).toBeLessThanOrEqual(2);
+  });
+
+  it("handles __tests__ pattern in test file penalty", () => {
+    const idx = new FileIndex();
+    idx.loadFromFileList([
+      "src/__tests__/helper.ts",
+      "src/helper.ts",
+    ]);
+    const results = idx.search("helper", 10);
+    expect(results.length).toBe(2);
+    // Non-test file should score better
+    const nonTestIdx = results.findIndex((r) => !r.path.includes("__tests__"));
+    const testIdx = results.findIndex((r) => r.path.includes("__tests__"));
+    if (nonTestIdx >= 0 && testIdx >= 0) {
+      expect(results[nonTestIdx]!.score).toBeLessThanOrEqual(results[testIdx]!.score);
+    }
+  });
+
+  it("correctly scores first-char bonus at position 0", () => {
+    // Query starting with a character that is at position 0 of a path
+    const idx = new FileIndex();
+    idx.loadFromFileList(["README.md", "src/readme.ts"]);
+    const results = idx.search("readme", 5);
+    expect(results.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeTopLevelEntries sorting
+// ---------------------------------------------------------------------------
+
+describe("top-level cache sorting", () => {
+  it("sorts top-level entries by length then alphabetically", () => {
+    const idx = new FileIndex();
+    idx.loadFromFileList(["beta/file.ts", "alpha/file.ts", "a/file.ts"]);
+    const results = idx.search("", 10);
+    // Shortest first, then alphabetical
+    expect(results[0]!.path).toBe("a");
+    expect(results[1]!.path).toBe("beta");
+    expect(results[2]!.path).toBe("alpha");
+  });
+
+  it("sorts equal-length entries alphabetically", () => {
+    const idx = new FileIndex();
+    idx.loadFromFileList(["bbb/file.ts", "aaa/file.ts", "ccc/file.ts"]);
+    const results = idx.search("", 10);
+    expect(results[0]!.path).toBe("aaa");
+    expect(results[1]!.path).toBe("bbb");
+    expect(results[2]!.path).toBe("ccc");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Async indexing
+// ---------------------------------------------------------------------------
+
 describe("async indexing", () => {
   it("builds index asynchronously", async () => {
     const asyncIndex = new FileIndex();

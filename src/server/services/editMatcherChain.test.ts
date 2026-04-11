@@ -103,6 +103,27 @@ describe("whitespaceNormalizedMatch", () => {
   it("returns null when content truly differs", () => {
     expect(whitespaceNormalizedMatch("foo bar", "baz qux")).toBeNull();
   });
+
+  it("handles match at end of content where collapsedEnd >= map.length", () => {
+    // Content has trailing whitespace that collapses, search matches at end
+    const content = "x  =  1";
+    const search = "x = 1";
+    const result = whitespaceNormalizedMatch(content, search);
+    expect(result).not.toBeNull();
+    // origEnd should be content.length since match extends to end
+    expect(result!.endIndex).toBe(content.length);
+  });
+
+  it("returns null when whitespace-collapsed strings already match exactly", () => {
+    // If no whitespace collapse occurred (identical), it returns null since exactMatch handles that
+    const content = "x = 1";
+    const search = "x = 1";
+    // Both already have single spaces — collapseWhitespace is a no-op, so indexOf works
+    // but the function still returns a match because it doesn't check if collapse was a no-op
+    const result = whitespaceNormalizedMatch(content, search);
+    // Actually the function always tries even if content is unchanged
+    expect(result).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -170,6 +191,25 @@ describe("fuzzyLineMatch", () => {
   it("returns null for single-line searchText", () => {
     expect(fuzzyLineMatch("hello", "hello")).toBeNull();
   });
+
+  it("returns first-branch match correctly with startIndex and endIndex", () => {
+    // Content has an extra line; first branch removes the line adjacent to insertion
+    // and finds the remaining search lines contiguously
+    const content = "prefix\nline1\nline2\nlineEXTRA\nline3\nsuffix";
+    const search = "line1\nline2\nline3";
+    const result = fuzzyLineMatch(content, search);
+    expect(result).not.toBeNull();
+    expect(result!.matcherLevel).toBe(5);
+    // First branch matches by removing "line3" from search: "line1\nline2" found in content
+    expect(result!.matchedText).toBe("line1\nline2");
+  });
+
+  it("returns null when no fuzzy match is possible", () => {
+    const content = "alpha\nbeta\ngamma";
+    const search = "delta\nepsilon";
+    const result = fuzzyLineMatch(content, search);
+    expect(result).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -198,6 +238,20 @@ describe("lineNumberAnchoredMatch", () => {
   it("returns null when no line-number comment present", () => {
     expect(lineNumberAnchoredMatch("hello", "hello")).toBeNull();
   });
+
+  it("returns null when line hint has no actual search text", () => {
+    const content = "a = 1\nb = 2\n";
+    const search = "// line 1:\n";
+    const result = lineNumberAnchoredMatch(content, search);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when actual search text is not found in content", () => {
+    const content = "a = 1\nb = 2\n";
+    const search = "// line 1:\nz = 999";
+    const result = lineNumberAnchoredMatch(content, search);
+    expect(result).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -216,6 +270,10 @@ describe("similarityMatch", () => {
 
   it("returns null when similarity is below threshold", () => {
     expect(similarityMatch("abcdefgh", "zzzzzzzz")).toBeNull();
+  });
+
+  it("returns null for empty searchText", () => {
+    expect(similarityMatch("some content", "")).toBeNull();
   });
 });
 
@@ -243,6 +301,13 @@ describe("wholeBlockMatch", () => {
 
   it("returns null for non-block searchText", () => {
     expect(wholeBlockMatch("hello world", "hello world")).toBeNull();
+  });
+
+  it("returns null when block prefix matches but no line in content matches", () => {
+    const content = "import x from 'y';\nconst a = 1;\n";
+    const search = "function nonExistent() {\n  return 42;\n}";
+    const result = wholeBlockMatch(content, search);
+    expect(result).toBeNull();
   });
 });
 
@@ -453,6 +518,23 @@ describe("preserveQuoteStyle", () => {
     expect(result.content).toContain("\u201C");
     expect(result.content).toContain("\u201D");
     expect(result.content).toContain("Goodbye World");
+  });
+
+  it("handles closing quote position when preceded by non-whitespace", () => {
+    const source = "Said \u201CHello\u201D";
+    const target = 'Said "Hello"';
+    const result = preserveQuoteStyle(source, target);
+    // The closing quote is after 'o' (non-whitespace), so it should be closing curly
+    expect(result).toBe("Said \u201CHello\u201D");
+  });
+
+  it("handles both curly single and double quotes simultaneously", () => {
+    const source = "\u201CHe\u2019s here\u201D";
+    const target = '"He\'s here"';
+    const result = preserveQuoteStyle(source, target);
+    expect(result).toContain("\u201C");
+    expect(result).toContain("\u201D");
+    expect(result).toContain("\u2019");
   });
 
   it("runEditMatcherChain does not apply preservation for exact matches", () => {

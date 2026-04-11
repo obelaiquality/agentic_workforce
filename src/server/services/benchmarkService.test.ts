@@ -68,6 +68,7 @@ const mocks = vi.hoisted(() => ({
     getGuidelines: vi.fn(),
     importManagedPack: vi.fn(),
     attachLocalRepo: vi.fn(),
+    getActiveWorktreePath: vi.fn(),
   },
   mockExecutionService: {
     planExecution: vi.fn(),
@@ -85,6 +86,10 @@ const mocks = vi.hoisted(() => ({
   mockExecSync: vi.fn(),
   mockYAML: {
     parse: vi.fn(),
+  },
+  mockLearningsService: {
+    recordPattern: vi.fn(),
+    recordAntipattern: vi.fn(),
   },
 }));
 
@@ -130,6 +135,10 @@ vi.mock("./providerOrchestrator", () => ({
 
 vi.mock("./shellDetect", () => ({
   detectShell: vi.fn(() => "/bin/bash"),
+}));
+
+vi.mock("./learningsService", () => ({
+  LearningsService: vi.fn(() => mocks.mockLearningsService),
 }));
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1143,5 +1152,959 @@ describe("getLeaderboard", () => {
       orderBy: [{ totalScore: "desc" }, { updatedAt: "desc" }],
       take: 100,
     });
+  });
+});
+
+// ── runShell error branches ──────────────────────────────────────────────
+
+describe("runShell error branches (via startRun setup command)", () => {
+  it("handles Buffer stdout/stderr in shell error", async () => {
+    const mockProject = makeMockProject({ setupCommand: "failing-cmd" });
+    const mockTask = makeMockTask();
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkOutcomeEvidence.create.mockResolvedValue({ id: "evidence-1" });
+
+    mocks.mockExecSync.mockImplementation(() => {
+      const error: any = new Error("Command failed");
+      error.status = 2;
+      error.stdout = Buffer.from("buf stdout");
+      error.stderr = Buffer.from("buf stderr");
+      throw error;
+    });
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    expect(mocks.mockPrisma.benchmarkOutcomeEvidence.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        kind: "build_result",
+        payload: expect.objectContaining({
+          phase: "setup",
+          ok: false,
+          stdout: "buf stdout",
+          stderr: "buf stderr",
+          exitCode: 2,
+        }),
+      }),
+    });
+  });
+
+  it("handles shell error with no stdout/stderr (falls back to message)", async () => {
+    const mockProject = makeMockProject({ setupCommand: "failing-cmd" });
+    const mockTask = makeMockTask();
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkOutcomeEvidence.create.mockResolvedValue({ id: "evidence-1" });
+
+    mocks.mockExecSync.mockImplementation(() => {
+      const error: any = new Error("ENOENT: command not found");
+      // No stdout, no stderr, no status
+      throw error;
+    });
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    expect(mocks.mockPrisma.benchmarkOutcomeEvidence.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        kind: "build_result",
+        payload: expect.objectContaining({
+          ok: false,
+          stdout: "",
+          stderr: "ENOENT: command not found",
+          exitCode: 1,
+        }),
+      }),
+    });
+  });
+});
+
+// ── inferBenchmarkRisk branches (via startRun providerRole) ──────────────
+
+describe("inferBenchmarkRisk and inferBenchmarkProviderRole branches", () => {
+  it("uses metadata riskLevel when present", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({
+      metadata: { riskLevel: "high" },
+    });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    // High risk inferred from metadata should route to overseer_escalation
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "overseer_escalation",
+        }),
+      })
+    );
+  });
+
+  it("uses metadata risk field as fallback", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({
+      metadata: { risk: "medium" },
+    });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    // Medium risk should still return project defaultProviderRole since it's not "high"
+    // and category isn't "review" or "decompose"
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalled();
+  });
+
+  it("returns high risk for decompose category", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({ category: "decompose" });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    // Decompose = high risk => overseer_escalation
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "overseer_escalation",
+        }),
+      })
+    );
+  });
+
+  it("returns high risk for text matching architecture keywords", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({
+      category: "implement",
+      prompt: "Implement a security policy for the multi-agent system",
+    });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "overseer_escalation",
+        }),
+      })
+    );
+  });
+
+  it("returns medium risk for review category", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({ category: "review" });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    // Review category => review_deep provider role
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "review_deep",
+        }),
+      })
+    );
+  });
+
+  it("returns medium risk for text matching integration/e2e keywords", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({
+      category: "implement",
+      prompt: "Write integration tests for the API",
+    });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    // Medium risk but not review/decompose => project default
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "coder_default",
+        }),
+      })
+    );
+  });
+
+  it("uses preferredRole from task metadata when available", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({
+      metadata: { preferredRole: "utility_fast" },
+    });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "utility_fast",
+        }),
+      })
+    );
+  });
+
+  it("uses preferred_role (snake_case) from task metadata", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask({
+      metadata: { preferred_role: "review_deep" },
+    });
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRole: "review_deep",
+        }),
+      })
+    );
+  });
+});
+
+// ── startRun additional branches ─────────────────────────────────────────
+
+describe("startRun additional branches", () => {
+  it("skips setup command when it is empty string", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask();
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+    });
+
+    // No setup command => no evidence created for setup, no execSync call
+    expect(mocks.mockPrisma.benchmarkOutcomeEvidence.create).not.toHaveBeenCalled();
+  });
+
+  it("throws when repo cannot be resolved", async () => {
+    const mockProject = makeMockProject({ repoId: null, sourceKind: "unsupported" as any });
+    const mockTask = makeMockTask();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(null);
+
+    await expect(
+      service.startRun({
+        actor: "test-user",
+        project_id: "proj-1",
+        task_id: "task-1",
+      })
+    ).rejects.toThrow("Unable to resolve repo for benchmark project");
+  });
+
+  it("uses provided mode and provider_role overrides", async () => {
+    const mockProject = makeMockProject({ setupCommand: "" });
+    const mockTask = makeMockTask();
+    const mockRepo = makeMockRepo();
+    const mockRun = makeMockRun();
+
+    mocks.mockFs.readdirSync.mockReturnValue([]);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.benchmarkRun.create.mockResolvedValue(mockRun);
+
+    await service.startRun({
+      actor: "test-user",
+      project_id: "proj-1",
+      task_id: "task-1",
+      mode: "interview",
+      provider_role: "overseer_escalation",
+    });
+
+    expect(mocks.mockPrisma.benchmarkRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          mode: "interview",
+          providerRole: "overseer_escalation",
+        }),
+      })
+    );
+  });
+});
+
+// ── ensureRepoForProject additional branches ─────────────────────────────
+
+describe("ensureRepoForProject additional branches", () => {
+  it("finds existing managed_pack by metadata.project_key", async () => {
+    const project = makeMockProject({
+      repoId: null,
+      sourceKind: "managed_pack",
+      sourceUri: "/managed/pack",
+    });
+    const existingRepo = {
+      id: "existing-repo-meta",
+      sourceUri: "/different/path",
+      sourceKind: "managed_pack",
+      metadata: { project_key: "/managed/pack" },
+    };
+    const mockRepo = makeMockRepo();
+
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.repoRegistry.findMany.mockResolvedValue([existingRepo as any]);
+    mocks.mockPrisma.benchmarkProject.update.mockResolvedValue({});
+
+    const repo = await service.ensureRepoForProject(project);
+
+    expect(repo).toEqual(mockRepo);
+    expect(mocks.mockPrisma.benchmarkProject.update).toHaveBeenCalledWith({
+      where: { id: project.id },
+      data: { repoId: "existing-repo-meta" },
+    });
+  });
+
+  it("finds existing local_path repo and links it", async () => {
+    const project = makeMockProject({
+      repoId: null,
+      sourceKind: "local_path",
+      sourceUri: "/local/path",
+    });
+    const existingLocal = {
+      id: "existing-local",
+      sourceKind: "local_path",
+      sourceUri: "/local/path",
+    };
+    const mockRepo = makeMockRepo();
+
+    mocks.mockRepoService.getRepo.mockResolvedValue(mockRepo);
+    mocks.mockPrisma.repoRegistry.findFirst.mockResolvedValue(existingLocal as any);
+    mocks.mockPrisma.benchmarkProject.update.mockResolvedValue({});
+
+    const repo = await service.ensureRepoForProject(project);
+
+    expect(repo).toEqual(mockRepo);
+    expect(mocks.mockPrisma.benchmarkProject.update).toHaveBeenCalledWith({
+      where: { id: project.id },
+      data: { repoId: "existing-local" },
+    });
+    expect(mocks.mockRepoService.getRepo).toHaveBeenCalledWith("existing-local");
+  });
+
+  it("falls through when repoId is set but repo is not found", async () => {
+    const project = makeMockProject({
+      repoId: "stale-repo-id",
+      sourceKind: "managed_pack",
+      sourceUri: "/managed/pack",
+    });
+    const mockRepo = makeMockRepo();
+
+    // First call returns null (stale repo), second call succeeds after import
+    mocks.mockRepoService.getRepo.mockResolvedValueOnce(null);
+    mocks.mockPrisma.repoRegistry.findMany.mockResolvedValue([]);
+    mocks.mockRepoService.importManagedPack.mockResolvedValue({ repo: mockRepo });
+    mocks.mockPrisma.benchmarkProject.update.mockResolvedValue({});
+
+    const repo = await service.ensureRepoForProject(project);
+
+    expect(repo).toEqual(mockRepo);
+    expect(mocks.mockRepoService.importManagedPack).toHaveBeenCalled();
+  });
+});
+
+// ── executeTask additional branches ──────────────────────────────────────
+
+describe("executeTask additional branches", () => {
+  it("uses review query mode for review category", async () => {
+    const mockRun = makeMockRun();
+    const mockTask = makeMockTask({ category: "review" });
+    const mockProject = makeMockProject();
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+
+    mocks.mockExecutionService.planExecution.mockResolvedValue({
+      routingDecision: { id: "routing-1", modelRole: "review_deep", providerId: "provider-1" },
+      contextManifest: { id: "manifest-1" },
+      contextPack: { id: "pack-1" },
+    });
+    mocks.mockExecutionService.startExecution.mockResolvedValue({ id: "attempt-1" });
+    mocks.mockExecutionService.verifyExecution.mockResolvedValue({ id: "verification-1" });
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+
+    await service.executeTask("run-1", "test-user");
+
+    expect(mocks.mockExecutionService.planExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryMode: "review",
+      })
+    );
+  });
+
+  it("uses impact query mode for non-decompose non-review category", async () => {
+    const mockRun = makeMockRun();
+    const mockTask = makeMockTask({ category: "implement" });
+    const mockProject = makeMockProject();
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+
+    mocks.mockExecutionService.planExecution.mockResolvedValue({
+      routingDecision: { id: "routing-1", modelRole: "coder_default", providerId: "provider-1" },
+      contextManifest: { id: "manifest-1" },
+      contextPack: { id: "pack-1" },
+    });
+    mocks.mockExecutionService.startExecution.mockResolvedValue({ id: "attempt-1" });
+    mocks.mockExecutionService.verifyExecution.mockResolvedValue({ id: "verification-1" });
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+
+    await service.executeTask("run-1", "test-user");
+
+    expect(mocks.mockExecutionService.planExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryMode: "impact",
+      })
+    );
+  });
+
+  it("uses task.requiredChecks for verification when not empty", async () => {
+    const mockRun = makeMockRun();
+    const mockTask = makeMockTask({ requiredChecks: ["npm test", "npm run lint"] });
+    const mockProject = makeMockProject();
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+
+    mocks.mockExecutionService.planExecution.mockResolvedValue({
+      routingDecision: { id: "routing-1", modelRole: "coder_default", providerId: "provider-1" },
+      contextManifest: { id: "manifest-1" },
+      contextPack: { id: "pack-1" },
+    });
+    mocks.mockExecutionService.startExecution.mockResolvedValue({ id: "attempt-1" });
+    mocks.mockExecutionService.verifyExecution.mockResolvedValue({ id: "verification-1" });
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+
+    await service.executeTask("run-1", "test-user");
+
+    expect(mocks.mockExecutionService.verifyExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: [{ command: "npm test" }, { command: "npm run lint" }],
+        fullSuiteRun: false,
+      })
+    );
+  });
+
+  it("falls back to project verifyCommand when task has no requiredChecks", async () => {
+    const mockRun = makeMockRun();
+    const mockTask = makeMockTask({ requiredChecks: [] });
+    const mockProject = makeMockProject({ verifyCommand: "make check" });
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+
+    mocks.mockExecutionService.planExecution.mockResolvedValue({
+      routingDecision: { id: "routing-1", modelRole: "coder_default", providerId: "provider-1" },
+      contextManifest: { id: "manifest-1" },
+      contextPack: { id: "pack-1" },
+    });
+    mocks.mockExecutionService.startExecution.mockResolvedValue({ id: "attempt-1" });
+    mocks.mockExecutionService.verifyExecution.mockResolvedValue({ id: "verification-1" });
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+
+    await service.executeTask("run-1", "test-user");
+
+    expect(mocks.mockExecutionService.verifyExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: [{ command: "make check" }],
+      })
+    );
+  });
+});
+
+// ── scoreRun additional branches ─────────────────────────────────────────
+
+describe("scoreRun additional branches", () => {
+  function setupScoreRunMocks(overrides: {
+    task?: any;
+    project?: any;
+    guidelines?: any;
+    blueprint?: any;
+    retrievalTrace?: any[];
+    verificationBundle?: any;
+    verifyOk?: boolean;
+    changedFiles?: string[];
+    existsSync?: (p: string) => boolean;
+  }) {
+    const mockRun = makeMockRun({ startedAt: new Date(Date.now() - 60_000) });
+    const mockTask = overrides.task ?? makeMockTask({ requiredDocs: [], requiredChecks: ["npm test"] });
+    const mockProject = overrides.project ?? makeMockProject();
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockRepoService.getGuidelines.mockResolvedValue(overrides.guidelines ?? null);
+    mocks.mockPrisma.projectBlueprint.findFirst.mockResolvedValue(overrides.blueprint ?? null);
+    mocks.mockPrisma.retrievalTrace.findMany.mockResolvedValue(overrides.retrievalTrace ?? [{ id: "trace-1" }]);
+    mocks.mockPrisma.verificationBundle.findFirst.mockResolvedValue(
+      "verificationBundle" in overrides ? overrides.verificationBundle : { pass: true, failures: [] }
+    );
+
+    const verifyOk = overrides.verifyOk ?? true;
+    mocks.mockExecSync.mockImplementation((cmd: string) => {
+      if (!verifyOk && !cmd.includes("git status")) {
+        const error: any = new Error("test failed");
+        error.status = 1;
+        error.stdout = "";
+        error.stderr = "test failed";
+        throw error;
+      }
+      return "";
+    });
+
+    const changedFiles = overrides.changedFiles ?? [" M src/a.ts"];
+    mocks.mockFs.existsSync.mockImplementation(overrides.existsSync ?? (() => true));
+
+    mocks.mockPrisma.benchmarkOutcomeEvidence.create
+      .mockResolvedValueOnce({
+        id: "ev-1",
+        payload: { command: "npm test", ok: verifyOk },
+      } as any)
+      .mockResolvedValueOnce({
+        id: "ev-2",
+        payload: { changed_files: changedFiles },
+      } as any);
+
+    mocks.mockPrisma.benchmarkScorecard.upsert.mockImplementation(async (args: any) => ({
+      ...args.create,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+    mocks.mockPrisma.shareableRunReport.upsert.mockResolvedValue({ id: "report-1" });
+    mocks.mockPrisma.benchmarkExampleCandidate.upsert.mockResolvedValue({});
+    mocks.mockPrisma.benchmarkRun.findUniqueOrThrow.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkOutcomeEvidence.findMany.mockResolvedValue([]);
+
+    return { mockRun, mockTask, mockProject };
+  }
+
+  it("scores verification_bundle_missing when no bundle exists", async () => {
+    setupScoreRunMocks({
+      verificationBundle: null,
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          hardFailures: expect.arrayContaining(["verification_bundle_missing"]),
+        }),
+      })
+    );
+  });
+
+  it("adds verification bundle failures to hard failures", async () => {
+    setupScoreRunMocks({
+      verificationBundle: { pass: false, failures: ["test_timeout", "lint_error"] },
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          hardFailures: expect.arrayContaining(["test_timeout", "lint_error"]),
+        }),
+      })
+    );
+  });
+
+  it("scores patchQuality 0 when no files changed", async () => {
+    setupScoreRunMocks({
+      changedFiles: [],
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          patchQuality: 0,
+        }),
+      })
+    );
+  });
+
+  it("scores patchQuality 7 when 7-12 files changed", async () => {
+    const files = Array.from({ length: 8 }, (_, i) => ` M src/file${i}.ts`);
+    setupScoreRunMocks({
+      changedFiles: files,
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          patchQuality: 7,
+        }),
+      })
+    );
+  });
+
+  it("scores patchQuality 4 when more than 12 files changed", async () => {
+    const files = Array.from({ length: 15 }, (_, i) => ` M src/file${i}.ts`);
+    setupScoreRunMocks({
+      changedFiles: files,
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          patchQuality: 4,
+        }),
+      })
+    );
+  });
+
+  it("scores verificationDiscipline 10 when verify passes but bundle fails", async () => {
+    setupScoreRunMocks({
+      verifyOk: true,
+      verificationBundle: { pass: false, failures: ["some_failure"] },
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          verificationDiscipline: 10,
+        }),
+      })
+    );
+  });
+
+  it("scores verificationDiscipline 5 when verify fails", async () => {
+    setupScoreRunMocks({
+      verifyOk: false,
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          verificationDiscipline: 5,
+        }),
+      })
+    );
+  });
+
+  it("scores guidelineAdherence based on sourceRefs count", async () => {
+    setupScoreRunMocks({
+      guidelines: { sourceRefs: ["README.md", "CONTRIBUTING.md", "AGENTS.md", "docs/style.md", "docs/arch.md", "docs/api.md"] },
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    // 8 + 6 * 2 = 20 (capped at 20)
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          guidelineAdherence: 20,
+        }),
+      })
+    );
+  });
+
+  it("scores latencyRecovery 2 when over time budget", async () => {
+    const mockRun = makeMockRun({ startedAt: new Date(Date.now() - 600_000) });
+    const mockProject = makeMockProject({ timeBudgetSec: 1 }); // 1 second budget, 600s elapsed
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(makeMockTask({ requiredDocs: [], requiredChecks: ["npm test"] }));
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(mockProject);
+    mocks.mockRepoService.getGuidelines.mockResolvedValue(null);
+    mocks.mockPrisma.projectBlueprint.findFirst.mockResolvedValue(null);
+    mocks.mockPrisma.retrievalTrace.findMany.mockResolvedValue([{ id: "trace-1" }]);
+    mocks.mockPrisma.verificationBundle.findFirst.mockResolvedValue({ pass: true, failures: [] });
+    mocks.mockExecSync.mockReturnValue("");
+    mocks.mockFs.existsSync.mockReturnValue(true);
+
+    mocks.mockPrisma.benchmarkOutcomeEvidence.create
+      .mockResolvedValueOnce({ id: "ev-1", payload: { ok: true } } as any)
+      .mockResolvedValueOnce({ id: "ev-2", payload: { changed_files: [" M a.ts"] } } as any);
+    mocks.mockPrisma.benchmarkScorecard.upsert.mockImplementation(async (args: any) => ({
+      ...args.create,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+    mocks.mockPrisma.shareableRunReport.upsert.mockResolvedValue({ id: "report-1" });
+    mocks.mockPrisma.benchmarkExampleCandidate.upsert.mockResolvedValue({});
+    mocks.mockPrisma.benchmarkRun.findUniqueOrThrow.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkOutcomeEvidence.findMany.mockResolvedValue([]);
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          latencyRecovery: 2,
+        }),
+      })
+    );
+  });
+
+  it("adds blueprint_required_doc_missing when blueprint docs are missing", async () => {
+    setupScoreRunMocks({
+      blueprint: {
+        testingPolicy: { requiredForBehaviorChange: true },
+        documentationPolicy: {
+          updateUserFacingDocs: true,
+          requiredDocPaths: ["docs/api.md", "docs/guide.md"],
+        },
+        executionPolicy: { maxChangedFilesBeforeReview: 10 },
+      },
+      existsSync: (p: string) => !p.includes("docs/guide.md"),
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          hardFailures: expect.arrayContaining(["blueprint_required_doc_missing:docs/guide.md"]),
+        }),
+      })
+    );
+  });
+
+  it("reduces policyCompliance when changed files exceed blueprint max", async () => {
+    const files = Array.from({ length: 15 }, (_, i) => ` M src/file${i}.ts`);
+    setupScoreRunMocks({
+      blueprint: {
+        testingPolicy: {},
+        documentationPolicy: {},
+        executionPolicy: { maxChangedFilesBeforeReview: 3 },
+      },
+      changedFiles: files,
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    // Blueprint present: +2 base, +1 tests (not required), +1 docs (not required), 0 for max files exceeded = 4
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          policyCompliance: 4,
+        }),
+      })
+    );
+  });
+
+  it("adds required_checks_missing failure when task has empty requiredChecks", async () => {
+    setupScoreRunMocks({
+      task: makeMockTask({ requiredDocs: [], requiredChecks: [] }),
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          hardFailures: expect.arrayContaining(["required_checks_missing"]),
+        }),
+      })
+    );
+  });
+
+  it("scores patchQuality 10 when 1-6 files changed", async () => {
+    const files = Array.from({ length: 3 }, (_, i) => ` M src/file${i}.ts`);
+    setupScoreRunMocks({
+      changedFiles: files,
+    });
+
+    const result = await service.scoreRun("run-1", "test-user");
+
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          patchQuality: 10,
+        }),
+      })
+    );
+  });
+
+  it("uses metadata risk_level (snake_case) as fallback", async () => {
+    // This covers the third fallback path in inferBenchmarkRisk metadata
+    const mockRun = makeMockRun({ startedAt: new Date(Date.now() - 60_000) });
+    const mockTask = makeMockTask({
+      requiredDocs: [],
+      requiredChecks: ["npm test"],
+      metadata: { risk_level: "low" },
+    });
+
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(mockTask);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(makeMockProject());
+    mocks.mockRepoService.getGuidelines.mockResolvedValue(null);
+    mocks.mockPrisma.projectBlueprint.findFirst.mockResolvedValue(null);
+    mocks.mockPrisma.retrievalTrace.findMany.mockResolvedValue([{ id: "trace-1" }]);
+    mocks.mockPrisma.verificationBundle.findFirst.mockResolvedValue({ pass: true, failures: [] });
+    mocks.mockExecSync.mockReturnValue("");
+    mocks.mockFs.existsSync.mockReturnValue(true);
+
+    mocks.mockPrisma.benchmarkOutcomeEvidence.create
+      .mockResolvedValueOnce({ id: "ev-1", payload: { ok: true } } as any)
+      .mockResolvedValueOnce({ id: "ev-2", payload: { changed_files: [" M a.ts"] } } as any);
+    mocks.mockPrisma.benchmarkScorecard.upsert.mockImplementation(async (args: any) => ({
+      ...args.create,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    mocks.mockPrisma.benchmarkRun.update.mockResolvedValue(mockRun);
+    mocks.mockPrisma.shareableRunReport.upsert.mockResolvedValue({ id: "report-1" });
+    mocks.mockPrisma.benchmarkExampleCandidate.upsert.mockResolvedValue({});
+    mocks.mockPrisma.benchmarkRun.findUniqueOrThrow.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkOutcomeEvidence.findMany.mockResolvedValue([]);
+
+    // Should not throw — risk_level "low" is a valid metadata risk value
+    const result = await service.scoreRun("run-1", "test-user");
+    expect(mocks.mockPrisma.benchmarkScorecard.upsert).toHaveBeenCalled();
+  });
+
+  it("handles scoreRun task/project not found after run lookup", async () => {
+    const mockRun = makeMockRun();
+    mocks.mockPrisma.benchmarkRun.findUnique.mockResolvedValue(mockRun);
+    mocks.mockPrisma.benchmarkTask.findUnique.mockResolvedValue(null);
+    mocks.mockPrisma.benchmarkProject.findUnique.mockResolvedValue(null);
+    mocks.mockRepoService.getGuidelines.mockResolvedValue(null);
+    mocks.mockPrisma.projectBlueprint.findFirst.mockResolvedValue(null);
+    mocks.mockPrisma.retrievalTrace.findMany.mockResolvedValue([]);
+    mocks.mockPrisma.verificationBundle.findFirst.mockResolvedValue(null);
+
+    await expect(service.scoreRun("run-1", "test-user")).rejects.toThrow(
+      "Benchmark task or project not found"
+    );
   });
 });

@@ -106,4 +106,51 @@ describe("isLspCommandAvailable", () => {
 
     expect(result).toBe(false);
   });
+
+  it("searches PATH entries and returns true when command is found", async () => {
+    const originalPATH = process.env.PATH;
+    process.env.PATH = "/usr/bin:/usr/local/bin";
+
+    // Reject first candidate, resolve second
+    mockedAccess.mockRejectedValueOnce(new Error("ENOENT"));
+    mockedAccess.mockResolvedValueOnce(undefined);
+
+    const result = await isLspCommandAvailable("my-server");
+
+    expect(result).toBe(true);
+    process.env.PATH = originalPATH;
+  });
+
+  it("returns false when command is not found in any PATH entry", async () => {
+    const originalPATH = process.env.PATH;
+    process.env.PATH = "/usr/bin:/usr/local/bin";
+
+    mockedAccess.mockRejectedValue(new Error("ENOENT"));
+
+    const result = await isLspCommandAvailable("nonexistent-cmd");
+
+    expect(result).toBe(false);
+    process.env.PATH = originalPATH;
+  });
+
+  it("handles win32 PATHEXT-based executable resolution", async () => {
+    const originalPlatform = process.platform;
+    const originalPATH = process.env.PATH;
+    const originalPATHEXT = process.env.PATHEXT;
+
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    process.env.PATH = "C:\\Windows\\System32";
+    process.env.PATHEXT = ".EXE;.CMD";
+
+    mockedAccess.mockRejectedValueOnce(new Error("ENOENT"));
+    mockedAccess.mockResolvedValueOnce(undefined);
+
+    const result = await isLspCommandAvailable("my-tool");
+
+    expect(result).toBe(true);
+
+    Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    process.env.PATH = originalPATH;
+    process.env.PATHEXT = originalPATHEXT;
+  });
 });

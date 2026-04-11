@@ -650,6 +650,439 @@ describe("distillReadiness", () => {
       expect(cacheCheck?.severity).toBe("warning");
     });
 
+    it("handles checkCommand with non-zero exit status and no error object", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli" && args?.[0] === "--version") {
+          // Non-zero status, no error object — hits the `result.status !== 0` branch
+          return {
+            error: undefined,
+            status: 1,
+            stdout: "",
+            stderr: "some stderr output",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: '{"missing": []}',
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      vi.mocked(fs.statfsSync).mockReturnValue({
+        bavail: BigInt(10_000_000),
+        bsize: BigInt(4096),
+      } as ReturnType<typeof fs.statfsSync>);
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      expect(result.ready).toBe(false);
+      const teacherCheck = result.checks.find((c) => c.key === "teacher_cli");
+      expect(teacherCheck?.ok).toBe(false);
+      expect(teacherCheck?.message).toContain("some stderr output");
+    });
+
+    it("handles checkPythonModules returning unparseable JSON", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "qwen-cli 1.0.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          // Return valid exit but unparseable stdout — hits the JSON.parse catch branch
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "not valid json at all",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      vi.mocked(fs.statfsSync).mockReturnValue({
+        bavail: BigInt(10_000_000),
+        bsize: BigInt(4096),
+      } as ReturnType<typeof fs.statfsSync>);
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const modulesCheck = result.checks.find((c) => c.key === "trainer_python_modules");
+      expect(modulesCheck?.ok).toBe(false);
+      expect(modulesCheck?.details?.missing).toContain("parse_error");
+    });
+
+    it("handles diskHeadroom when statfsSync throws", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "qwen-cli 1.0.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: '{"missing": []}',
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      // statfsSync throws — hits the diskHeadroom catch branch
+      vi.mocked(fs.statfsSync).mockImplementation(() => {
+        throw new Error("statfs not supported");
+      });
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const headroomCheck = result.checks.find((c) => c.key === "distill_disk_headroom");
+      expect(headroomCheck?.ok).toBe(false);
+      expect(headroomCheck?.severity).toBe("warning");
+      expect(headroomCheck?.details?.freeGb).toBe(0);
+    });
+
+    it("handles checkOutputRootWritable with non-Error thrown", async () => {
+      vi.mocked(spawnSync).mockReturnValue({
+        error: undefined,
+        status: 0,
+        stdout: "ok",
+        stderr: "",
+      } as ReturnType<typeof spawnSync>);
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      // Throw a non-Error value (string) to hit the `String(error)` branch
+      vi.mocked(fs.writeFileSync).mockImplementation(() => {
+        throw "string error value";
+      });
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const writableCheck = result.checks.find((c) => c.key === "distill_output_root");
+      expect(writableCheck?.ok).toBe(false);
+      expect(writableCheck?.message).toContain("string error value");
+    });
+
+    it("handles checkCommand when status is non-zero with only stdout", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 2,
+            stdout: "stdout-only message",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: '{"missing": []}',
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      vi.mocked(fs.statfsSync).mockReturnValue({
+        bavail: BigInt(10_000_000),
+        bsize: BigInt(4096),
+      } as ReturnType<typeof fs.statfsSync>);
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const teacherCheck = result.checks.find((c) => c.key === "teacher_cli");
+      expect(teacherCheck?.ok).toBe(false);
+      expect(teacherCheck?.message).toContain("stdout-only message");
+    });
+
+    it("handles checkCommand with non-zero exit and no stderr or stdout (falls back to exit N)", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 42,
+            stdout: "",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: '{"missing": []}',
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      vi.mocked(fs.statfsSync).mockReturnValue({
+        bavail: BigInt(10_000_000),
+        bsize: BigInt(4096),
+      } as ReturnType<typeof fs.statfsSync>);
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const teacherCheck = result.checks.find((c) => c.key === "teacher_cli");
+      expect(teacherCheck?.ok).toBe(false);
+      // Should contain "exit 42" since both stdout and stderr are empty
+      expect(teacherCheck?.message).toContain("exit 42");
+    });
+
+    it("handles checkCommand ok=true where stdout is empty but stderr has output", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "",
+            stderr: "version info via stderr",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: '{"missing": []}',
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      vi.mocked(fs.statfsSync).mockReturnValue({
+        bavail: BigInt(10_000_000),
+        bsize: BigInt(4096),
+      } as ReturnType<typeof fs.statfsSync>);
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const teacherCheck = result.checks.find((c) => c.key === "teacher_cli");
+      expect(teacherCheck?.ok).toBe(true);
+      // When ok, the message just says CLI is available
+      expect(teacherCheck?.message).toContain("CLI is available");
+    });
+
+    it("handles checkCommand ok=true where both stdout and stderr are empty (falls back to 'ok')", async () => {
+      vi.mocked(spawnSync).mockImplementation((command, args) => {
+        if (command === "qwen-cli" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "--version") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: "Python 3.11.0",
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        if (command === "python3" && args?.[0] === "-c") {
+          return {
+            error: undefined,
+            status: 0,
+            stdout: '{"missing": []}',
+            stderr: "",
+          } as ReturnType<typeof spawnSync>;
+        }
+        return {
+          error: undefined,
+          status: 0,
+          stdout: "ok",
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      });
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+      vi.mocked(fs.unlinkSync).mockReturnValue(undefined);
+      vi.mocked(fs.statfsSync).mockReturnValue({
+        bavail: BigInt(10_000_000),
+        bsize: BigInt(4096),
+      } as ReturnType<typeof fs.statfsSync>);
+
+      const mockOn = vi.fn();
+      const mockDestroy = vi.fn();
+      vi.mocked(net.connect).mockReturnValue({
+        on: mockOn,
+        destroy: mockDestroy,
+      } as unknown as net.Socket);
+
+      const result = await runDistillReadinessChecks(mockInput);
+
+      const teacherCheck = result.checks.find((c) => c.key === "teacher_cli");
+      expect(teacherCheck?.ok).toBe(true);
+    });
+
     it("returns result with checkedAt timestamp", async () => {
       vi.mocked(spawnSync).mockReturnValue({
         error: undefined,

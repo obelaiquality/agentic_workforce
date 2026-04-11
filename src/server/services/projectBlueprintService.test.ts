@@ -300,6 +300,32 @@ describe("ProjectBlueprintService", () => {
       expect(result?.createdAt).toBe("2026-03-28T12:00:00.000Z");
       expect(result?.updatedAt).toBe("2026-03-28T12:30:00.000Z");
     });
+
+    it("falls back to classifyConfidence when metadata has guideline_confidence but no confidence", async () => {
+      const mockRow = {
+        id: "bp-2",
+        repoId: "repo-2",
+        version: 1,
+        sourceMode: "repo_extracted",
+        charter: { productIntent: "Build a thing", successCriteria: [], constraints: [], riskPosture: "medium" },
+        codingStandards: { principles: [], filePlacementRules: [], architectureRules: [], dependencyRules: [], reviewStyle: "summary_first" },
+        testingPolicy: { requiredForBehaviorChange: true, defaultCommands: [], impactedTestStrategy: "required", fullSuitePolicy: "manual" },
+        documentationPolicy: { updateUserFacingDocs: true, updateRunbooksWhenOpsChange: true, requiredDocPaths: [], changelogPolicy: "recommended" },
+        executionPolicy: { approvalRequiredFor: [], protectedPaths: [], maxChangedFilesBeforeReview: 8, allowParallelExecution: true },
+        providerPolicy: { preferredCoderRole: "coder_default", reviewRole: "review_deep", escalationPolicy: "high_risk_only" },
+        extractedFrom: ["README.md", "AGENTS.md", "docs/architecture.md", "docs/onboarding.md"],
+        metadata: { guideline_confidence: 0.9 },
+        createdAt: new Date("2026-03-28T12:00:00.000Z"),
+        updatedAt: new Date("2026-03-28T12:30:00.000Z"),
+      };
+
+      mocks.prisma.projectBlueprint.findUnique.mockResolvedValue(mockRow);
+      const result = await service.get("repo-2");
+
+      expect(result).not.toBeNull();
+      // guideline_confidence=0.9 with 4 sourceRefs should result in "high"
+      expect(result?.confidence).toBe("high");
+    });
   });
 
   describe("getSources", () => {
