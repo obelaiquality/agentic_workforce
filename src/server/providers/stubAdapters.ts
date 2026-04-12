@@ -14,6 +14,7 @@ import type {
 import { resolveOnPremQwenModelPlugin } from "./modelPlugins";
 import { resolveOnPremInferenceBackend } from "./inferenceBackends";
 import { PROVIDER_SECRET_NAMES, resolveSecretValue } from "../services/secretStore";
+import { buildToolCallGrammar } from "./constrainedDecoding";
 
 interface OpenAiLikeConfig {
   baseUrl: string;
@@ -722,6 +723,13 @@ export class OnPremQwenAdapter extends BaseOpenAiLikeAdapter {
                   parameters: tool.parameters,
                 },
               })),
+              // Constrained decoding: add guided_json when backend supports it
+              ...(backend.supportsConstrainedDecoding && backend.constrainedDecodingMethod === "json_schema"
+                ? (() => {
+                    const grammar = buildToolCallGrammar(input.tools);
+                    return { guided_json: grammar.schema };
+                  })()
+                : {}),
             }
           : {}),
         metadata: {

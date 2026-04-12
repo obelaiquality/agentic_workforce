@@ -12,6 +12,7 @@ import type {
   ProviderStreamEvent,
 } from "../../shared/contracts";
 import { getQwenCliConfig, resolveQwenProfileHome } from "./qwenCliConfig";
+import { validateAndRepairToolCallJson } from "./constrainedDecoding";
 
 const QUOTA_PATTERNS = /(quota|rate limit|too many requests|429|exceeded)/i;
 const AUTH_PATTERNS = /(auth|unauthorized|forbidden|token|credential|login)/i;
@@ -59,7 +60,24 @@ export class QwenCliAdapter implements LlmProviderAdapter {
         chunks.push(event.value);
       }
     }
-    const text = chunks.join("").trim();
+    let text = chunks.join("").trim();
+
+    // When tools are provided, the model is expected to produce JSON tool calls.
+    // Validate and attempt repair of malformed JSON output.
+    if (input.tools && input.tools.length > 0 && text) {
+      const result = validateAndRepairToolCallJson(text);
+      if (result.valid && result.repaired) {
+        console.warn(
+          `[qwen-cli] Repaired malformed JSON tool-call output. Original length=${text.length}`
+        );
+        text = JSON.stringify(result.parsed);
+      } else if (!result.valid) {
+        console.warn(
+          `[qwen-cli] Model produced unparseable JSON for tool call: ${result.error}`
+        );
+      }
+    }
+
     return {
       text,
       usage: {

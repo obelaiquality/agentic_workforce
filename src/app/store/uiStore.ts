@@ -5,6 +5,7 @@ type Section = "live" | "codebase" | "console" | "projects" | "settings" | "over
 type WorkflowStatusFilter = "all" | "backlog" | "in_progress" | "needs_review" | "completed";
 type CommandDrawerMode = "overseer" | "task" | "approval" | "run" | "memory";
 type WorkflowViewMode = "board" | "list";
+type CommandCenterMode = "board" | "chat";
 type CodebaseScope = "context" | "tests" | "docs" | "all";
 type SettingsFocusTarget = "providers" | "execution_profiles" | "accounts" | null;
 
@@ -23,6 +24,7 @@ interface UiStore {
   codebaseScope: CodebaseScope;
   codebaseExpandedDirectoriesByRepo: Record<string, string[]>;
   codebaseSelectedFileByRepoScope: Record<string, Partial<Record<CodebaseScope, string>>>;
+  commandCenterMode: CommandCenterMode;
   settingsFocusTarget: SettingsFocusTarget;
   setActiveSection: (section: UiStore["activeSection"]) => void;
   setSelectedSessionId: (sessionId: string | null) => void;
@@ -38,6 +40,7 @@ interface UiStore {
   setCodebaseScope: (scope: CodebaseScope) => void;
   setCodebaseExpandedDirectories: (repoId: string, directories: string[]) => void;
   setCodebaseSelectedFile: (repoId: string, scope: CodebaseScope, filePath: string | null) => void;
+  setCommandCenterMode: (mode: CommandCenterMode) => void;
   setSettingsFocusTarget: (target: SettingsFocusTarget) => void;
 }
 
@@ -58,6 +61,7 @@ export const useUiStore = create<UiStore>()(
       codebaseScope: "all",
       codebaseExpandedDirectoriesByRepo: {},
       codebaseSelectedFileByRepoScope: {},
+      commandCenterMode: "board",
       settingsFocusTarget: null,
       setActiveSection: (activeSection) => set({ activeSection }),
       setSelectedSessionId: (selectedSessionId) => set({ selectedSessionId }),
@@ -94,6 +98,7 @@ export const useUiStore = create<UiStore>()(
             },
           };
         }),
+      setCommandCenterMode: (commandCenterMode) => set({ commandCenterMode }),
       setSettingsFocusTarget: (settingsFocusTarget) => set({ settingsFocusTarget }),
     }),
     {
@@ -103,6 +108,7 @@ export const useUiStore = create<UiStore>()(
         selectedRepoId: state.selectedRepoId,
         labsMode: state.labsMode,
         workflowViewMode: state.workflowViewMode,
+        commandCenterMode: state.commandCenterMode,
         codebaseScope: state.codebaseScope,
         codebaseExpandedDirectoriesByRepo: state.codebaseExpandedDirectoriesByRepo,
         codebaseSelectedFileByRepoScope: state.codebaseSelectedFileByRepoScope,
@@ -118,6 +124,7 @@ export const useUiStore = create<UiStore>()(
           ...state,
           activeSection,
           workflowViewMode: state.workflowViewMode || "board",
+          commandCenterMode: state.commandCenterMode || "board",
           codebaseScope: state.codebaseScope || "all",
           codebaseExpandedDirectoriesByRepo: state.codebaseExpandedDirectoriesByRepo || {},
           codebaseSelectedFileByRepoScope: state.codebaseSelectedFileByRepoScope || {},

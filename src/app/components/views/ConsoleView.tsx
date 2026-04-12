@@ -1,13 +1,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Check, ChevronDown, ChevronRight, Filter, Shield, Terminal } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Filter, Shield, Terminal, SquareTerminal } from "lucide-react";
 import type { ConsoleEvent } from "../../../shared/contracts";
 import type { ApiEventStream } from "../../lib/apiClient";
 import { getMissionConsoleV8, listAuditEvents, openMissionConsoleStreamV8, requestDependencyBootstrapV9 } from "../../lib/apiClient";
 import { EmptyState } from "../ui/empty-state";
 import { modelRoleLabel, providerLabel } from "../../lib/missionLabels";
 import { ProcessingIndicator } from "../ui/processing-indicator";
+import { InteractiveTerminal } from "../terminal/InteractiveTerminal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { cn } from "../ui/utils";
 
@@ -242,7 +243,7 @@ export function ConsoleView({
   workflowLogs?: WorkflowLog[];
 }) {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"events" | "audit">("events");
+  const [activeTab, setActiveTab] = useState<"events" | "audit" | "terminal">("events");
   const [categoryFilter, setCategoryFilter] = useState<"all" | ConsoleEvent["category"]>("all");
   const [followTail, setFollowTail] = useState(true);
   const [scope, setScope] = useState<"workflow" | "project">("project");
@@ -435,7 +436,7 @@ export function ConsoleView({
       <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,11,15,0.94))] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.26)]">
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2 flex-wrap">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "events" | "audit")} className="w-auto">
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "events" | "audit" | "terminal")} className="w-auto">
               <TabsList className="bg-white/[0.03] border border-white/10">
                 <TabsTrigger value="events" className="gap-1.5">
                   <Terminal className="h-3.5 w-3.5" />
@@ -444,6 +445,10 @@ export function ConsoleView({
                 <TabsTrigger value="audit" className="gap-1.5">
                   <Shield className="h-3.5 w-3.5" />
                   Audit
+                </TabsTrigger>
+                <TabsTrigger value="terminal" className="gap-1.5">
+                  <SquareTerminal className="h-3.5 w-3.5" />
+                  Terminal
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -567,7 +572,7 @@ export function ConsoleView({
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "events" | "audit")}>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "events" | "audit" | "terminal")}>
         <TabsContent value="events" className="flex-1">
           <div
             className="overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(10,11,14,0.98),rgba(7,8,11,0.96))] shadow-[0_16px_44px_rgba(0,0,0,0.28)] flex flex-col"
@@ -860,6 +865,16 @@ export function ConsoleView({
                 </div>
               )}
             </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="terminal" className="flex-1">
+          <div
+            data-testid="console-terminal-panel"
+            className="overflow-hidden rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(10,11,14,0.98),rgba(7,8,11,0.96))] shadow-[0_16px_44px_rgba(0,0,0,0.28)] flex flex-col"
+            style={{ minHeight: 500 }}
+          >
+            <InteractiveTerminal />
           </div>
         </TabsContent>
       </Tabs>

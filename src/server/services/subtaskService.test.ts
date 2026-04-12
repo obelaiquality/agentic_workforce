@@ -247,6 +247,295 @@ describe("SubtaskService", () => {
     const items = await service.listSubtasks("unknown-parent");
     expect(items).toEqual([]);
   });
+
+  // -----------------------------------------------------------------------
+  // Claim lifecycle tests
+  // -----------------------------------------------------------------------
+
+  describe("claimSubtask", () => {
+    it("successfully claims an unclaimed subtask", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-claim-1",
+        title: "Claimable",
+        description: "Can be claimed",
+      });
+
+      const result = await service.claimSubtask({
+        parentTicketId: "ticket-claim-1",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.subtask).not.toBeNull();
+      expect(result.subtask!.claimedBy).toBe("agent-A");
+      expect(result.subtask!.claimedAt).toBeTruthy();
+      expect(result.subtask!.claimExpiry).toBeTruthy();
+      expect(result.subtask!.version).toBe(2);
+    });
+
+    it("rejects claim when already claimed by another agent", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-claim-2",
+        title: "Already claimed",
+        description: "Will be claimed first",
+      });
+
+      await service.claimSubtask({
+        parentTicketId: "ticket-claim-2",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      const result = await service.claimSubtask({
+        parentTicketId: "ticket-claim-2",
+        subtaskId: task.id,
+        agentId: "agent-B",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe("already_claimed");
+      expect(result.subtask!.claimedBy).toBe("agent-A");
+    });
+
+    it("allows re-claim of an expired claim", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-claim-3",
+        title: "Will expire",
+        description: "Claim will expire",
+      });
+
+      // Claim with 1ms expiry so it expires immediately
+      await service.claimSubtask({
+        parentTicketId: "ticket-claim-3",
+        subtaskId: task.id,
+        agentId: "agent-A",
+        expiryMs: 1,
+      });
+
+      // Wait a tiny bit to ensure expiry
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const result = await service.claimSubtask({
+        parentTicketId: "ticket-claim-3",
+        subtaskId: task.id,
+        agentId: "agent-B",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.subtask!.claimedBy).toBe("agent-B");
+    });
+
+    it("allows same agent to re-claim", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-claim-4",
+        title: "Re-claimable",
+        description: "Same agent re-claims",
+      });
+
+      await service.claimSubtask({
+        parentTicketId: "ticket-claim-4",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      const result = await service.claimSubtask({
+        parentTicketId: "ticket-claim-4",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.subtask!.claimedBy).toBe("agent-A");
+    });
+
+    it("returns not_found for non-existent subtask", async () => {
+      const result = await service.claimSubtask({
+        parentTicketId: "ticket-claim-5",
+        subtaskId: "nonexistent",
+        agentId: "agent-A",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe("not_found");
+      expect(result.subtask).toBeNull();
+    });
+  });
+
+  describe("releaseClaimSubtask", () => {
+    it("allows claiming agent to release", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-release-1",
+        title: "Releasable",
+        description: "Will be released",
+      });
+
+      await service.claimSubtask({
+        parentTicketId: "ticket-release-1",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      const released = await service.releaseClaimSubtask({
+        parentTicketId: "ticket-release-1",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      expect(released).not.toBeNull();
+      expect(released!.claimedBy).toBeNull();
+      expect(released!.claimedAt).toBeNull();
+      expect(released!.claimExpiry).toBeNull();
+    });
+
+    it("rejects release by non-claiming agent", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-release-2",
+        title: "Not yours",
+        description: "Cannot be released by other agent",
+      });
+
+      await service.claimSubtask({
+        parentTicketId: "ticket-release-2",
+        subtaskId: task.id,
+        agentId: "agent-A",
+      });
+
+      const released = await service.releaseClaimSubtask({
+        parentTicketId: "ticket-release-2",
+        subtaskId: task.id,
+        agentId: "agent-B",
+      });
+
+      expect(released).toBeNull();
+    });
+
+    it("allows release of expired claim by any agent", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-release-3",
+        title: "Expired claim",
+        description: "Expired, anyone can release",
+      });
+
+      await service.claimSubtask({
+        parentTicketId: "ticket-release-3",
+        subtaskId: task.id,
+        agentId: "agent-A",
+        expiryMs: 1,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const released = await service.releaseClaimSubtask({
+        parentTicketId: "ticket-release-3",
+        subtaskId: task.id,
+        agentId: "agent-B",
+      });
+
+      expect(released).not.toBeNull();
+      expect(released!.claimedBy).toBeNull();
+    });
+
+    it("returns null for non-existent subtask", async () => {
+      const released = await service.releaseClaimSubtask({
+        parentTicketId: "ticket-release-4",
+        subtaskId: "nonexistent",
+        agentId: "agent-A",
+      });
+
+      expect(released).toBeNull();
+    });
+  });
+
+  describe("updateSubtaskWithVersion", () => {
+    it("succeeds when version matches", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-version-1",
+        title: "Versioned",
+        description: "Version check",
+      });
+
+      const result = await service.updateSubtaskWithVersion({
+        parentTicketId: "ticket-version-1",
+        subtaskId: task.id,
+        expectedVersion: 1,
+        status: "in_progress",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.subtask!.version).toBe(2);
+      expect(result.subtask!.status).toBe("in_progress");
+    });
+
+    it("fails with version_conflict when version mismatches", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-version-2",
+        title: "Conflict",
+        description: "Will conflict",
+      });
+
+      const result = await service.updateSubtaskWithVersion({
+        parentTicketId: "ticket-version-2",
+        subtaskId: task.id,
+        expectedVersion: 99,
+        status: "in_progress",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe("version_conflict");
+      expect(result.subtask!.status).toBe("backlog");
+    });
+
+    it("returns not_found for non-existent subtask", async () => {
+      const result = await service.updateSubtaskWithVersion({
+        parentTicketId: "ticket-version-3",
+        subtaskId: "nonexistent",
+        expectedVersion: 1,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe("not_found");
+      expect(result.subtask).toBeNull();
+    });
+  });
+
+  describe("auto-expiry on listSubtasks", () => {
+    it("automatically releases expired claims when listing", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-autoexpiry-1",
+        title: "Auto-expire",
+        description: "Claim will auto-expire on list",
+      });
+
+      await service.claimSubtask({
+        parentTicketId: "ticket-autoexpiry-1",
+        subtaskId: task.id,
+        agentId: "agent-A",
+        expiryMs: 1,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const items = await service.listSubtasks("ticket-autoexpiry-1", { includeCompleted: true });
+      const found = items.find((item) => item.id === task.id);
+
+      expect(found!.claimedBy).toBeNull();
+      expect(found!.claimedAt).toBeNull();
+      expect(found!.claimExpiry).toBeNull();
+    });
+  });
+
+  describe("version field initialization", () => {
+    it("creates subtasks with version 1", async () => {
+      const task = await service.createSubtask({
+        parentTicketId: "ticket-version-init",
+        title: "Has version",
+        description: "Version should be 1",
+      });
+
+      expect(task.version).toBe(1);
+    });
+  });
 });
 
 describe("createPrismaSubtaskPersistence (mocked db)", async () => {

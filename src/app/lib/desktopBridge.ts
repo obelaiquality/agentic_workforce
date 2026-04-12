@@ -44,6 +44,23 @@ export interface DesktopBridgeApi {
   rememberRepoPath?: (path: string, label?: string) => Promise<void>;
 }
 
+export interface ElectronTerminalApi {
+  spawn: () => Promise<{ ok: boolean }>;
+  write: (data: string) => Promise<void>;
+  resize: (cols: number, rows: number) => Promise<void>;
+  kill: () => Promise<void>;
+  onData: (callback: (data: string) => void) => () => void;
+}
+
+export function getElectronTerminal(): ElectronTerminalApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as Window & { electronTerminal?: ElectronTerminalApi }).electronTerminal;
+}
+
+export function hasElectronTerminal(): boolean {
+  return Boolean(getElectronTerminal());
+}
+
 export function getDesktopBridge(): DesktopBridgeApi | undefined {
   if (typeof window === "undefined") {
     return undefined;

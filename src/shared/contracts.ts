@@ -1281,6 +1281,10 @@ export interface WorkflowSubtask {
   notes: string[];
   blockedBy: string[];
   blocked: boolean;
+  claimedBy?: string | null;
+  claimedAt?: string | null;
+  claimExpiry?: string | null;
+  version?: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -2430,3 +2430,115 @@ export async function listGlobalLearnings(opts?: { techFingerprint?: string[]; l
 export async function listGlobalPrinciples() {
   return apiRequest<{ items: import("../../shared/contracts").GlobalPrincipleRecord[] }>("/api/learnings/global/principles");
 }
+
+// ---------------------------------------------------------------------------
+// Session API
+// ---------------------------------------------------------------------------
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  repoId: string | null;
+  providerId: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionMessage {
+  id: string;
+  role: "system" | "user" | "assistant";
+  content: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface SessionDetail extends SessionSummary {
+  messages: SessionMessage[];
+}
+
+export async function listSessions(opts?: { repoId?: string; limit?: number; offset?: number; search?: string }) {
+  const params = new URLSearchParams();
+  if (opts?.repoId) params.set("repoId", opts.repoId);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.offset) params.set("offset", String(opts.offset));
+  if (opts?.search) params.set("search", opts.search);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: SessionSummary[]; total: number }>(`/api/v1/sessions${suffix}`);
+}
+
+export async function getSessionDetail(sessionId: string) {
+  return apiRequest<{ item: SessionDetail }>(`/api/v1/sessions/${sessionId}`);
+}
+
+export async function createSession(input: { title: string; repoId?: string; providerId?: string }) {
+  return apiRequest<{ item: SessionSummary }>("/api/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function addSessionMessage(sessionId: string, input: { role: "user" | "assistant" | "system"; content: string; metadata?: Record<string, unknown> }) {
+  return apiRequest<{ item: SessionMessage }>(`/api/v1/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateSessionTitle(sessionId: string, title: string) {
+  return apiRequest<{ item: SessionSummary }>(`/api/v1/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteSessionById(sessionId: string) {
+  return apiRequest<{ ok: boolean }>(`/api/v1/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Notification Channels
+// ---------------------------------------------------------------------------
+
+export interface NotificationChannelDto {
+  id: string;
+  type: "slack" | "discord" | "webhook";
+  name: string;
+  url: string;
+  enabled: boolean;
+  events: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export async function listNotificationChannels() {
+  return apiRequest<{ items: NotificationChannelDto[] }>("/api/v1/notifications/channels");
+}
+
+export async function upsertNotificationChannel(channel: NotificationChannelDto) {
+  return apiRequest<{ ok: boolean; item: NotificationChannelDto }>("/api/v1/notifications/channels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(channel),
+  });
+}
+
+export async function deleteNotificationChannel(channelId: string) {
+  return apiRequest<{ ok: boolean }>(`/api/v1/notifications/channels/${channelId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function testNotificationChannel(channelId: string) {
+  return apiRequest<{ ok: boolean }>("/api/v1/notifications/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channelId }),
+  });
+}

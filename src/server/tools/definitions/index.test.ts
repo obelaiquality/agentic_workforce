@@ -3,9 +3,9 @@ import { getAllCoreTools, getCoreToolNames, getInitialCoreTools, getDeferredCore
 
 describe("Tool Definitions", () => {
   describe("getAllCoreTools", () => {
-    it("should return all core tools (16 base + 4 LSP + 3 team + 2 plan mode + 3 task decomposition)", () => {
+    it("should return all core tools (19 base + 4 LSP + 3 team + 2 plan mode + 3 task decomposition + 2 task claims)", () => {
       const tools = getAllCoreTools();
-      expect(tools).toHaveLength(29);
+      expect(tools).toHaveLength(33);
     });
 
     it("should include all required file operation tools", () => {
@@ -55,6 +55,12 @@ describe("Tool Definitions", () => {
       expect(names).toContain("create_subtask");
       expect(names).toContain("update_subtask");
       expect(names).toContain("list_subtasks");
+    });
+
+    it("should include web tools", () => {
+      const names = getCoreToolNames();
+      expect(names).toContain("web_fetch");
+      expect(names).toContain("web_search");
     });
   });
 
@@ -121,7 +127,7 @@ describe("Tool Definitions", () => {
   describe("getCoreToolNames", () => {
     it("should return array of tool names", () => {
       const names = getCoreToolNames();
-      expect(names).toHaveLength(29);
+      expect(names).toHaveLength(33);
       expect(names.every(n => typeof n === "string")).toBe(true);
     });
 
@@ -184,11 +190,13 @@ describe("Tool Definitions", () => {
         categories.shell.length +
         categories.git.length +
         categories.verification.length +
+        (categories.web?.length ?? 0) +
         categories.meta.length +
         categories.lsp.length +
         categories.team.length +
         categories.planMode.length +
-        categories.taskDecomposition.length;
+        categories.taskDecomposition.length +
+        (categories.taskClaims?.length ?? 0);
 
       expect(totalFromCategories).toBe(getAllCoreTools().length);
     });

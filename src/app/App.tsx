@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ChevronDown, Code2, FolderGit2, Settings, Terminal } from "lucide-react";
+import { Activity, ChevronDown, Code2, FolderGit2, Moon, Settings, Sun, Terminal } from "lucide-react";
+import { useTheme } from "next-themes";
 import { EmptyState } from "./components/ui/empty-state";
 import { PreflightGate } from "./components/PreflightGate";
 import { CodebaseView } from "./components/views/CodebaseView";
@@ -12,6 +13,7 @@ import { CommandCenterView } from "./components/views/CommandCenterView";
 import { TelemetryView } from "./components/views/TelemetryView";
 import { AgentLanesView } from "./components/views/AgentLanesView";
 import { PatternsView } from "./components/views/PatternsView";
+import { DashboardView } from "./components/views/DashboardView";
 import { DistillationView } from "./components/views/DistillationView";
 import { BenchmarkView } from "./components/views/BenchmarkView";
 import { LearningsView } from "./components/views/LearningsView";
@@ -23,7 +25,7 @@ import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcut";
 
 type SidebarSection = "live" | "codebase" | "console" | "projects" | "settings";
-type LiveTab = "Execution" | "Agents" | "Patterns" | "Telemetry";
+type LiveTab = "Execution" | "Agents" | "Patterns" | "Telemetry" | "Dashboard";
 
 const SIDEBAR_ITEMS: Array<{ key: SidebarSection; icon: React.ReactNode; label: string }> = [
   { key: "live", icon: <Activity />, label: "Work" },
@@ -50,9 +52,10 @@ export default function App() {
   const [liveTab, setLiveTab] = useState<LiveTab>("Execution");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const { theme, setTheme } = useTheme();
 
   const sidebarSection = normalizeSection(activeSection);
-  const liveTabs: LiveTab[] = labsMode ? ["Execution", "Agents", "Patterns", "Telemetry"] : ["Execution"];
+  const liveTabs: LiveTab[] = labsMode ? ["Execution", "Dashboard", "Agents", "Patterns", "Telemetry"] : ["Execution"];
 
   const NAV_SECTIONS = ["live", "codebase", "console", "projects", "settings"] as const;
   useKeyboardShortcuts(
@@ -156,7 +159,7 @@ export default function App() {
     : { label: "Needs attention", className: "border-white/10 bg-white/[0.04] text-zinc-200" };
   return (
     <PreflightGate>
-      <div data-testid="app-root" className="h-screen w-screen bg-[#0a0a0c] text-zinc-300 overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
+      <div data-testid="app-root" className="h-screen w-screen bg-[var(--surface-root)] text-[var(--text-primary)] overflow-hidden flex flex-col font-sans selection:bg-purple-500/30">
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:absolute focus:z-[200] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-purple-600 focus:px-4 focus:py-2 focus:text-white focus:text-sm focus:font-medium focus:shadow-lg"
@@ -166,12 +169,12 @@ export default function App() {
         <style>{`
           .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
           .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-          .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 10px; }
-          .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+          .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 10px; }
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
         `}</style>
 
-        <header data-testid="app-header" className="h-11 border-b border-white/5 bg-black/50 flex items-center px-4 justify-between z-50 shrink-0 relative">
-          <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-purple-500/25 to-transparent" />
+        <header data-testid="app-header" className="h-11 border-b border-[var(--border-subtle)] bg-[var(--surface-header)] flex items-center px-4 justify-between z-50 shrink-0 relative backdrop-blur-sm">
+          <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[var(--gradient-header)] to-transparent" />
 
           <div className="flex items-center gap-5 min-w-0">
             <div className="flex items-center gap-2 text-white shrink-0 min-w-0">
@@ -219,6 +222,16 @@ export default function App() {
               />
               <span data-testid="app-header-status" role="status" aria-live="polite">{headerStatus.label}</span>
             </div>
+            <button
+              type="button"
+              data-testid="theme-toggle"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="flex items-center justify-center h-7 w-7 rounded-full border border-[var(--border-default)] bg-[var(--surface-overlay)] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] hover:bg-[var(--surface-elevated)] focus:outline-none focus:ring-2 focus:ring-cyan-400/30"
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            </button>
             <div ref={profileMenuRef} className="relative shrink-0">
               <button
                 type="button"
@@ -263,7 +276,7 @@ export default function App() {
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          <aside data-testid="app-sidebar" className="w-14 lg:w-56 border-r border-white/5 bg-[#0d0d0f] flex flex-col justify-between shrink-0 transition-[width] duration-200" role="navigation" aria-label="Main navigation">
+          <aside data-testid="app-sidebar" className="w-14 lg:w-56 border-r border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-col justify-between shrink-0 transition-[width] duration-200" role="navigation" aria-label="Main navigation">
             <div className="p-2 flex flex-col gap-1 pt-3">
               {SIDEBAR_ITEMS.map((item) => (
                 <SidebarItem
@@ -323,7 +336,7 @@ export default function App() {
             </div>
           </aside>
 
-          <main id="main-content" data-testid="app-main-content" className="flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-[#0a0a0c] via-[#0c0c0e] to-[#0f0f12] p-4 md:p-5">
+          <main id="main-content" data-testid="app-main-content" className="flex-1 overflow-y-auto custom-scrollbar bg-[var(--surface-root)] p-4 md:p-5">
             {labsMode && (
               <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-300">
                 <span className="font-semibold uppercase tracking-wider">Labs</span>
@@ -361,6 +374,12 @@ export default function App() {
                   {liveTab === "Execution" && (
                     <ErrorBoundary viewName="Execution">
                       <CommandCenterView mission={mission} />
+                    </ErrorBoundary>
+                  )}
+
+                  {liveTab === "Dashboard" && (
+                    <ErrorBoundary viewName="Dashboard">
+                      <DashboardView mission={mission} />
                     </ErrorBoundary>
                   )}
 

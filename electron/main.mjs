@@ -40,6 +40,16 @@ let apiProcess = null;
 /** @type {Map<string, AbortController>} */
 const activeStreams = new Map();
 
+// --- Interactive terminal (node-pty) support ---
+/** @type {any | null} */
+let ptyProcess = null;
+let nodePty = null;
+try {
+  nodePty = await import("node-pty");
+} catch {
+  // node-pty is optional — terminal feature will be unavailable
+}
+
 /** @type {{ checks: Array<{ key: string; ok: boolean; message: string; severity: "warning" | "error" }>; apiReady: boolean; checkedAt: string; }} */
 let preflightStatus = {
   checks: [],
@@ -615,6 +625,67 @@ app.whenReady().then(async () => {
     rememberRecentRepoPath(payload?.path, payload?.label);
   });
 
+  // --- Interactive terminal IPC handlers ---
+  ipcMain.handle("terminal:spawn", async (event) => {
+    if (!nodePty) {
+      return { ok: false, error: "node-pty is not available" };
+    }
+    // Kill any existing PTY before spawning a new one
+    if (ptyProcess) {
+      try { ptyProcess.kill(); } catch { /* ignore */ }
+      ptyProcess = null;
+    }
+
+    const shellPath = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "/bin/bash");
+    const pty = nodePty.spawn(shellPath, [], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: os.homedir(),
+      env: { ...process.env },
+    });
+
+    ptyProcess = pty;
+
+    pty.onData((data) => {
+      const sender = event.sender;
+      if (!sender.isDestroyed()) {
+        sender.send("terminal:data", data);
+      }
+    });
+
+    pty.onExit(() => {
+      const sender = event.sender;
+      if (!sender.isDestroyed()) {
+        sender.send("terminal:data", "\r\n[Process exited]\r\n");
+      }
+      if (ptyProcess === pty) {
+        ptyProcess = null;
+      }
+    });
+
+    return { ok: true };
+  });
+
+  ipcMain.handle("terminal:input", async (_event, data) => {
+    if (ptyProcess && typeof data === "string") {
+      ptyProcess.write(data);
+    }
+  });
+
+  ipcMain.handle("terminal:resize", async (_event, cols, rows) => {
+    if (ptyProcess && typeof cols === "number" && typeof rows === "number" && cols > 0 && rows > 0) {
+      try { ptyProcess.resize(cols, rows); } catch { /* ignore */ }
+    }
+  });
+
+  ipcMain.handle("terminal:kill", async () => {
+    if (ptyProcess) {
+      try { ptyProcess.kill(); } catch { /* ignore */ }
+      ptyProcess = null;
+    }
+  });
+
   await createMainWindow();
 
   app.on("activate", () => {
@@ -635,6 +706,10 @@ app.on("before-quit", () => {
     controller.abort();
   }
   activeStreams.clear();
+  if (ptyProcess) {
+    try { ptyProcess.kill(); } catch { /* ignore */ }
+    ptyProcess = null;
+  }
   if (apiProcess) {
     apiProcess.kill("SIGTERM");
   }

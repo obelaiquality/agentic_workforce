@@ -129,6 +129,11 @@ vi.mock("./hooks/useKeyboardShortcut", () => ({
   useKeyboardShortcuts: vi.fn(),
 }));
 
+const mockSetTheme = vi.fn();
+vi.mock("next-themes", () => ({
+  useTheme: () => ({ theme: "dark", setTheme: mockSetTheme }),
+}));
+
 describe("App shell", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -506,6 +511,20 @@ describe("App shell", () => {
     useUiStore.setState({ selectedWorkflowId: "wf-1" });
     render(<App />);
     mockMission.tickets = [];
+  });
+
+  it("renders theme toggle button", () => {
+    render(<App />);
+    const toggle = screen.getByTestId("theme-toggle");
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-label", "Switch to light mode");
+  });
+
+  it("calls setTheme when theme toggle is clicked", () => {
+    mockSetTheme.mockClear();
+    render(<App />);
+    fireEvent.click(screen.getByTestId("theme-toggle"));
+    expect(mockSetTheme).toHaveBeenCalledWith("light");
   });
 });
 

@@ -15,6 +15,28 @@ ipcRenderer.on("desktop:stream-event", (_event, payload) => {
   }
 });
 
+// --- Interactive terminal bridge ---
+const terminalDataListeners = new Set();
+
+ipcRenderer.on("terminal:data", (_event, data) => {
+  for (const listener of terminalDataListeners) {
+    listener(data);
+  }
+});
+
+contextBridge.exposeInMainWorld("electronTerminal", {
+  spawn: async () => ipcRenderer.invoke("terminal:spawn"),
+  write: async (data) => ipcRenderer.invoke("terminal:input", data),
+  resize: async (cols, rows) => ipcRenderer.invoke("terminal:resize", cols, rows),
+  kill: async () => ipcRenderer.invoke("terminal:kill"),
+  onData: (callback) => {
+    terminalDataListeners.add(callback);
+    return () => {
+      terminalDataListeners.delete(callback);
+    };
+  },
+});
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   apiRequest: async (request) => ipcRenderer.invoke("desktop:api-request", request),
   openStream: async (request) => ipcRenderer.invoke("desktop:open-stream", request),

@@ -74,6 +74,8 @@ import { setPlanService } from "./tools/definitions/planMode";
 import { setSubtaskService } from "./tools/definitions/taskDecomposition";
 import { DreamScheduler } from "./memory/dreamScheduler";
 import { registerLearningsRoutes } from "./routes/learningsRoutes";
+import { registerSessionRoutes } from "./routes/sessionRoutes";
+import { registerNotificationRoutes } from "./routes/notificationRoutes";
 import { IdeSessionManager } from "./ide/ideSessionManager";
 import { IdeBridgeServer } from "./ide/ideBridgeServer";
 
@@ -443,6 +445,8 @@ export async function createServer(apiToken = ""): Promise<FastifyInstance> {
   registerEnhancedTeamRoutes({ app, providerOrchestrator });
   registerTelemetryRoutes(app);
   registerLearningsRoutes({ app, repoService });
+  registerSessionRoutes(app);
+  registerNotificationRoutes(app);
 
   // ── IDE Bridge ─────────────────────────────────────────────────
   const ideSessionManager = new IdeSessionManager();

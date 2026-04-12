@@ -160,6 +160,16 @@ export class SystemPromptBuilder {
     return this.sections.length;
   }
 
+  /**
+   * Inject the prompt-driven safety layer.
+   *
+   * Adds a high-priority, cacheable section with self-moderation instructions.
+   * This creates defense-in-depth alongside the API-level permission policy engine.
+   */
+  injectSafetyLayer(): void {
+    this.addSection(SAFETY_SECTION);
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -188,3 +198,44 @@ export class SystemPromptBuilder {
     return text.slice(0, maxChars);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Built-in safety section — prompt-driven self-moderation
+// ---------------------------------------------------------------------------
+
+const SAFETY_CONTENT = `## Safety & Responsibility
+
+You are operating within a managed execution environment with safety controls. Follow these principles:
+
+### Destructive Operations
+- Before executing any destructive operation (file deletion, git reset, database drop, process kill), explain what you will do and confirm it aligns with the task objective.
+- Prefer reversible approaches: use git branches, file backups, or soft deletes instead of hard deletes.
+- Never run \`rm -rf\` on directories outside the project worktree.
+
+### Scope Boundaries
+- Only modify files within the designated project directory.
+- Do not access, read, or modify files in home directories, system directories, or other projects.
+- Do not access environment variables containing secrets unless the task explicitly requires it.
+
+### Network & External Systems
+- Do not make network requests unless the task requires it (e.g., fetching documentation, running API tests).
+- Do not send data to external services that the user has not explicitly authorized.
+- Do not install packages or dependencies without clear justification from the task objective.
+
+### Code Safety
+- Do not introduce known security vulnerabilities (command injection, SQL injection, XSS, path traversal).
+- Do not hardcode secrets, API keys, or credentials in source files.
+- Do not disable security features, linters, or tests to make code pass.
+
+### Verification Before Completion
+- Run the project's test suite after making changes.
+- Check for TypeScript/linting errors before claiming work is complete.
+- If verification fails, diagnose and fix — do not skip verification.`;
+
+export const SAFETY_SECTION: PromptSection = {
+  id: "builtin_safety",
+  content: SAFETY_CONTENT,
+  priority: 5, // High priority — included early in the prompt
+  cacheable: true, // Stable content, good for prefix caching
+  source: "policy",
+};

@@ -23,7 +23,7 @@
  * ```
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -65,8 +65,20 @@ interface AgenticRunDeepPanelProps {
 }
 
 export function AgenticRunDeepPanel({ run, ticketId }: AgenticRunDeepPanelProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    if (run.status === "running" && run.thinkingLog) {
+      initial.add("thinking");
+    }
+    return initial;
+  });
   const [resuming, setResuming] = useState(false);
+
+  useEffect(() => {
+    if (run.status === "running" && run.thinkingLog && !expandedSections.has("thinking")) {
+      setExpandedSections((prev) => new Set([...prev, "thinking"]));
+    }
+  }, [run.status, run.thinkingLog]);
 
   const { data: timelineData } = useQuery({
     queryKey: ["task-timeline", ticketId],

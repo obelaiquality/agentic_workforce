@@ -64,7 +64,7 @@ export function ChatPanel({
     : null;
 
   return (
-    <Panel className="border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),#111113] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+    <Panel className="border-[var(--border-default)] bg-[radial-gradient(circle_at_top_left,var(--accent-glow),transparent_24%),radial-gradient(circle_at_top_right,rgba(168,85,247,0.10),transparent_22%),var(--surface-panel)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
       <div className="space-y-3.5 px-5 py-4">
         <div className="flex items-start justify-between gap-4">
@@ -79,7 +79,7 @@ export function ChatPanel({
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-[22px] border border-white/10 bg-[#161618] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+        <div className="overflow-hidden rounded-[22px] border border-[var(--border-default)] bg-[var(--surface-input)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
           <textarea
             data-testid="work-task-input"
             value={mission.input}
@@ -96,7 +96,7 @@ export function ChatPanel({
                 value={mission.selectedExecutionProfileId}
                 onChange={(event) => mission.setExecutionProfile(event.target.value)}
                 disabled={!mission.selectedRepo || mission.isUpdatingExecutionProfile}
-                className="rounded-lg border border-white/10 bg-[#111113] px-2.5 py-1.5 text-xs text-zinc-300 outline-none disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-cyan-400/20"
+                className="rounded-lg border border-white/10 bg-[var(--surface-panel)] px-2.5 py-1.5 text-xs text-zinc-300 outline-none disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-cyan-400/20"
               >
                 {mission.executionProfiles.profiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
@@ -104,7 +104,7 @@ export function ChatPanel({
                   </option>
                 ))}
               </select>
-              <label className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#111113] px-2.5 py-1.5 text-[11px] text-zinc-300">
+              <label className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[var(--surface-panel)] px-2.5 py-1.5 text-[11px] text-zinc-300">
                 <input
                   type="checkbox"
                   checked={Boolean((mission as { planModeEnabled?: boolean }).planModeEnabled)}
@@ -115,7 +115,7 @@ export function ChatPanel({
                 />
                 Plan mode
               </label>
-              <label className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#111113] px-2.5 py-1.5 text-[11px] text-zinc-300">
+              <label className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[var(--surface-panel)] px-2.5 py-1.5 text-[11px] text-zinc-300">
                 <input
                   type="checkbox"
                   checked={Boolean((mission as { coordinatorEnabled?: boolean }).coordinatorEnabled)}
@@ -297,7 +297,7 @@ function AgenticRunSection({
   const agenticRun = mission.agenticRun!;
 
   return (
-    <div className="rounded-[20px] border border-cyan-500/10 bg-[linear-gradient(180deg,rgba(7,20,28,0.9),rgba(10,12,16,0.98))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+    <div className="rounded-[20px] border border-cyan-500/10 bg-[var(--surface-panel)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <div className="text-[11px] uppercase tracking-[0.22em] text-cyan-300/80">Agentic Run</div>

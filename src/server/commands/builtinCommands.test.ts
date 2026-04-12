@@ -5,7 +5,10 @@ import { builtinCommands, registerBuiltinCommands } from "./builtinCommands";
 describe("builtinCommands", () => {
   it("defines the expected set of commands", () => {
     const names = builtinCommands.map((c) => c.name).sort();
-    expect(names).toEqual(["commit", "debug", "help", "plan", "status", "verify"]);
+    expect(names).toEqual([
+      "clear", "commit", "compact", "debug", "diff", "help", "lint",
+      "memory", "plan", "roles", "search", "status", "test", "undo", "verify",
+    ]);
   });
 
   it("every command has a description", () => {
@@ -68,6 +71,30 @@ describe("registerBuiltinCommands", () => {
     expect(result).not.toBeNull();
     expect(result!.command.name).toBe("status");
   });
+
+  it("makes /clear resolvable via alias /cls", () => {
+    const result = registry.resolve("/cls");
+    expect(result).not.toBeNull();
+    expect(result!.command.name).toBe("clear");
+  });
+
+  it("makes /undo resolvable via alias /rollback", () => {
+    const result = registry.resolve("/rollback");
+    expect(result).not.toBeNull();
+    expect(result!.command.name).toBe("undo");
+  });
+
+  it("makes /test resolvable via alias /t", () => {
+    const result = registry.resolve("/t");
+    expect(result).not.toBeNull();
+    expect(result!.command.name).toBe("test");
+  });
+
+  it("makes /memory resolvable via alias /mem", () => {
+    const result = registry.resolve("/mem");
+    expect(result).not.toBeNull();
+    expect(result!.command.name).toBe("memory");
+  });
 });
 
 describe("command handlers", () => {
@@ -124,5 +151,78 @@ describe("command handlers", () => {
     expect(result.content).toContain("/verify");
     expect(result.content).toContain("/status");
     expect(result.content).toContain("/help");
+    expect(result.content).toContain("/clear");
+    expect(result.content).toContain("/compact");
+    expect(result.content).toContain("/diff");
+    expect(result.content).toContain("/undo");
+    expect(result.content).toContain("/test");
+    expect(result.content).toContain("/lint");
+    expect(result.content).toContain("/search");
+    expect(result.content).toContain("/memory");
+    expect(result.content).toContain("/roles");
+  });
+
+  it("/clear handler returns action result", async () => {
+    const clear = builtinCommands.find((c) => c.name === "clear")!;
+    const result = await clear.handler(undefined, {});
+    expect(result.type).toBe("action");
+  });
+
+  it("/compact handler returns action result", async () => {
+    const compact = builtinCommands.find((c) => c.name === "compact")!;
+    const result = await compact.handler(undefined, {});
+    expect(result.type).toBe("action");
+  });
+
+  it("/diff handler shows no active run when empty", async () => {
+    const diff = builtinCommands.find((c) => c.name === "diff")!;
+    const result = await diff.handler(undefined, {});
+    expect(result.content).toContain("No active run");
+  });
+
+  it("/diff handler mentions run when available", async () => {
+    const diff = builtinCommands.find((c) => c.name === "diff")!;
+    const result = await diff.handler(undefined, { runId: "r-1" });
+    expect(result.content).toContain("Fetching diffs");
+  });
+
+  it("/undo handler returns action result", async () => {
+    const undo = builtinCommands.find((c) => c.name === "undo")!;
+    const result = await undo.handler(undefined, {});
+    expect(result.type).toBe("action");
+  });
+
+  it("/test handler returns action result", async () => {
+    const test = builtinCommands.find((c) => c.name === "test")!;
+    const result = await test.handler(undefined, {});
+    expect(result.type).toBe("action");
+  });
+
+  it("/lint handler returns action result", async () => {
+    const lint = builtinCommands.find((c) => c.name === "lint")!;
+    const result = await lint.handler(undefined, {});
+    expect(result.type).toBe("action");
+  });
+
+  it("/search handler includes query in content", async () => {
+    const search = builtinCommands.find((c) => c.name === "search")!;
+    const result = await search.handler("myFunction", {});
+    expect(result.content).toContain("myFunction");
+  });
+
+  it("/memory handler returns action result", async () => {
+    const memory = builtinCommands.find((c) => c.name === "memory")!;
+    const result = await memory.handler(undefined, {});
+    expect(result.type).toBe("action");
+  });
+
+  it("/roles handler lists available roles", async () => {
+    const roles = builtinCommands.find((c) => c.name === "roles")!;
+    const result = await roles.handler(undefined, {});
+    expect(result.type).toBe("message");
+    expect(result.content).toContain("utility_fast");
+    expect(result.content).toContain("coder_default");
+    expect(result.content).toContain("review_deep");
+    expect(result.content).toContain("overseer_escalation");
   });
 });

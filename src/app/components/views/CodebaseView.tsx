@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronRight, Code2, Copy, FileCode2, Folder, FolderOpen, FolderTree, Search, Sparkles, WrapText } from "lucide-react";
+import * as ContextMenu from "@radix-ui/react-context-menu";
 import { EmptyState } from "../ui/empty-state";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1850,32 +1851,63 @@ function TreeNodeRow({
 
   if (node.kind === "directory") {
     const isExpanded = searchActive || expandedDirectories.has(node.path);
+    const dirName = node.path.split("/").pop()!;
     return (
       <div className="select-none">
-        <button
-          ref={(element) => {
-            if (element) rowRefs.current.set(node.path, element);
-            else rowRefs.current.delete(node.path);
-          }}
-          type="button"
-          onClick={() => onToggleDirectory(node.path)}
-          onMouseDown={(event) => event.preventDefault()}
-          onFocus={() => onFocusPath(node.path)}
-          role="treeitem"
-          aria-expanded={isExpanded}
-          className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.04] ${
-            focusedPath === node.path ? "bg-white/[0.05]" : ""
-          }`}
-          style={{ paddingLeft: `${12 + depth * 12}px` }}
-        >
-          <ChevronRight className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform ${isExpanded ? "rotate-90 text-zinc-400" : ""}`} />
-          {isExpanded ? (
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-cyan-300/90" />
-          ) : (
-            <Folder className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-          )}
-          <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-300 group-hover:text-zinc-100">{node.path.split("/").pop()}</span>
-        </button>
+        <ContextMenu.Root>
+          <ContextMenu.Trigger asChild>
+            <button
+              ref={(element) => {
+                if (element) rowRefs.current.set(node.path, element);
+                else rowRefs.current.delete(node.path);
+              }}
+              type="button"
+              onClick={() => onToggleDirectory(node.path)}
+              onMouseDown={(event) => event.preventDefault()}
+              onFocus={() => onFocusPath(node.path)}
+              role="treeitem"
+              aria-expanded={isExpanded}
+              className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.04] ${
+                focusedPath === node.path ? "bg-white/[0.05]" : ""
+              }`}
+              style={{ paddingLeft: `${12 + depth * 12}px` }}
+            >
+              <ChevronRight className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform ${isExpanded ? "rotate-90 text-zinc-400" : ""}`} />
+              {isExpanded ? (
+                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-cyan-300/90" />
+              ) : (
+                <Folder className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-300 group-hover:text-zinc-100">{dirName}</span>
+            </button>
+          </ContextMenu.Trigger>
+          <ContextMenu.Portal>
+            <ContextMenu.Content className="min-w-[180px] rounded-xl border border-white/10 bg-[#1a1a1e] p-1.5 shadow-xl shadow-black/40">
+              <ContextMenu.Item
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+                onSelect={() => onToggleDirectory(node.path)}
+              >
+                {isExpanded ? <FolderOpen className="h-3.5 w-3.5 text-zinc-500" /> : <Folder className="h-3.5 w-3.5 text-zinc-500" />}
+                {isExpanded ? "Collapse" : "Expand"}
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+                onSelect={() => void navigator.clipboard.writeText(node.path)}
+              >
+                <Copy className="h-3.5 w-3.5 text-zinc-500" />
+                Copy path
+              </ContextMenu.Item>
+              <ContextMenu.Separator className="my-1 h-px bg-white/8" />
+              <ContextMenu.Item
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+                onSelect={() => openDesktopExternal(node.path)}
+              >
+                <FolderTree className="h-3.5 w-3.5 text-zinc-500" />
+                Open in file manager
+              </ContextMenu.Item>
+            </ContextMenu.Content>
+          </ContextMenu.Portal>
+        </ContextMenu.Root>
         {isExpanded ? (
           <div>
             {(node.children || []).map((child) => (
@@ -1910,44 +1942,81 @@ function TreeNodeRow({
   const isDoc = docPathSet.has(node.path);
 
   return (
-    <button
-      ref={(element) => {
-        if (element) rowRefs.current.set(node.path, element);
-        else rowRefs.current.delete(node.path);
-      }}
-      type="button"
-      onClick={() => onSelect(node.path)}
-      onMouseDown={(event) => event.preventDefault()}
-      onFocus={() => onFocusPath(node.path)}
-      role="treeitem"
-      aria-selected={isSelected}
-      className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${
-        isSelected
-          ? "border border-cyan-400/18 bg-cyan-500/[0.10] shadow-[0_0_0_1px_rgba(34,211,238,0.06)]"
-          : focusedPath === node.path
-          ? "bg-white/[0.05]"
-          : "hover:bg-white/[0.04]"
-      }`}
-      style={{ paddingLeft: `${12 + depth * 12}px` }}
-    >
-      <span className="h-3 w-3 shrink-0" />
-      <span className={`w-3 shrink-0 text-[9px] font-mono font-bold ${STATUS_COLOR[status]}`}>{STATUS_ICON[status] as string}</span>
-      <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[11px] ${isSelected ? "text-zinc-200" : "text-zinc-400 group-hover:text-zinc-300"}`}>{filename}</span>
-        <span className="block truncate text-[10px] text-zinc-600">{parent}</span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1">
-        {isTest ? (
-          <span className="rounded-md border border-violet-400/18 bg-violet-500/[0.08] px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-[0.16em] text-violet-200">
-            test
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <button
+          ref={(element) => {
+            if (element) rowRefs.current.set(node.path, element);
+            else rowRefs.current.delete(node.path);
+          }}
+          type="button"
+          onClick={() => onSelect(node.path)}
+          onMouseDown={(event) => event.preventDefault()}
+          onFocus={() => onFocusPath(node.path)}
+          role="treeitem"
+          aria-selected={isSelected}
+          className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${
+            isSelected
+              ? "border border-cyan-400/18 bg-cyan-500/[0.10] shadow-[0_0_0_1px_rgba(34,211,238,0.06)]"
+              : focusedPath === node.path
+              ? "bg-white/[0.05]"
+              : "hover:bg-white/[0.04]"
+          }`}
+          style={{ paddingLeft: `${12 + depth * 12}px` }}
+        >
+          <span className="h-3 w-3 shrink-0" />
+          <span className={`w-3 shrink-0 text-[9px] font-mono font-bold ${STATUS_COLOR[status]}`}>{STATUS_ICON[status] as string}</span>
+          <span className="min-w-0 flex-1">
+            <span className={`block truncate text-[11px] ${isSelected ? "text-zinc-200" : "text-zinc-400 group-hover:text-zinc-300"}`}>{filename}</span>
+            <span className="block truncate text-[10px] text-zinc-600">{parent}</span>
           </span>
-        ) : null}
-        {isDoc ? (
-          <span className="rounded-md border border-emerald-400/18 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-[0.16em] text-emerald-200">
-            doc
+          <span className="flex shrink-0 items-center gap-1">
+            {isTest ? (
+              <span className="rounded-md border border-violet-400/18 bg-violet-500/[0.08] px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-[0.16em] text-violet-200">
+                test
+              </span>
+            ) : null}
+            {isDoc ? (
+              <span className="rounded-md border border-emerald-400/18 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-[0.16em] text-emerald-200">
+                doc
+              </span>
+            ) : null}
           </span>
-        ) : null}
-      </span>
-    </button>
+        </button>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="min-w-[180px] rounded-xl border border-white/10 bg-[#1a1a1e] p-1.5 shadow-xl shadow-black/40">
+          <ContextMenu.Item
+            className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+            onSelect={() => onSelect(node.path)}
+          >
+            <FileCode2 className="h-3.5 w-3.5 text-zinc-500" />
+            Open file
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+            onSelect={() => void navigator.clipboard.writeText(node.path)}
+          >
+            <Copy className="h-3.5 w-3.5 text-zinc-500" />
+            Copy path
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+            onSelect={() => void navigator.clipboard.writeText(filename)}
+          >
+            <Copy className="h-3.5 w-3.5 text-zinc-500" />
+            Copy filename
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="my-1 h-px bg-white/8" />
+          <ContextMenu.Item
+            className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] focus:bg-white/[0.06]"
+            onSelect={() => openDesktopExternal(node.path)}
+          >
+            <Code2 className="h-3.5 w-3.5 text-zinc-500" />
+            Open in editor
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }

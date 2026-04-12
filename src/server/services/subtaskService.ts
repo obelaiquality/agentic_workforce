@@ -25,6 +25,37 @@ export interface UpdateSubtaskInput {
   notes?: string;
 }
 
+export interface ClaimSubtaskInput {
+  parentTicketId: string;
+  subtaskId: string;
+  agentId: string;
+  expiryMs?: number;
+}
+
+export interface ReleaseClaimInput {
+  parentTicketId: string;
+  subtaskId: string;
+  agentId: string;
+}
+
+export interface VersionedUpdateInput extends UpdateSubtaskInput {
+  expectedVersion: number;
+}
+
+export interface ClaimResult {
+  success: boolean;
+  subtask: WorkflowSubtask | null;
+  reason?: string;
+}
+
+export interface VersionedUpdateResult {
+  success: boolean;
+  subtask: WorkflowSubtask | null;
+  reason?: string;
+}
+
+const DEFAULT_CLAIM_EXPIRY_MS = 300_000; // 5 minutes
+
 export interface SubtaskPersistence {
   list(parentTicketId: string): Promise<WorkflowSubtask[]>;
   save(parentTicketId: string, event: PersistedSubtaskEvent): Promise<void>;
@@ -85,6 +116,10 @@ export class SubtaskService {
       notes: [],
       blockedBy: [],
       blocked: false,
+      claimedBy: null,
+      claimedAt: null,
+      claimExpiry: null,
+      version: 1,
       createdAt: now,
       updatedAt: now,
     };
@@ -119,10 +154,133 @@ export class SubtaskService {
     return this.materializeWithSiblings(input.parentTicketId, input.subtaskId);
   }
 
+  async claimSubtask(input: ClaimSubtaskInput): Promise<ClaimResult> {
+    const items = await this.listSubtasks(input.parentTicketId, { includeCompleted: true });
+    const current = items.find((item) => item.id === input.subtaskId);
+    if (!current) {
+      return { success: false, subtask: null, reason: "not_found" };
+    }
+
+    const now = new Date();
+    const claimExpired = current.claimExpiry ? new Date(current.claimExpiry) <= now : true;
+
+    if (current.claimedBy && current.claimedBy !== input.agentId && !claimExpired) {
+      return {
+        success: false,
+        subtask: current,
+        reason: "already_claimed",
+      };
+    }
+
+    const expiryMs = input.expiryMs ?? DEFAULT_CLAIM_EXPIRY_MS;
+    const next: WorkflowSubtask = {
+      ...current,
+      claimedBy: input.agentId,
+      claimedAt: now.toISOString(),
+      claimExpiry: new Date(now.getTime() + expiryMs).toISOString(),
+      version: (current.version ?? 1) + 1,
+      updatedAt: now.toISOString(),
+    };
+
+    this.upsertCached(next);
+    await this.persistence?.save(input.parentTicketId, {
+      kind: "updated",
+      subtask: next,
+    });
+    return {
+      success: true,
+      subtask: this.materializeWithSiblings(input.parentTicketId, input.subtaskId),
+    };
+  }
+
+  async releaseClaimSubtask(input: ReleaseClaimInput): Promise<WorkflowSubtask | null> {
+    const items = await this.listSubtasks(input.parentTicketId, { includeCompleted: true });
+    const current = items.find((item) => item.id === input.subtaskId);
+    if (!current) {
+      return null;
+    }
+
+    const now = new Date();
+    const claimExpired = current.claimExpiry ? new Date(current.claimExpiry) <= now : true;
+
+    // Only the claiming agent can release, unless the claim has expired
+    if (current.claimedBy && current.claimedBy !== input.agentId && !claimExpired) {
+      return null;
+    }
+
+    const next: WorkflowSubtask = {
+      ...current,
+      claimedBy: null,
+      claimedAt: null,
+      claimExpiry: null,
+      version: (current.version ?? 1) + 1,
+      updatedAt: now.toISOString(),
+    };
+
+    this.upsertCached(next);
+    await this.persistence?.save(input.parentTicketId, {
+      kind: "updated",
+      subtask: next,
+    });
+    return this.materializeWithSiblings(input.parentTicketId, input.subtaskId);
+  }
+
+  async updateSubtaskWithVersion(input: VersionedUpdateInput): Promise<VersionedUpdateResult> {
+    const items = await this.listSubtasks(input.parentTicketId, { includeCompleted: true });
+    const current = items.find((item) => item.id === input.subtaskId);
+    if (!current) {
+      return { success: false, subtask: null, reason: "not_found" };
+    }
+
+    const currentVersion = current.version ?? 1;
+    if (currentVersion !== input.expectedVersion) {
+      return {
+        success: false,
+        subtask: current,
+        reason: "version_conflict",
+      };
+    }
+
+    const next: WorkflowSubtask = {
+      ...current,
+      status: input.status ?? current.status,
+      notes: input.notes ? [...current.notes, input.notes] : current.notes,
+      version: currentVersion + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.upsertCached(next);
+    await this.persistence?.save(input.parentTicketId, {
+      kind: "updated",
+      subtask: next,
+    });
+    return {
+      success: true,
+      subtask: this.materializeWithSiblings(input.parentTicketId, input.subtaskId),
+    };
+  }
+
   async listSubtasks(parentTicketId: string, options?: { includeCompleted?: boolean }): Promise<WorkflowSubtask[]> {
     if (this.persistence) {
       const persisted = await this.persistence.list(parentTicketId);
       this.replaceCached(parentTicketId, persisted);
+    }
+
+    // Auto-release expired claims
+    const now = new Date();
+    const bucket = this.cache.get(parentTicketId);
+    if (bucket) {
+      for (const [id, item] of bucket) {
+        if (item.claimedBy && item.claimExpiry && new Date(item.claimExpiry) <= now) {
+          bucket.set(id, {
+            ...item,
+            claimedBy: null,
+            claimedAt: null,
+            claimExpiry: null,
+            updatedAt: now.toISOString(),
+          });
+        }
+      }
     }
 
     const items = Array.from(this.cache.get(parentTicketId)?.values() || []);

@@ -65,7 +65,7 @@ export function DiffViewer({
     (mission.actionMessage || "").toLowerCase().includes("generic patch generation timed out");
 
   return (
-    <Panel className="border-white/8 bg-[#101114]">
+    <Panel className="border-[var(--border-subtle)] bg-[var(--surface-panel)]">
       <PanelHeader title="Review the Plan">
         <Chip variant="subtle" className="text-[10px]">
           {hasRouteContext ? "ready to run" : "planning"}

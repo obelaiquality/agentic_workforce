@@ -28,7 +28,9 @@ import type { LSPClient } from "../lsp/lspClient";
 import { createRootAbortController, type HierarchicalAbortController } from "../services/abortHierarchy";
 import { createLogger } from "../logger";
 import type { LearningsService } from "../services/learningsService";
+import type { NotificationService } from "../services/notificationService";
 import { compactToolResultContent } from "./microCompactor";
+import { SAFETY_SECTION } from "./systemPromptBuilder";
 
 const log = createLogger("Orchestrator");
 import { prisma } from "../db";
@@ -122,6 +124,7 @@ interface OrchestratorDependencies {
   autoMemoryExtractor?: AutoMemoryExtractor;
   lspClient?: LSPClient;
   learningsService?: LearningsService;
+  notificationService?: NotificationService;
   globalKnowledgePool?: { formatForSystemPrompt(techFingerprint: string[], maxTokens?: number): Promise<string>; rankSkillsForProject(skills: import("../../shared/contracts").SkillRecord[], techFingerprint: string[]): Array<import("../../shared/contracts").SkillRecord & { relevanceScore: number }> };
   techFingerprint?: string[];
 }
@@ -183,6 +186,9 @@ function buildSystemPrompt(
   const toolList = availableToolSchemas.map((t) => `- **${t.name}**: ${t.description}`).join("\n");
 
   let prompt = AGENT_BEHAVIOR_GUIDELINES;
+
+  // Inject prompt-driven safety layer (defense-in-depth alongside API-level policies)
+  prompt += `\n\n${SAFETY_SECTION.content}`;
 
   if (episodicContext) {
     prompt += `\n\n${episodicContext}`;
@@ -255,6 +261,7 @@ export class AgenticOrchestrator {
   private readonly planService?: PlanService;
   private readonly autoMemoryExtractor?: AutoMemoryExtractor;
   private readonly learningsService?: LearningsService;
+  private readonly notificationService?: NotificationService;
   private readonly globalKnowledgePool?: OrchestratorDependencies["globalKnowledgePool"];
   private readonly techFingerprint: string[];
 
@@ -273,6 +280,7 @@ export class AgenticOrchestrator {
     this.planService = deps.planService;
     this.autoMemoryExtractor = deps.autoMemoryExtractor;
     this.learningsService = deps.learningsService;
+    this.notificationService = deps.notificationService;
     this.globalKnowledgePool = deps.globalKnowledgePool;
     this.techFingerprint = deps.techFingerprint || [];
   }
@@ -292,7 +300,9 @@ export class AgenticOrchestrator {
 
     const maxIterations = input.maxIterations ?? 50;
     const initialRole = input.initialModelRole ?? "coder_default";
-    const maxContextTokens = input.budget?.maxTokens ?? 30000;
+    let maxContextTokens = input.budget?.maxTokens ?? 30000;
+    const OUTPUT_BUDGET_TIERS = [8192, 16384, 32768, 65536];
+    let currentOutputBudgetTier = 0;
     let plan = input.planMode && this.planService
       ? await this.planService.startPlanningPhase(input.runId)
       : null;
@@ -494,10 +504,17 @@ export class AgenticOrchestrator {
     while (state.iteration < maxIterations) {
       // Check for abort before each iteration
       if (rootAbort.aborted) {
+        const abortReason = `Run aborted: ${rootAbort.signal.reason ?? "cancelled"}`;
         yield {
           type: "execution_aborted" as const,
-          reason: `Run aborted: ${rootAbort.signal.reason ?? "cancelled"}`,
+          reason: abortReason,
         };
+        // Dispatch execution_aborted notification (best-effort)
+        this.notificationService?.dispatch("execution_aborted", {
+          runId: input.runId,
+          projectName: input.projectId ?? input.repoId,
+          summary: abortReason,
+        }).catch(() => {});
         executionSpan.setStatus("error", "Aborted");
         executionSpan.end();
         return;
@@ -735,11 +752,38 @@ export class AgenticOrchestrator {
             state.toolCallsTotal++;
           }
 
+          // Dispatch approval_needed notification when a tool requests approval
+          if (event.type === "tool_approval_needed") {
+            this.notificationService?.dispatch("approval_needed", {
+              runId: input.runId,
+              projectName: input.projectId ?? input.repoId,
+              summary: `Approval needed for tool "${event.name}": ${event.message}`,
+            }).catch(() => {});
+          }
+
           // Yield all events from executor
           yield event;
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
+
+        // ── Reactive context recovery ────────────────────────────────
+        const isContextOverflow = /context.length|prompt.too.long|token.limit|max.context|input.*too.*long|request.*too.*large/i.test(errorMsg);
+        if (isContextOverflow) {
+          yield { type: "error", error: `Context overflow detected: ${errorMsg}`, recoverable: true };
+          const compactionResult = this.checkAndCompact(state, maxContextTokens, input.runId);
+          if (compactionResult !== null) {
+            yield compactionResult;
+            yield { type: "context_recovery", strategy: "emergency_compaction", tokensBefore: state.budget.tokensConsumed } as AgenticEvent;
+            continue;
+          }
+          if (currentOutputBudgetTier < OUTPUT_BUDGET_TIERS.length - 1) {
+            currentOutputBudgetTier++;
+            yield { type: "budget_escalation", fromBudget: OUTPUT_BUDGET_TIERS[currentOutputBudgetTier - 1], toBudget: OUTPUT_BUDGET_TIERS[currentOutputBudgetTier], reason: "context_overflow_recovery" } as AgenticEvent;
+            continue;
+          }
+        }
+
         yield {
           type: "error",
           error: `Provider stream failed: ${errorMsg}`,
@@ -881,6 +925,14 @@ export class AgenticOrchestrator {
             budget: state.budget,
           },
         });
+
+        // Dispatch task_completed notification (best-effort)
+        this.notificationService?.dispatch("task_completed", {
+          runId: input.runId,
+          projectName: input.projectId ?? input.repoId,
+          summary: `Execution completed in ${state.iteration} iteration(s) with ${state.toolCallsTotal} tool call(s).`,
+          details: assistantText.slice(0, 500) || undefined,
+        }).catch(() => {});
 
         return;
       }
@@ -1182,6 +1234,13 @@ export class AgenticOrchestrator {
       type: "execution_aborted",
       reason: `Maximum iterations (${maxIterations}) reached without completion`,
     };
+
+    // Dispatch execution_aborted notification (best-effort)
+    this.notificationService?.dispatch("execution_aborted", {
+      runId: input.runId,
+      projectName: input.projectId ?? input.repoId,
+      summary: `Maximum iterations (${maxIterations}) reached without completion.`,
+    }).catch(() => {});
 
     } finally {
       // Clean up abort controller

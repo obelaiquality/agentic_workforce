@@ -210,8 +210,11 @@ describe("AgenticRunDeepPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Escalations/i }));
     expect(screen.getByText("Need deeper review")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Thinking Log/i }));
+    // Thinking auto-expands during active runs, so text is already visible
     expect(screen.getByText("Reasoning trace")).toBeInTheDocument();
+    // Clicking collapses it
+    fireEvent.click(screen.getByRole("button", { name: /Thinking Log/i }));
+    expect(screen.queryByText("Reasoning trace")).not.toBeInTheDocument();
   });
 
   it("renders all StatusChip variants correctly", () => {

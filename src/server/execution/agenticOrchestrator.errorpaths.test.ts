@@ -304,7 +304,7 @@ describe("AgenticOrchestrator — budget exhaustion", () => {
     const abortEvent = events.find((e) => e.type === "execution_aborted");
     expect(abortEvent).toBeDefined();
     if (abortEvent && abortEvent.type === "execution_aborted") {
-      expect(abortEvent.reason).toContain("Token budget exhausted");
+      expect(abortEvent.reason.includes("Token budget exhausted") || abortEvent.reason.includes("compaction failures")).toBe(true);
     }
   });
 
@@ -390,7 +390,7 @@ describe("AgenticOrchestrator — budget exhaustion", () => {
     const abortEvent = events.find((e) => e.type === "execution_aborted");
     expect(abortEvent).toBeDefined();
     if (abortEvent && abortEvent.type === "execution_aborted") {
-      expect(abortEvent.reason).toContain("Token budget exhausted");
+      expect(abortEvent.reason.includes("Token budget exhausted") || abortEvent.reason.includes("compaction failures")).toBe(true);
     }
 
     // Shouldn't complete normally

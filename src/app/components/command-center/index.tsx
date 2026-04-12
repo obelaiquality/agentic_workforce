@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { PanelRightClose } from "lucide-react";
+import { PanelRightClose, LayoutGrid, MessageSquare } from "lucide-react";
 import type { MissionData, WorkflowLaneKey } from "./types";
 import { LANE_META } from "./helpers";
 import { useUiStore } from "../../store/uiStore";
-import { getMissionTaskDetailV8 } from "../../lib/apiClient";
+import { getMissionTaskDetailV8, getMergeReportV3 } from "../../lib/apiClient";
 import { cn } from "../ui/utils";
 import { MissionHeaderStrip } from "../mission/MissionHeaderStrip";
 import { OutcomeDebriefDrawer } from "../mission/OutcomeDebriefDrawer";
+import { DiffReviewPanel } from "../diff/DiffReviewPanel";
 
 import { ChatPanel } from "./ChatPanel";
 import { WorkflowBoard } from "./WorkflowBoard";
 import { AgentStatusSidebar } from "./AgentStatusSidebar";
 import { ToolCallTimeline } from "./ToolCallTimeline";
 import { ApprovalInline } from "./ApprovalInline";
+import { DiffViewer } from "./DiffViewer";
+import { ConversationView } from "../chat/ConversationView";
 
 export { ChatPanel } from "./ChatPanel";
 export { WorkflowBoard } from "./WorkflowBoard";
@@ -27,11 +30,13 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
   const selectedWorkflowStatus = useUiStore((state) => state.selectedWorkflowStatus);
   const workflowViewMode = useUiStore((state) => state.workflowViewMode);
   const commandDrawerMode = useUiStore((state) => state.commandDrawerMode);
+  const commandCenterMode = useUiStore((state) => state.commandCenterMode);
   const setActiveSection = useUiStore((state) => state.setActiveSection);
   const setCodebaseScope = useUiStore((state) => state.setCodebaseScope);
   const setSelectedWorkflowId = useUiStore((state) => state.setSelectedWorkflowId);
   const setWorkflowViewMode = useUiStore((state) => state.setWorkflowViewMode);
   const setCommandDrawerMode = useUiStore((state) => state.setCommandDrawerMode);
+  const setCommandCenterMode = useUiStore((state) => state.setCommandCenterMode);
   const [commentDraft, setCommentDraft] = useState("");
   const [replyTargetId, setReplyTargetId] = useState<string | null>(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
@@ -48,6 +53,22 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
   });
 
   const taskDetail = taskDetailQuery.data?.item || null;
+
+  const runId = mission.runSummary?.runId ?? mission.agenticRun?.runId ?? null;
+  const isRunCompleted =
+    mission.runSummary?.status === "completed" ||
+    mission.agenticRun?.status === "completed";
+
+  const mergeReportQuery = useQuery({
+    queryKey: ["command-center-merge-report", runId],
+    queryFn: () => getMergeReportV3(runId!),
+    enabled: Boolean(runId) && isRunCompleted,
+    staleTime: 30_000,
+  });
+
+  const mergeChangedFiles = mergeReportQuery.data?.item?.changedFiles ?? [];
+  const showDiffReview = isRunCompleted && mergeChangedFiles.length > 0 && Boolean(mission.selectedRepo);
+
   const workflowCards = mission.workflowCards ?? [];
   const selectedWorkflow = useMemo(
     () => workflowCards.find((item) => item.workflowId === selectedWorkflowId) || null,
@@ -183,7 +204,35 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
             onRefresh={mission.refreshSnapshot}
             onStop={mission.stopExecution}
           />
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-0.5">
+              <button
+                onClick={() => setCommandCenterMode("board")}
+                data-testid="mode-toggle-board"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  commandCenterMode === "board"
+                    ? "bg-white/[0.08] text-white shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-300",
+                )}
+              >
+                <LayoutGrid className="h-3 w-3" />
+                Board
+              </button>
+              <button
+                onClick={() => setCommandCenterMode("chat")}
+                data-testid="mode-toggle-chat"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  commandCenterMode === "chat"
+                    ? "bg-white/[0.08] text-white shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-300",
+                )}
+              >
+                <MessageSquare className="h-3 w-3" />
+                Chat
+              </button>
+            </div>
             {contextPanelOpen ? (
               <button
                 onClick={() => setContextPanelOpen(false)}
@@ -198,7 +247,12 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
         ) : null}
 
                 {mission.selectedRepo ? (
-                  <>
+          commandCenterMode === "chat" ? (
+            <div className="min-h-[480px]">
+              <ConversationView mission={mission} />
+            </div>
+          ) : (
+            <>
             <ChatPanel
               mission={mission}
               attentionCount={attentionCount}
@@ -209,6 +263,13 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
               onOpenApprovals={openApprovalContext}
             />
 
+            {mission.route && mission.contextPack && (
+              <DiffViewer
+                mission={mission}
+                onOpenSettings={() => setActiveSection("settings")}
+                onOpenConsole={() => setActiveSection("console")}
+              />
+            )}
 
             {(mission.experimentalAutonomy?.channels?.length > 0 || mission.experimentalAutonomy?.subagents?.length > 0) && (
               <AgentStatusSidebar mission={mission} onOpenSettings={() => setActiveSection("settings")} />
@@ -236,7 +297,15 @@ export function CommandCenterView({ mission }: { mission: MissionData }) {
                 blueprint={mission.blueprint}
               />
             ) : null}
+
+            {showDiffReview ? (
+              <DiffReviewPanel
+                projectId={mission.selectedRepo!.id}
+                changedFiles={mergeChangedFiles}
+              />
+            ) : null}
           </>
+          )
         ) : (
           <ApprovalInline
             recentProjects={mission.recentRepos}
